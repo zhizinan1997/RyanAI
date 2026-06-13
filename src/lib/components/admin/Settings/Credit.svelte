@@ -256,7 +256,7 @@
 							/>
 						</div>
 						<div class="mt-2 flex w-full justify-between">
-							<div class=" self-center text-xs font-medium">{$i18n.t('OpenWebUI Host')}</div>
+							<div class=" self-center text-xs font-medium">{$i18n.t('RyanAI Host')}</div>
 						</div>
 						<div class="text-xs text-gray-400 dark:text-gray-500">
 							{$i18n.t(
@@ -354,7 +354,7 @@
 							/>
 						</div>
 						<div class="mt-2 flex w-full justify-between">
-							<div class=" self-center text-xs font-medium">{$i18n.t('OpenWebUI Host')}</div>
+							<div class=" self-center text-xs font-medium">{$i18n.t('RyanAI Host')}</div>
 						</div>
 						<div class="text-xs text-gray-400 dark:text-gray-500">
 							{$i18n.t(

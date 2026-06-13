@@ -364,13 +364,13 @@ if OLLAMA_BASE_URL == '' and OLLAMA_API_BASE_URL != '':
 if ENV == 'prod':
     if OLLAMA_BASE_URL == '/ollama' and not K8S_FLAG:
         if USE_OLLAMA_DOCKER.lower() == 'true':
-            # if you use all-in-one docker container (Open WebUI + Ollama)
+            # if you use all-in-one docker container (RyanAI + Ollama)
             # with the docker build arg USE_OLLAMA=true (--build-arg="USE_OLLAMA=true") this only works with http://localhost:11434
             OLLAMA_BASE_URL = 'http://localhost:11434'
         else:
             OLLAMA_BASE_URL = 'http://host.docker.internal:11434'
     elif K8S_FLAG:
-        OLLAMA_BASE_URL = 'http://ollama-service.open-webui.svc.cluster.local:11434'
+        OLLAMA_BASE_URL = 'http://ollama-service.ryanai.svc.cluster.local:11434'
 
 
 def _resolve_ollama_base_url(url: str) -> str:
@@ -795,7 +795,7 @@ QDRANT_GRPC_PORT = int(os.getenv('QDRANT_GRPC_PORT', '6334'))
 QDRANT_TIMEOUT = int(os.getenv('QDRANT_TIMEOUT', '5'))
 QDRANT_HNSW_M = int(os.getenv('QDRANT_HNSW_M', '16'))
 ENABLE_QDRANT_MULTITENANCY_MODE = os.getenv('ENABLE_QDRANT_MULTITENANCY_MODE', 'true').lower() == 'true'
-QDRANT_COLLECTION_PREFIX = os.getenv('QDRANT_COLLECTION_PREFIX', 'open-webui')
+QDRANT_COLLECTION_PREFIX = os.getenv('QDRANT_COLLECTION_PREFIX', 'ryanai')
 
 WEAVIATE_HTTP_HOST = os.getenv('WEAVIATE_HTTP_HOST', '')
 WEAVIATE_GRPC_HOST = os.getenv('WEAVIATE_GRPC_HOST', '')
@@ -965,7 +965,7 @@ else:
 # Pinecone
 PINECONE_API_KEY = os.getenv('PINECONE_API_KEY', None)
 PINECONE_ENVIRONMENT = os.getenv('PINECONE_ENVIRONMENT', None)
-PINECONE_INDEX_NAME = os.getenv('PINECONE_INDEX_NAME', 'open-webui-index')
+PINECONE_INDEX_NAME = os.getenv('PINECONE_INDEX_NAME', 'ryanai-index')
 PINECONE_DIMENSION = int(os.getenv('PINECONE_DIMENSION', 1536))  # or 3072, 1024, 768
 PINECONE_METRIC = os.getenv('PINECONE_METRIC', 'cosine')
 PINECONE_CLOUD = os.getenv('PINECONE_CLOUD', 'aws')  # or "gcp" or "azure"
@@ -3106,7 +3106,7 @@ ENABLE_ADMIN_ANALYTICS = os.getenv('ENABLE_ADMIN_ANALYTICS', 'True').lower() == 
 ENABLE_COMMUNITY_SHARING = ConfigVar(
     'ENABLE_COMMUNITY_SHARING',
     'ui.enable_community_sharing',
-    os.getenv('ENABLE_COMMUNITY_SHARING', 'True').lower() == 'true',
+    os.getenv('ENABLE_COMMUNITY_SHARING', 'False').lower() == 'true',
 )
 
 ENABLE_MESSAGE_RATING = ConfigVar(
@@ -3554,7 +3554,7 @@ JWT_EXPIRES_IN = ConfigVar('JWT_EXPIRES_IN', 'auth.jwt_expiry', os.getenv('JWT_E
 if JWT_EXPIRES_IN.value == '-1':
     log.warning(
         "⚠️  SECURITY WARNING: JWT_EXPIRES_IN is set to '-1'\n"
-        '    See: https://docs.openwebui.com/reference/env-configuration\n'
+        '    See: https://github.com/zhizinan1997/RyanAI/tree/main/docs\n'
     )
 
 ####################################

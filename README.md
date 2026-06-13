@@ -1,22 +1,22 @@
 <div align="center">
-  <a href="https://github.com/open-webui/open-webui">
+  <a href="https://github.com/zhizinan1997/RyanAI">
     <img src="./static/favicon.png" alt="Logo" width="100" height="100">
   </a>
 
-  <h1 align="center">Open WebUI (OVINC-CN)</h1>
+  <h1 align="center">RyanAI</h1>
 
   <p align="center">
-    <strong>基于 Open WebUI 的增强版：集成计费、支付与企业级用户管理</strong>
+    <strong>基于 RyanAI 的增强版：集成计费、支付与企业级用户管理</strong>
   </p>
 
   <p align="center">
-    <a href="https://github.com/ovinc-cn/openwebui/releases">
-      <img src="https://img.shields.io/github/v/release/ovinc-cn/openwebui?style=flat-square" alt="Release">
+    <a href="https://github.com/zhizinan1997/RyanAI/releases">
+      <img src="https://img.shields.io/github/v/release/zhizinan1997/RyanAI?style=flat-square" alt="Release">
     </a>
-    <a href="https://github.com/open-webui/open-webui/blob/main/LICENSE">
+    <a href="https://github.com/zhizinan1997/RyanAI/blob/main/LICENSE">
       <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License">
     </a>
-    <a href="https://github.com/ovinc-cn/openwebui/pkgs/container/openwebui">
+    <a href="https://github.com/zhizinan1997/RyanAI/pkgs/container/ryanai">
       <img src="https://img.shields.io/badge/container-ghcr.io-blue?style=flat-square&logo=github" alt="GHCR">
     </a>
   </p>
@@ -24,12 +24,12 @@
   <br />
 </div>
 
-> ⚠️ **注意**：此仓库的 `dev` 分支是开发分支，可能包含不稳定功能。生产环境请务必使用 [Release](https://github.com/ovinc-cn/openwebui/releases) 中的正式版本。
-> 本项目是 [Open WebUI](https://github.com/open-webui/open-webui) 的定制分支，与官方团队无关联。
+> ⚠️ **注意**：此仓库的 `dev` 分支是开发分支，可能包含不稳定功能。生产环境请务必使用 [Release](https://github.com/zhizinan1997/RyanAI/releases) 中的正式版本。
+> 本项目是 [RyanAI](https://github.com/zhizinan1997/RyanAI) 的定制分支，与官方团队无关联。
 
 ## 📖 简介
 
-这是一个社区驱动的 Open WebUI 增强版本，旨在为个人开发者和中小团队提供开箱即用的**运营化解决方案**。我们在原版强大的对话功能基础上，补充了计费、支付、用户验证等商业化闭环所需的关键特性。
+这是一个社区驱动的 RyanAI 增强版本，旨在为个人开发者和中小团队提供开箱即用的**运营化解决方案**。我们在原版强大的对话功能基础上，补充了计费、支付、用户验证等商业化闭环所需的关键特性。
 
 ## ✨ 核心特性
 
@@ -75,18 +75,18 @@
 
 ```bash
 # 拉取最新镜像（请将 <版本号> 替换为具体版本，如 v0.3.0）
-docker pull ghcr.io/ovinc-cn/openwebui:<版本号>
+docker pull ghcr.io/zhizinan1997/ryanai:<版本号>
 
 # 启动容器 (示例)
 docker run -d -p 3000:8080 \
   --add-host=host.docker.internal:host-gateway \
-  -v open-webui:/app/backend/data \
-  --name open-webui \
+  -v ryanai:/app/backend/data \
+  --name ryanai \
   --restart always \
-  ghcr.io/ovinc-cn/openwebui:<版本号>
+  ghcr.io/zhizinan1997/ryanai:<版本号>
 ```
 
-查看最新版本：[Releases](https://github.com/ovinc-cn/openwebui/releases/latest)
+查看最新版本：[Releases](https://github.com/zhizinan1997/RyanAI/releases/latest)
 
 ## ⚙️ 进阶配置
 

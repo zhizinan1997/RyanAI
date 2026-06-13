@@ -103,7 +103,7 @@ print(f'  Timestamp: {data.get(\"metadata\", {}).get(\"timestamp\", \"none\")}')
 }
 
 generate_docker() {
-    local IMAGE="${1:-ghcr.io/open-webui/open-webui:latest}"
+    local IMAGE="${1:-ghcr.io/zhizinan1997/ryanai:latest}"
     info "Generating SBOM from Docker image: $IMAGE"
 
     if ! command -v syft &>/dev/null; then

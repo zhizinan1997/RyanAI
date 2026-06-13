@@ -8,14 +8,14 @@ services:
     restart: unless-stopped
     image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
 
-  open-webui:
+  ryanai:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/open-webui/open-webui:${WEBUI_DOCKER_TAG-main}
-    container_name: open-webui
+    image: ghcr.io/zhizinan1997/ryanai:${WEBUI_DOCKER_TAG-main}
+    container_name: ryanai
     volumes:
-      - open-webui:/app/backend/data
+      - ryanai:/app/backend/data
     depends_on:
       - ollama
     ports:
@@ -29,4 +29,4 @@ services:
 
 volumes:
   ollama: {}
-  open-webui: {}
+  ryanai: {}

@@ -108,7 +108,7 @@ async def stream_wrapper(*args, content_handler=None, is_embedding=False):
     """Wrap a stream to ensure cleanup happens even if streaming is interrupted.
 
     Supports both the upstream call shape ``(response, session=None)`` and the
-    OpenWebUI2 credit-aware shape ``(user, model_id, form_data, response, session=None)``.
+    RyanAI2 credit-aware shape ``(user, model_id, form_data, response, session=None)``.
     When using the shared pool, ``session`` should be ``None``.
     """
     user = model_id = form_data = None

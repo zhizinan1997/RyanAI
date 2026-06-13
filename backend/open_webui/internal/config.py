@@ -188,7 +188,7 @@ class AppConfig:
         redis_url: Optional[str] = None,
         redis_sentinels: Optional[list] = None,
         redis_cluster: bool = False,
-        redis_key_prefix: str = 'open-webui',
+        redis_key_prefix: str = 'ryanai',
     ) -> None:
         super().__setattr__('_entries', {})
         super().__setattr__('_key_prefix', redis_key_prefix)

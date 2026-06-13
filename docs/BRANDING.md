@@ -1,9 +1,9 @@
 ## 自定义品牌配置
 
 > [!WARNING]  
-> 本项目是开源分发版本，与 Open WebUI 官方无直接关联  
-> 我们鼓励大家支持开源项目，保留 Open WebUI 的标识  
-> 如您通过下述方式移除 Open WebUI 标识，请确保满足 [Open WebUI License 条款9](https://docs.openwebui.com/license#9-what-about-forks-can-i-start-one-and-remove-all-open-webui-mentions) 相关条件  
+> 本项目是开源分发版本，与 RyanAI 官方无直接关联
+> 我们鼓励大家支持开源项目，保留 RyanAI 的标识
+> 如您通过下述方式移除 RyanAI 标识，请确保满足 [RyanAI License 条款9](https://github.com/zhizinan1997/RyanAI/blob/main/LICENSE) 相关条件
 > 未经授权的大规模或商用修改属于违规，由使用者本人承担全部法律风险  
 > 以下内容仅供小规模、实验或已授权用户使用
 

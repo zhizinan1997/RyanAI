@@ -75,9 +75,9 @@
 
 			<div class="px-5 pb-5 w-full flex flex-col justify-center">
 				<div class=" text-xs text-gray-600 dark:text-gray-300 mb-2">
-					{$i18n.t('Open WebUI can use tools provided by any OpenAPI server.')} <br /><a
+					{$i18n.t('RyanAI can use tools provided by any OpenAPI server.')} <br /><a
 						class="underline"
-						href="https://github.com/open-webui/openapi-servers"
+						href="https://github.com/zhizinan1997/RyanAI"
 						target="_blank">{$i18n.t('Learn more about OpenAPI tool servers.')}</a
 					>
 				</div>

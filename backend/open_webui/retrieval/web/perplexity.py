@@ -65,7 +65,7 @@ def search_perplexity(
         headers = {
             'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json',
-            'X-Pplx-Integration': f'open-webui/{VERSION}',
+            'X-Pplx-Integration': f'ryanai/{VERSION}',
         }
 
         # Make the API request

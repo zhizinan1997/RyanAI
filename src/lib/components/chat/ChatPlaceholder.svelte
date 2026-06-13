@@ -111,9 +111,7 @@
 							<div class="mt-0.5 text-sm font-normal text-gray-400 dark:text-gray-500">
 								By
 								{#if models[selectedModelIdx]?.info?.meta?.user.community}
-									<a
-										href="https://openwebui.com/m/{models[selectedModelIdx]?.info?.meta?.user
-											.username}"
+									<a href="https://github.com/zhizinan1997/RyanAI"
 										>{models[selectedModelIdx]?.info?.meta?.user.name
 											? models[selectedModelIdx]?.info?.meta?.user.name
 											: `@${models[selectedModelIdx]?.info?.meta?.user.username}`}</a

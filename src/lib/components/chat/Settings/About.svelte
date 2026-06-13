@@ -51,8 +51,8 @@
 				<div>
 					{$WEBUI_NAME}
 					{$i18n.t('Version')}
-					(<a href="https://github.com/ovinc-cn/openwebui" target="_blank" style="color: unset"
-						>{$i18n.t('Second revision by OVINC CN')}</a
+					(<a href="https://github.com/zhizinan1997/RyanAI" target="_blank" style="color: unset"
+						>RyanAI</a
 					>)
 				</div>
 			</div>
@@ -65,7 +65,7 @@
 
 						{#if $config?.features?.enable_version_update_check}
 							<a
-								href="https://github.com/ovinc-cn/openwebui/releases/tag/v{version.latest}"
+								href="https://github.com/zhizinan1997/RyanAI/releases/tag/v{version.latest}"
 								target="_blank"
 							>
 								{updateAvailable === null
@@ -117,7 +117,7 @@
 
 		{#if $config?.license_metadata}
 			<div class="mb-2 text-xs">
-				{#if !$WEBUI_NAME.includes('Open WebUI')}
+				{#if !$WEBUI_NAME.includes('RyanAI')}
 					<span class=" text-gray-500 dark:text-gray-300 font-medium">{$WEBUI_NAME}</span> -
 				{/if}
 
@@ -126,24 +126,24 @@
 			</div>
 		{:else}
 			<div class="flex space-x-1">
-				<a href="https://discord.gg/5rJgQTnV4s" target="_blank">
+				<a href="https://github.com/zhizinan1997/RyanAI/releases" target="_blank">
 					<img
-						alt="Discord"
-						src="https://img.shields.io/badge/Discord-Open_WebUI-blue?logo=discord&logoColor=white"
+						alt="Releases"
+						src="https://img.shields.io/github/v/release/zhizinan1997/RyanAI?style=flat-square"
 					/>
 				</a>
 
-				<a href="https://twitter.com/OpenWebUI" target="_blank">
+				<a href="https://github.com/zhizinan1997/RyanAI/pkgs/container/ryanai" target="_blank">
 					<img
-						alt="X (formerly Twitter) Follow"
-						src="https://img.shields.io/twitter/follow/OpenWebUI"
+						alt="GHCR"
+						src="https://img.shields.io/badge/GHCR-ryanai-blue?logo=github&style=flat-square"
 					/>
 				</a>
 
-				<a href="https://github.com/ovinc-cn/openwebui" target="_blank">
+				<a href="https://github.com/zhizinan1997/RyanAI" target="_blank">
 					<img
 						alt="Github Repo"
-						src="https://img.shields.io/github/stars/ovinc-cn/openwebui?style=social&label=Star us on Github"
+						src="https://img.shields.io/github/stars/zhizinan1997/RyanAI?style=social&label=Star RyanAI"
 					/>
 				</a>
 			</div>
@@ -158,10 +158,10 @@
 		<div>
 			<pre
 				class="text-xs text-gray-400 dark:text-gray-500">Copyright (c) {new Date().getFullYear()} <a
-					href="https://openwebui.com"
+					href="https://github.com/zhizinan1997/RyanAI"
 					target="_blank"
-					class="underline">Open WebUI Inc.</a
-				> <a href="https://github.com/open-webui/open-webui/blob/main/LICENSE" target="_blank"
+					class="underline">RyanAI</a
+				> <a href="https://github.com/zhizinan1997/RyanAI/blob/main/LICENSE" target="_blank"
 					>All rights reserved.</a
 				>
 </pre>

@@ -155,7 +155,7 @@
 						e.preventDefault();
 
 						window.open(
-							`https://openwebui.com/models?q=${encodeURIComponent(model?.id ?? '')}`,
+							'https://github.com/zhizinan1997/RyanAI',
 							'_blank'
 						);
 						show = false;
@@ -163,7 +163,7 @@
 				>
 					<GlobeAlt className="size-4" />
 
-					<div class="flex items-center">{$i18n.t('Community Reviews')}</div>
+					<div class="flex items-center">{$i18n.t('RyanAI Repository')}</div>
 				</button>
 			{/if}
 		</div>
