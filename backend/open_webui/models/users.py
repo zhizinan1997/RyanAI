@@ -114,9 +114,7 @@ class UserModel(BaseModel):
     updated_at: int  # timestamp in epoch
     created_at: int  # timestamp in epoch
 
-    model_config = ConfigDict(
-        from_attributes=True,
-    )
+    model_config = ConfigDict(from_attributes=True, extra='allow')
 
     # validation schema logic
     # --- model validators ---
@@ -179,10 +177,12 @@ class UpdateProfileForm(BaseModel):
 
 class UserGroupIdsModel(UserModel):
     group_ids: list[str] = []
+    credit: str | float | None = 0
 
 
 class UserModelResponse(UserModel):
     model_config = ConfigDict(extra='allow')
+    credit: str | float | None = 0
 
 
 class UserListResponse(BaseModel):
@@ -207,6 +207,7 @@ class UserInfoResponse(UserStatus):
     email: str
     role: str
     bio: str | None = None
+    credit: str | float | None = 0
     groups: list | None = []
     is_active: bool = False
 
@@ -258,6 +259,7 @@ class UserUpdateForm(BaseModel):
     email: str | None = None
     profile_image_url: str | None = None
     password: str | None = None
+    credit: float | None = None
 
     @field_validator('profile_image_url', mode='before')
     @classmethod
@@ -265,6 +267,11 @@ class UserUpdateForm(BaseModel):
         if v is None:
             return v
         return validate_profile_image_url(v)
+
+
+class UserCreditUpdateForm(BaseModel):
+    amount: float | None = None
+    credit: float | None = None
 
 
 class UsersTable:

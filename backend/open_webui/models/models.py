@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Optional
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, JSONField, get_async_db_context, get_db
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
@@ -83,6 +83,7 @@ class Model(Base):
     name = Column(Text)  # human-readable display name
     params = Column(JSONField)  # see ModelParams
     meta = Column(JSONField)  # see ModelMeta
+    price = Column(JSONField, nullable=True)
     is_active = Column(Boolean, default=True)  # soft-disable toggle
     updated_at = Column(BigInteger)  # epoch seconds
     created_at = Column(BigInteger)  # epoch seconds
@@ -96,6 +97,7 @@ class ModelModel(BaseModel):
     name: str
     params: ModelParams
     meta: ModelMeta
+    price: dict | None = None
 
     access_grants: list[AccessGrantModel] = Field(default_factory=list)
 
@@ -130,6 +132,27 @@ class ModelAccessListResponse(BaseModel):
     total: int
 
 
+class ModelPriceForm(BaseModel):
+    prompt_price: float = Field(default=0, description='prompt token price for 1m tokens', ge=0)
+    completion_price: float = Field(default=0, description='completion token price for 1m tokens', ge=0)
+    prompt_long_ctx_tokens: int = Field(default=200000, description='number of long context tokens for prompt', ge=0)
+    prompt_long_ctx_price: float = Field(default=0, description='prompt long context token price for 1m tokens', ge=0)
+    completion_long_ctx_tokens: int = Field(
+        default=200000, description='number of long context tokens for completion', ge=0
+    )
+    completion_long_ctx_price: float = Field(
+        default=0, description='completion long context token price for 1m tokens', ge=0
+    )
+    prompt_cache_price: float = Field(default=0, description='prompt cache token price for 1m tokens', ge=0)
+    prompt_long_ctx_cache_price: float = Field(
+        default=0,
+        description='prompt long context cache token price for 1m tokens',
+        ge=0,
+    )
+    request_price: float = Field(default=0, description='price for 1m requests', ge=0)
+    minimum_credit: float = Field(default=0, description='minimum credit required for this model', ge=0)
+
+
 class ModelForm(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
@@ -138,6 +161,7 @@ class ModelForm(BaseModel):
     name: str
     meta: ModelMeta
     params: ModelParams
+    price: ModelPriceForm | None = None
     access_grants: list[dict | None] = None
     is_active: bool = True
 
@@ -433,6 +457,14 @@ class ModelsTable:
             async with get_async_db_context(db) as db:
                 model = await db.get(Model, id)
                 return await self._to_model_model(model, db=db) if model else None
+        except Exception:
+            return None
+
+    def get_model_by_id_sync(self, id: str) -> ModelModel | None:
+        try:
+            with get_db() as db:
+                model = db.query(Model).filter_by(id=id).first()
+                return ModelModel.model_validate(model) if model else None
         except Exception:
             return None
 

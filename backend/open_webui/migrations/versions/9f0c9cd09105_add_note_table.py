@@ -1,7 +1,7 @@
 """Add note table
 
 Revision ID: 9f0c9cd09105
-Revises: 3781e22d8b01
+Revises: 1403e6d80d1d
 Create Date: 2025-05-03 03:00:00.000000
 
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = '9f0c9cd09105'
-down_revision = '3781e22d8b01'
+down_revision = '1403e6d80d1d'
 branch_labels = None
 depends_on = None
 

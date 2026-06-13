@@ -582,6 +582,88 @@ async def set_code_execution_config(
 
 
 ############################
+# UsageConfig
+############################
+
+
+class UsageConfigForm(BaseModel):
+    CREDIT_NO_CHARGE_EMPTY_RESPONSE: bool = False
+    CREDIT_NO_CREDIT_MSG: str = '余额不足，请前往 设置-积分 充值'
+    CREDIT_EXCHANGE_RATIO: float = 1
+    CREDIT_DEFAULT_CREDIT: float = 0
+    USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE: str = ''
+    USAGE_DEFAULT_ENCODING_MODEL: str = 'gpt-4o'
+    USAGE_CALCULATE_DEFAULT_REQUEST_PRICE: float = 0
+    USAGE_CALCULATE_DEFAULT_TOKEN_PRICE: float = 0
+    USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE: float = 0
+    USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE: float = 0
+    USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE: float = 0
+    USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE: float = 0
+    USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE: float = 0
+    USAGE_CALCULATE_MINIMUM_COST: float = 0
+    USAGE_CUSTOM_PRICE_CONFIG: str = '[]'
+    EZFP_PAY_PRIORITY: str = 'qrcode'
+    EZFP_ENDPOINT: str | None = None
+    EZFP_PID: str | None = None
+    EZFP_KEY: str | None = None
+    EZFP_CALLBACK_HOST: str | None = None
+    EZFP_AMOUNT_CONTROL: str | None = None
+    ALIPAY_SERVER_URL: str | None = None
+    ALIPAY_APP_ID: str | None = None
+    ALIPAY_APP_PRIVATE_KEY: str | None = None
+    ALIPAY_ALIPAY_PUBLIC_KEY: str | None = None
+    ALIPAY_CALLBACK_HOST: str | None = None
+    ALIPAY_AMOUNT_CONTROL: str | None = None
+    ALIPAY_PRODUCT_CODE: str | None = None
+
+
+def get_usage_config_response(request: Request) -> dict:
+    return {
+        'CREDIT_NO_CHARGE_EMPTY_RESPONSE': request.app.state.config.CREDIT_NO_CHARGE_EMPTY_RESPONSE,
+        'CREDIT_NO_CREDIT_MSG': request.app.state.config.CREDIT_NO_CREDIT_MSG,
+        'CREDIT_EXCHANGE_RATIO': request.app.state.config.CREDIT_EXCHANGE_RATIO,
+        'CREDIT_DEFAULT_CREDIT': request.app.state.config.CREDIT_DEFAULT_CREDIT,
+        'USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE': request.app.state.config.USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE,
+        'USAGE_DEFAULT_ENCODING_MODEL': request.app.state.config.USAGE_DEFAULT_ENCODING_MODEL,
+        'USAGE_CALCULATE_DEFAULT_REQUEST_PRICE': request.app.state.config.USAGE_CALCULATE_DEFAULT_REQUEST_PRICE,
+        'USAGE_CALCULATE_DEFAULT_TOKEN_PRICE': request.app.state.config.USAGE_CALCULATE_DEFAULT_TOKEN_PRICE,
+        'USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE': request.app.state.config.USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE,
+        'USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE': request.app.state.config.USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE,
+        'USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE': request.app.state.config.USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE,
+        'USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE': request.app.state.config.USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE,
+        'USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE': request.app.state.config.USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE,
+        'USAGE_CALCULATE_MINIMUM_COST': request.app.state.config.USAGE_CALCULATE_MINIMUM_COST,
+        'USAGE_CUSTOM_PRICE_CONFIG': request.app.state.config.USAGE_CUSTOM_PRICE_CONFIG,
+        'EZFP_PAY_PRIORITY': request.app.state.config.EZFP_PAY_PRIORITY,
+        'EZFP_ENDPOINT': request.app.state.config.EZFP_ENDPOINT,
+        'EZFP_PID': request.app.state.config.EZFP_PID,
+        'EZFP_KEY': request.app.state.config.EZFP_KEY,
+        'EZFP_CALLBACK_HOST': request.app.state.config.EZFP_CALLBACK_HOST,
+        'EZFP_AMOUNT_CONTROL': request.app.state.config.EZFP_AMOUNT_CONTROL,
+        'ALIPAY_SERVER_URL': request.app.state.config.ALIPAY_SERVER_URL,
+        'ALIPAY_APP_ID': request.app.state.config.ALIPAY_APP_ID,
+        'ALIPAY_APP_PRIVATE_KEY': request.app.state.config.ALIPAY_APP_PRIVATE_KEY,
+        'ALIPAY_ALIPAY_PUBLIC_KEY': request.app.state.config.ALIPAY_ALIPAY_PUBLIC_KEY,
+        'ALIPAY_CALLBACK_HOST': request.app.state.config.ALIPAY_CALLBACK_HOST,
+        'ALIPAY_AMOUNT_CONTROL': request.app.state.config.ALIPAY_AMOUNT_CONTROL,
+        'ALIPAY_PRODUCT_CODE': request.app.state.config.ALIPAY_PRODUCT_CODE,
+    }
+
+
+@router.get('/usage', response_model=UsageConfigForm)
+async def get_usage_config(request: Request, user=Depends(get_admin_user)):
+    return get_usage_config_response(request)
+
+
+@router.post('/usage', response_model=UsageConfigForm)
+async def set_usage_config(request: Request, form_data: UsageConfigForm, user=Depends(get_admin_user)):
+    for key, value in form_data.model_dump().items():
+        setattr(request.app.state.config, key, value)
+
+    return get_usage_config_response(request)
+
+
+############################
 # SetDefaultModels
 ############################
 class ModelsConfigForm(BaseModel):

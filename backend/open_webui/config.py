@@ -238,40 +238,93 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 ####################################
-# CUSTOM_NAME (Legacy)
+# Custom Branding
 ####################################
 
-CUSTOM_NAME = os.getenv('CUSTOM_NAME', '')
+_CUSTOM_BRANDING_EMPTY_VALUES = {'', 'false', 'none', 'null', '0'}
 
-if CUSTOM_NAME:
+
+def _get_custom_branding_value(name: str) -> str:
+    value = os.getenv(name, '').strip()
+    return '' if value.lower() in _CUSTOM_BRANDING_EMPTY_VALUES else value
+
+
+ORGANIZATION_NAME = _get_custom_branding_value('ORGANIZATION_NAME')
+CUSTOM_NAME = _get_custom_branding_value('CUSTOM_NAME')
+CUSTOM_ICO = _get_custom_branding_value('CUSTOM_ICO')
+CUSTOM_PNG = _get_custom_branding_value('CUSTOM_PNG')
+CUSTOM_DARK_PNG = _get_custom_branding_value('CUSTOM_DARK_PNG')
+CUSTOM_SVG = _get_custom_branding_value('CUSTOM_SVG')
+
+CUSTOM_BRANDING_NAME = CUSTOM_NAME or ORGANIZATION_NAME
+
+_CUSTOM_STATIC_ASSETS = (
+    (
+        CUSTOM_ICO,
+        ('favicon.ico',),
+    ),
+    (
+        CUSTOM_PNG,
+        (
+            'favicon.png',
+            'favicon-96x96.png',
+            'apple-touch-icon.png',
+            'logo.png',
+            'splash.png',
+            'web-app-manifest-192x192.png',
+            'web-app-manifest-512x512.png',
+        ),
+    ),
+    (
+        CUSTOM_DARK_PNG,
+        (
+            'favicon-dark.png',
+            'splash-dark.png',
+        ),
+    ),
+    (
+        CUSTOM_SVG,
+        ('favicon.svg',),
+    ),
+)
+
+
+def _write_custom_static_asset(url: str, targets: tuple[str, ...]) -> None:
     try:
-        r = requests.get(f'https://api.openwebui.com/api/v1/custom/{CUSTOM_NAME}')
-        data = r.json()
-        if r.ok:
-            if 'logo' in data:
-                WEBUI_FAVICON_URL = url = (
-                    f'https://api.openwebui.com{data["logo"]}' if data['logo'][0] == '/' else data['logo']
-                )
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        content = response.content
 
-                r = requests.get(url, stream=True)
-                if r.status_code == 200:
-                    with open(f'{STATIC_DIR}/favicon.png', 'wb') as f:
-                        r.raw.decode_content = True
-                        shutil.copyfileobj(r.raw, f)
-
-            if 'splash' in data:
-                url = f'https://api.openwebui.com{data["splash"]}' if data['splash'][0] == '/' else data['splash']
-
-                r = requests.get(url, stream=True)
-                if r.status_code == 200:
-                    with open(f'{STATIC_DIR}/splash.png', 'wb') as f:
-                        r.raw.decode_content = True
-                        shutil.copyfileobj(r.raw, f)
-
-            WEBUI_NAME = data['name']
+        for target in targets:
+            target_path = STATIC_DIR / target
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(content)
     except Exception as e:
-        log.exception(e)
-        pass
+        log.warning(f'Custom branding: failed to load {url}: {e}')
+
+
+def apply_custom_branding(app=None, refresh_assets: bool = True) -> None:
+    global WEBUI_FAVICON_URL, WEBUI_NAME
+
+    if CUSTOM_BRANDING_NAME:
+        WEBUI_NAME = CUSTOM_BRANDING_NAME
+        if app is not None:
+            app.state.WEBUI_NAME = CUSTOM_BRANDING_NAME
+
+    if CUSTOM_PNG:
+        WEBUI_FAVICON_URL = CUSTOM_PNG
+    elif CUSTOM_SVG:
+        WEBUI_FAVICON_URL = CUSTOM_SVG
+    elif CUSTOM_ICO:
+        WEBUI_FAVICON_URL = CUSTOM_ICO
+
+    if refresh_assets:
+        for url, targets in _CUSTOM_STATIC_ASSETS:
+            if url:
+                _write_custom_static_asset(url, targets)
+
+
+apply_custom_branding()
 
 
 ####################################
@@ -2508,6 +2561,48 @@ ENABLE_PASSWORD_CHANGE_FORM = ConfigVar(
 
 ENABLE_PASSWORD_AUTH = os.getenv('ENABLE_PASSWORD_AUTH', 'True').lower() == 'true'
 
+ENABLE_SIGNUP_VERIFY = ConfigVar(
+    'ENABLE_SIGNUP_VERIFY',
+    'ui.signup_verify.enabled',
+    os.getenv('ENABLE_SIGNUP_VERIFY', 'False').lower() == 'true',
+)
+
+SIGNUP_EMAIL_DOMAIN_WHITELIST = ConfigVar(
+    'SIGNUP_EMAIL_DOMAIN_WHITELIST',
+    'ui.signup.email_domain_whitelist',
+    os.getenv('SIGNUP_EMAIL_DOMAIN_WHITELIST', ''),
+)
+
+SMTP_HOST = ConfigVar(
+    'SMTP_HOST',
+    'ui.smtp.host',
+    os.getenv('SMTP_HOST', ''),
+)
+
+SMTP_PORT = ConfigVar(
+    'SMTP_PORT',
+    'ui.smtp.port',
+    os.getenv('SMTP_PORT', '465'),
+)
+
+SMTP_USERNAME = ConfigVar(
+    'SMTP_USERNAME',
+    'ui.smtp.username',
+    os.getenv('SMTP_USERNAME', ''),
+)
+
+SMTP_PASSWORD = ConfigVar(
+    'SMTP_PASSWORD',
+    'ui.smtp.password',
+    os.getenv('SMTP_PASSWORD', ''),
+)
+
+SMTP_SENT_FROM = ConfigVar(
+    'SMTP_SENT_FROM',
+    'ui.smtp.sent_from',
+    os.getenv('SMTP_SENT_FROM', ''),
+)
+
 DEFAULT_LOCALE = ConfigVar(
     'DEFAULT_LOCALE',
     'ui.default_locale',
@@ -2616,6 +2711,30 @@ PENDING_USER_OVERLAY_CONTENT = ConfigVar(
     'PENDING_USER_OVERLAY_CONTENT',
     'ui.pending_user_overlay_content',
     os.getenv('PENDING_USER_OVERLAY_CONTENT', ''),
+)
+
+ENABLE_SPLASH_NOTICE = ConfigVar(
+    'ENABLE_SPLASH_NOTICE',
+    'ui.splash_notice_enabled',
+    os.getenv('ENABLE_SPLASH_NOTICE', 'False').lower() == 'true',
+)
+
+SPLASH_NOTICE_TITLE = ConfigVar(
+    'SPLASH_NOTICE_TITLE',
+    'ui.splash_notice_title',
+    os.getenv('SPLASH_NOTICE_TITLE', ''),
+)
+
+SPLASH_NOTICE_CONTENT = ConfigVar(
+    'SPLASH_NOTICE_CONTENT',
+    'ui.splash_notice_content',
+    os.getenv('SPLASH_NOTICE_CONTENT', ''),
+)
+
+SPLASH_NOTICE_MEDIA = ConfigVar(
+    'SPLASH_NOTICE_MEDIA',
+    'ui.splash_notice_media',
+    os.getenv('SPLASH_NOTICE_MEDIA', ''),
 )
 
 
@@ -3252,7 +3371,7 @@ Analyze the chat history to determine the necessity of generating search queries
 - Always prioritize providing actionable and broad queries that maximize informational coverage.
 
 ### Output:
-Strictly return in JSON format: 
+Strictly return in JSON format:
 {
   "queries": ["query1", "query2"]
 }
@@ -3283,44 +3402,44 @@ AUTOCOMPLETE_GENERATION_PROMPT_TEMPLATE = ConfigVar(
 
 
 DEFAULT_AUTOCOMPLETE_GENERATION_PROMPT_TEMPLATE = """### Task:
-You are an autocompletion system. Continue the text in `<text>` based on the **completion type** in `<type>` and the given language.  
+You are an autocompletion system. Continue the text in `<text>` based on the **completion type** in `<type>` and the given language.
 
 ### **Instructions**:
-1. Analyze `<text>` for context and meaning.  
-2. Use `<type>` to guide your output:  
-   - **General**: Provide a natural, concise continuation.  
-   - **Search Query**: Complete as if generating a realistic search query.  
-3. Start as if you are directly continuing `<text>`. Do **not** repeat, paraphrase, or respond as a model. Simply complete the text.  
+1. Analyze `<text>` for context and meaning.
+2. Use `<type>` to guide your output:
+   - **General**: Provide a natural, concise continuation.
+   - **Search Query**: Complete as if generating a realistic search query.
+3. Start as if you are directly continuing `<text>`. Do **not** repeat, paraphrase, or respond as a model. Simply complete the text.
 4. Ensure the continuation:
-   - Flows naturally from `<text>`.  
-   - Avoids repetition, overexplaining, or unrelated ideas.  
-5. If unsure, return: `{ "text": "" }`.  
+   - Flows naturally from `<text>`.
+   - Avoids repetition, overexplaining, or unrelated ideas.
+5. If unsure, return: `{ "text": "" }`.
 
 ### **Output Rules**:
 - Respond only in JSON format: `{ "text": "<your_completion>" }`.
 
 ### **Examples**:
-#### Example 1:  
-Input:  
-<type>General</type>  
-<text>The sun was setting over the horizon, painting the sky</text>  
-Output:  
+#### Example 1:
+Input:
+<type>General</type>
+<text>The sun was setting over the horizon, painting the sky</text>
+Output:
 { "text": "with vibrant shades of orange and pink." }
 
-#### Example 2:  
-Input:  
-<type>Search Query</type>  
-<text>Top-rated restaurants in</text>  
-Output:  
-{ "text": "New York City for Italian cuisine." }  
+#### Example 2:
+Input:
+<type>Search Query</type>
+<text>Top-rated restaurants in</text>
+Output:
+{ "text": "New York City for Italian cuisine." }
 
 ---
 ### Context:
 <chat_history>
 {{MESSAGES:END:6}}
 </chat_history>
-<type>{{TYPE}}</type>  
-<text>{{PROMPT}}</text>  
+<type>{{TYPE}}</type>
+<text>{{PROMPT}}</text>
 #### Output:
 """
 
@@ -3375,7 +3494,7 @@ Your task is to choose and return the correct tool(s) from the list of available
 
 - Return only the JSON object, without any additional text or explanation.
 
-- If no tools match the query, return an empty array: 
+- If no tools match the query, return an empty array:
    {
      "tool_calls": []
    }
@@ -4044,4 +4163,176 @@ LDAP_ATTRIBUTE_FOR_GROUPS = ConfigVar(
     'LDAP_ATTRIBUTE_FOR_GROUPS',
     'ldap.server.attribute_for_groups',
     os.getenv('LDAP_ATTRIBUTE_FOR_GROUPS', 'memberOf'),
+)
+
+####################################
+# Credit and Usage
+####################################
+
+CREDIT_NO_CHARGE_EMPTY_RESPONSE = ConfigVar(
+    'CREDIT_NO_CHARGE_EMPTY_RESPONSE',
+    'credit.no_charge_empty_response',
+    os.getenv('CREDIT_NO_CHARGE_EMPTY_RESPONSE', 'True').lower() == 'true',
+)
+
+CREDIT_NO_CREDIT_MSG = ConfigVar(
+    'CREDIT_NO_CREDIT_MSG',
+    'credit.no_credit_msg',
+    os.getenv('CREDIT_NO_CREDIT_MSG', '余额不足，请前往 设置-积分 充值'),
+)
+
+CREDIT_EXCHANGE_RATIO = ConfigVar(
+    'CREDIT_EXCHANGE_RATIO',
+    'credit.exchange.ratio',
+    os.getenv('CREDIT_EXCHANGE_RATIO', '1'),
+)
+
+CREDIT_DEFAULT_CREDIT = ConfigVar(
+    'CREDIT_DEFAULT_CREDIT',
+    'credit.default_credit',
+    os.getenv('CREDIT_DEFAULT_CREDIT', '0'),
+)
+
+USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE = ConfigVar(
+    'USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE',
+    'credit.calculate.model_prefix_to_remove',
+    os.getenv('USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE', ''),
+)
+
+USAGE_DEFAULT_ENCODING_MODEL = ConfigVar(
+    'USAGE_DEFAULT_ENCODING_MODEL',
+    'credit.calculate.encoding.default_model',
+    os.getenv('USAGE_DEFAULT_ENCODING_MODEL', 'gpt-4o'),
+)
+
+USAGE_CALCULATE_DEFAULT_REQUEST_PRICE = ConfigVar(
+    'USAGE_CALCULATE_DEFAULT_REQUEST_PRICE',
+    'credit.calculate.default_request_price',
+    os.getenv('USAGE_CALCULATE_DEFAULT_REQUEST_PRICE', '0'),
+)
+
+USAGE_CALCULATE_DEFAULT_TOKEN_PRICE = ConfigVar(
+    'USAGE_CALCULATE_DEFAULT_TOKEN_PRICE',
+    'credit.calculate.default_token_price',
+    os.getenv('USAGE_CALCULATE_DEFAULT_TOKEN_PRICE', '0'),
+)
+
+USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE = ConfigVar(
+    'USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE',
+    'credit.calculate.default_embedding_price',
+    os.getenv('USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE', '0'),
+)
+
+USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE = ConfigVar(
+    'USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE',
+    'credit.calculate.feature.image_gen_price',
+    os.getenv('USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE', '0'),
+)
+
+USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE = ConfigVar(
+    'USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE',
+    'credit.calculate.feature.code_execute_price',
+    os.getenv('USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE', '0'),
+)
+
+USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE = ConfigVar(
+    'USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE',
+    'credit.calculate.feature.web_search_price',
+    os.getenv('USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE', '0'),
+)
+
+USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE = ConfigVar(
+    'USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE',
+    'credit.calculate.feature.tool_server_price',
+    os.getenv('USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE', '0'),
+)
+
+USAGE_CALCULATE_MINIMUM_COST = ConfigVar(
+    'USAGE_CALCULATE_MINIMUM_COST',
+    'credit.calculate.minimum_cost',
+    os.getenv('USAGE_CALCULATE_MINIMUM_COST', '0'),
+)
+
+USAGE_CUSTOM_PRICE_CONFIG = ConfigVar(
+    'USAGE_CUSTOM_PRICE_CONFIG',
+    'credit.calculate.custom_price_config',
+    os.getenv('USAGE_CUSTOM_PRICE_CONFIG', '[]'),
+)
+
+EZFP_PAY_PRIORITY = ConfigVar(
+    'EZFP_PAY_PRIORITY',
+    'credit.ezfp.pay_priority',
+    os.getenv('EZFP_PAY_PRIORITY', 'qrcode'),
+)
+
+EZFP_ENDPOINT = ConfigVar(
+    'EZFP_ENDPOINT',
+    'credit.ezfp.endpoint',
+    os.getenv('EZFP_ENDPOINT', ''),
+)
+
+EZFP_PID = ConfigVar(
+    'EZFP_PID',
+    'credit.ezfp.pid',
+    os.getenv('EZFP_PID', ''),
+)
+
+EZFP_KEY = ConfigVar(
+    'EZFP_KEY',
+    'credit.ezfp.key',
+    os.getenv('EZFP_KEY', ''),
+)
+
+EZFP_CALLBACK_HOST = ConfigVar(
+    'EZFP_CALLBACK_HOST',
+    'credit.ezfp.callback_host',
+    os.getenv('EZFP_CALLBACK_HOST', ''),
+)
+
+EZFP_AMOUNT_CONTROL = ConfigVar(
+    'EZFP_AMOUNT_CONTROL',
+    'credit.ezfp.amount_control',
+    os.getenv('EZFP_AMOUNT_CONTROL', ''),
+)
+
+ALIPAY_SERVER_URL = ConfigVar(
+    'ALIPAY_SERVER_URL',
+    'credit.alipay.server_url',
+    os.getenv('ALIPAY_SERVER_URL', 'https://openapi.alipay.com/gateway.do'),
+)
+
+ALIPAY_APP_ID = ConfigVar(
+    'ALIPAY_APP_ID',
+    'credit.alipay.app_id',
+    os.getenv('ALIPAY_APP_ID', ''),
+)
+
+ALIPAY_APP_PRIVATE_KEY = ConfigVar(
+    'ALIPAY_APP_PRIVATE_KEY',
+    'credit.alipay.app_private_key',
+    os.getenv('ALIPAY_APP_PRIVATE_KEY', ''),
+)
+
+ALIPAY_ALIPAY_PUBLIC_KEY = ConfigVar(
+    'ALIPAY_ALIPAY_PUBLIC_KEY',
+    'credit.alipay.alipay_public_key',
+    os.getenv('ALIPAY_ALIPAY_PUBLIC_KEY', ''),
+)
+
+ALIPAY_CALLBACK_HOST = ConfigVar(
+    'ALIPAY_CALLBACK_HOST',
+    'credit.alipay.callback_host',
+    os.getenv('ALIPAY_CALLBACK_HOST', ''),
+)
+
+ALIPAY_AMOUNT_CONTROL = ConfigVar(
+    'ALIPAY_AMOUNT_CONTROL',
+    'credit.alipay.amount_control',
+    os.getenv('ALIPAY_AMOUNT_CONTROL', ''),
+)
+
+ALIPAY_PRODUCT_CODE = ConfigVar(
+    'ALIPAY_PRODUCT_CODE',
+    'credit.alipay.product_code',
+    os.getenv('ALIPAY_PRODUCT_CODE', ''),
 )

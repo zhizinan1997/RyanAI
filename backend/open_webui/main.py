@@ -14,6 +14,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlparse
+import urllib.parse
 from uuid import uuid4
 
 import aiohttp
@@ -91,6 +92,13 @@ from open_webui.config import (
     AUTOMATIC1111_PARAMS,
     AUTOMATION_MAX_COUNT,
     AUTOMATION_MIN_INTERVAL,
+    ALIPAY_ALIPAY_PUBLIC_KEY,
+    ALIPAY_AMOUNT_CONTROL,
+    ALIPAY_APP_ID,
+    ALIPAY_APP_PRIVATE_KEY,
+    ALIPAY_CALLBACK_HOST,
+    ALIPAY_PRODUCT_CODE,
+    ALIPAY_SERVER_URL,
     BING_SEARCH_V7_ENDPOINT,
     BING_SEARCH_V7_SUBSCRIPTION_KEY,
     BOCHA_SEARCH_API_KEY,
@@ -123,6 +131,10 @@ from open_webui.config import (
     COMFYUI_WORKFLOW_NODES,
     CONTENT_EXTRACTION_ENGINE,
     CORS_ALLOW_ORIGIN,
+    CREDIT_DEFAULT_CREDIT,
+    CREDIT_EXCHANGE_RATIO,
+    CREDIT_NO_CHARGE_EMPTY_RESPONSE,
+    CREDIT_NO_CREDIT_MSG,
     DATALAB_MARKER_ADDITIONAL_CONFIG,
     DATALAB_MARKER_API_BASE_URL,
     DATALAB_MARKER_API_KEY,
@@ -203,7 +215,9 @@ from open_webui.config import (
     ENABLE_RAG_LOCAL_WEB_FETCH,
     ENABLE_RETRIEVAL_QUERY_GENERATION,
     ENABLE_SEARCH_QUERY_GENERATION,
+    ENABLE_SIGNUP_VERIFY,
     ENABLE_SIGNUP,
+    ENABLE_SPLASH_NOTICE,
     ENABLE_TAGS_GENERATION,
     ENABLE_TITLE_GENERATION,
     ENABLE_USER_STATUS,
@@ -222,6 +236,12 @@ from open_webui.config import (
     EXTERNAL_WEB_LOADER_URL,
     EXTERNAL_WEB_SEARCH_API_KEY,
     EXTERNAL_WEB_SEARCH_URL,
+    EZFP_AMOUNT_CONTROL,
+    EZFP_CALLBACK_HOST,
+    EZFP_ENDPOINT,
+    EZFP_KEY,
+    EZFP_PAY_PRIORITY,
+    EZFP_PID,
     FILE_IMAGE_COMPRESSION_HEIGHT,
     FILE_IMAGE_COMPRESSION_WIDTH,
     FIRECRAWL_API_BASE_URL,
@@ -363,8 +383,17 @@ from open_webui.config import (
     SERPSTACK_API_KEY,
     SERPSTACK_HTTPS,
     SHOW_ADMIN_DETAILS,
+    SIGNUP_EMAIL_DOMAIN_WHITELIST,
     SOUGOU_API_SID,
     SOUGOU_API_SK,
+    SPLASH_NOTICE_CONTENT,
+    SPLASH_NOTICE_MEDIA,
+    SPLASH_NOTICE_TITLE,
+    SMTP_HOST,
+    SMTP_PASSWORD,
+    SMTP_PORT,
+    SMTP_SENT_FROM,
+    SMTP_USERNAME,
     STATIC_DIR,
     TAGS_GENERATION_PROMPT_TEMPLATE,
     # Tasks
@@ -383,6 +412,17 @@ from open_webui.config import (
     TOOL_SERVER_CONNECTIONS,
     TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE,
     UPLOAD_DIR,
+    USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE,
+    USAGE_CALCULATE_DEFAULT_REQUEST_PRICE,
+    USAGE_CALCULATE_DEFAULT_TOKEN_PRICE,
+    USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE,
+    USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE,
+    USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE,
+    USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE,
+    USAGE_CALCULATE_MINIMUM_COST,
+    USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE,
+    USAGE_CUSTOM_PRICE_CONFIG,
+    USAGE_DEFAULT_ENCODING_MODEL,
     USER_PERMISSIONS,
     VOICE_MODE_PROMPT_TEMPLATE,
     WEB_FETCH_MAX_CONTENT_LENGTH,
@@ -417,6 +457,7 @@ from open_webui.config import (
     YOUTUBE_LOADER_LANGUAGE,
     YOUTUBE_LOADER_PROXY_URL,
     AppConfig,
+    apply_custom_branding,
     async_reset_config,
     reset_config,
 )
@@ -486,6 +527,7 @@ from open_webui.routers import (
     channels,
     chats,
     configs,
+    credit,
     evaluations,
     files,
     folders,
@@ -646,6 +688,8 @@ async def lifespan(app: FastAPI):
 
     if LICENSE_KEY:
         get_license_data(app, LICENSE_KEY)
+
+    apply_custom_branding(app)
 
     # Create admin account from env vars if specified and no users exist
     if WEBUI_ADMIN_EMAIL and WEBUI_ADMIN_PASSWORD:
@@ -870,6 +914,13 @@ app.state.config.ENABLE_SIGNUP = ENABLE_SIGNUP
 app.state.config.ENABLE_LOGIN_FORM = ENABLE_LOGIN_FORM
 app.state.config.OAUTH_AUTO_REDIRECT = OAUTH_AUTO_REDIRECT
 app.state.config.ENABLE_PASSWORD_CHANGE_FORM = ENABLE_PASSWORD_CHANGE_FORM
+app.state.config.ENABLE_SIGNUP_VERIFY = ENABLE_SIGNUP_VERIFY
+app.state.config.SIGNUP_EMAIL_DOMAIN_WHITELIST = SIGNUP_EMAIL_DOMAIN_WHITELIST
+app.state.config.SMTP_HOST = SMTP_HOST
+app.state.config.SMTP_PORT = SMTP_PORT
+app.state.config.SMTP_USERNAME = SMTP_USERNAME
+app.state.config.SMTP_PASSWORD = SMTP_PASSWORD
+app.state.config.SMTP_SENT_FROM = SMTP_SENT_FROM
 
 app.state.config.ENABLE_API_KEYS = ENABLE_API_KEYS
 app.state.config.ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS = ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS
@@ -894,6 +945,10 @@ app.state.config.DEFAULT_GROUP_ID = DEFAULT_GROUP_ID
 
 app.state.config.PENDING_USER_OVERLAY_CONTENT = PENDING_USER_OVERLAY_CONTENT
 app.state.config.PENDING_USER_OVERLAY_TITLE = PENDING_USER_OVERLAY_TITLE
+app.state.config.ENABLE_SPLASH_NOTICE = ENABLE_SPLASH_NOTICE
+app.state.config.SPLASH_NOTICE_TITLE = SPLASH_NOTICE_TITLE
+app.state.config.SPLASH_NOTICE_CONTENT = SPLASH_NOTICE_CONTENT
+app.state.config.SPLASH_NOTICE_MEDIA = SPLASH_NOTICE_MEDIA
 
 app.state.config.RESPONSE_WATERMARK = RESPONSE_WATERMARK
 
@@ -1369,6 +1424,41 @@ app.state.config.AUTOCOMPLETE_GENERATION_INPUT_MAX_LENGTH = AUTOCOMPLETE_GENERAT
 app.state.config.VOICE_MODE_PROMPT_TEMPLATE = VOICE_MODE_PROMPT_TEMPLATE
 app.state.config.ENABLE_VOICE_MODE_PROMPT = ENABLE_VOICE_MODE_PROMPT
 
+########################################
+#
+# CREDIT AND USAGE
+#
+########################################
+
+app.state.config.CREDIT_NO_CHARGE_EMPTY_RESPONSE = CREDIT_NO_CHARGE_EMPTY_RESPONSE
+app.state.config.CREDIT_NO_CREDIT_MSG = CREDIT_NO_CREDIT_MSG
+app.state.config.CREDIT_EXCHANGE_RATIO = CREDIT_EXCHANGE_RATIO
+app.state.config.CREDIT_DEFAULT_CREDIT = CREDIT_DEFAULT_CREDIT
+app.state.config.USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE = USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE
+app.state.config.USAGE_DEFAULT_ENCODING_MODEL = USAGE_DEFAULT_ENCODING_MODEL
+app.state.config.USAGE_CALCULATE_DEFAULT_REQUEST_PRICE = USAGE_CALCULATE_DEFAULT_REQUEST_PRICE
+app.state.config.USAGE_CALCULATE_DEFAULT_TOKEN_PRICE = USAGE_CALCULATE_DEFAULT_TOKEN_PRICE
+app.state.config.USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE = USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE
+app.state.config.USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE = USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE
+app.state.config.USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE = USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE
+app.state.config.USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE = USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE
+app.state.config.USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE = USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE
+app.state.config.USAGE_CALCULATE_MINIMUM_COST = USAGE_CALCULATE_MINIMUM_COST
+app.state.config.USAGE_CUSTOM_PRICE_CONFIG = USAGE_CUSTOM_PRICE_CONFIG
+app.state.config.EZFP_PAY_PRIORITY = EZFP_PAY_PRIORITY
+app.state.config.EZFP_ENDPOINT = EZFP_ENDPOINT
+app.state.config.EZFP_PID = EZFP_PID
+app.state.config.EZFP_KEY = EZFP_KEY
+app.state.config.EZFP_CALLBACK_HOST = EZFP_CALLBACK_HOST
+app.state.config.EZFP_AMOUNT_CONTROL = EZFP_AMOUNT_CONTROL
+app.state.config.ALIPAY_SERVER_URL = ALIPAY_SERVER_URL
+app.state.config.ALIPAY_APP_ID = ALIPAY_APP_ID
+app.state.config.ALIPAY_APP_PRIVATE_KEY = ALIPAY_APP_PRIVATE_KEY
+app.state.config.ALIPAY_ALIPAY_PUBLIC_KEY = ALIPAY_ALIPAY_PUBLIC_KEY
+app.state.config.ALIPAY_CALLBACK_HOST = ALIPAY_CALLBACK_HOST
+app.state.config.ALIPAY_AMOUNT_CONTROL = ALIPAY_AMOUNT_CONTROL
+app.state.config.ALIPAY_PRODUCT_CODE = ALIPAY_PRODUCT_CODE
+
 
 ########################################
 #
@@ -1425,6 +1515,7 @@ app.include_router(configs.router, prefix='/api/v1/configs', tags=['configs'])
 
 app.include_router(auths.router, prefix='/api/v1/auths', tags=['auths'])
 app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
+app.include_router(credit.router, prefix='/api/v1/credit', tags=['credit'])
 
 
 app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])
@@ -2413,6 +2504,7 @@ async def get_app_config(request: Request):
             'enable_signup_password_confirmation': ENABLE_SIGNUP_PASSWORD_CONFIRMATION,
             'enable_ldap': app.state.config.ENABLE_LDAP,
             'enable_signup': app.state.config.ENABLE_SIGNUP,
+            'enable_signup_verify': app.state.config.ENABLE_SIGNUP_VERIFY,
             'enable_login_form': app.state.config.ENABLE_LOGIN_FORM,
             'enable_websocket': ENABLE_WEBSOCKET_SUPPORT,
             # --- Authenticated: only consumed by logged-in frontend ---
@@ -2500,6 +2592,14 @@ async def get_app_config(request: Request):
                 'ui': {
                     'pending_user_overlay_title': app.state.config.PENDING_USER_OVERLAY_TITLE,
                     'pending_user_overlay_content': app.state.config.PENDING_USER_OVERLAY_CONTENT,
+                    'splash_notice_enabled': app.state.config.ENABLE_SPLASH_NOTICE,
+                    'splash_notice_title': app.state.config.SPLASH_NOTICE_TITLE,
+                    'splash_notice_content': app.state.config.SPLASH_NOTICE_CONTENT,
+                    'splash_notice_media_url': (
+                        f"/api/v1/auths/admin/config/splash-notice/media/{urllib.parse.quote(app.state.config.SPLASH_NOTICE_MEDIA)}"
+                        if app.state.config.SPLASH_NOTICE_MEDIA
+                        else ''
+                    ),
                     'response_watermark': app.state.config.RESPONSE_WATERMARK,
                     'iframe_csp': IFRAME_CSP,
                 },
@@ -2519,6 +2619,14 @@ async def get_app_config(request: Request):
                         'ui': {
                             'pending_user_overlay_title': app.state.config.PENDING_USER_OVERLAY_TITLE,
                             'pending_user_overlay_content': app.state.config.PENDING_USER_OVERLAY_CONTENT,
+                            'splash_notice_enabled': app.state.config.ENABLE_SPLASH_NOTICE,
+                            'splash_notice_title': app.state.config.SPLASH_NOTICE_TITLE,
+                            'splash_notice_content': app.state.config.SPLASH_NOTICE_CONTENT,
+                            'splash_notice_media_url': (
+                                f"/api/v1/auths/admin/config/splash-notice/media/{urllib.parse.quote(app.state.config.SPLASH_NOTICE_MEDIA)}"
+                                if app.state.config.SPLASH_NOTICE_MEDIA
+                                else ''
+                            ),
                         }
                     }
                     if user and user.role == 'pending'
@@ -2976,6 +3084,16 @@ async def check_db_health():
 # --- static assets & files ---
 # Serve build-time static assets (CSS, JS, images, favicon, etc.)
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
+
+
+@app.get('/favicon.png')
+async def get_favicon_png():
+    return FileResponse(STATIC_DIR / 'favicon.png')
+
+
+@app.get('/favicon.ico')
+async def get_favicon_ico():
+    return FileResponse(STATIC_DIR / 'favicon.ico')
 
 
 @app.get('/cache/{path:path}')

@@ -1,6 +1,7 @@
 import json
 from uuid import uuid4
 
+from open_webui.utils.credit.usage import CreditDeduct
 from open_webui.utils.misc import (
     openai_chat_chunk_message_template,
     openai_chat_completion_message_template,
@@ -134,43 +135,52 @@ def convert_response_ollama_to_openai(ollama_response: dict) -> dict:
     return response
 
 
-async def convert_streaming_response_ollama_to_openai(ollama_streaming_response):
+async def convert_streaming_response_ollama_to_openai(user, model_id, form_data, ollama_streaming_response):
     has_tool_calls = False
     # All chunks in a single completion must share the same id (OpenAI spec).
     completion_id = f'chatcmpl-{str(uuid4())}'
     first = True
-    async for data in ollama_streaming_response.body_iterator:
-        data = json.loads(data)
+    with CreditDeduct(
+        user=user,
+        model_id=model_id,
+        body=form_data,
+        is_stream=True,
+    ) as credit_deduct:
+        async for data in ollama_streaming_response.body_iterator:
+            data = json.loads(data)
 
-        model = data.get('model', 'ollama')
-        message_content = data.get('message', {}).get('content', None)
-        reasoning_content = data.get('message', {}).get('thinking', None)
-        tool_calls = data.get('message', {}).get('tool_calls', None)
-        openai_tool_calls = None
+            model = data.get('model', 'ollama')
+            message_content = data.get('message', {}).get('content', None)
+            reasoning_content = data.get('message', {}).get('thinking', None)
+            tool_calls = data.get('message', {}).get('tool_calls', None)
+            openai_tool_calls = None
 
-        if tool_calls:
-            openai_tool_calls = convert_ollama_tool_call_to_openai(tool_calls)
-            has_tool_calls = True
+            if tool_calls:
+                openai_tool_calls = convert_ollama_tool_call_to_openai(tool_calls)
+                has_tool_calls = True
 
-        done = data.get('done', False)
+            done = data.get('done', False)
 
-        usage = None
-        if done:
-            usage = convert_ollama_usage_to_openai(data)
+            usage = None
+            if done:
+                usage = convert_ollama_usage_to_openai(data)
 
-        data = openai_chat_chunk_message_template(model, message_content, reasoning_content, openai_tool_calls, usage)
-        data['id'] = completion_id
+            data = openai_chat_chunk_message_template(model, message_content, reasoning_content, openai_tool_calls, usage)
+            data['id'] = completion_id
 
-        # First chunk must carry delta.role (OpenAI spec).
-        if first:
-            data['choices'][0]['delta']['role'] = 'assistant'
-            first = False
+            # First chunk must carry delta.role (OpenAI spec).
+            if first:
+                data['choices'][0]['delta']['role'] = 'assistant'
+                first = False
 
-        if done and has_tool_calls:
-            data['choices'][0]['finish_reason'] = 'tool_calls'
+            if done and has_tool_calls:
+                data['choices'][0]['finish_reason'] = 'tool_calls'
 
-        line = f'data: {json.dumps(data)}\n\n'
-        yield line
+            line = f'data: {json.dumps(data)}\n\n'
+            credit_deduct.run(line)
+            yield line
+
+        yield credit_deduct.usage_message
 
     yield 'data: [DONE]\n\n'
 

@@ -1,13 +1,8 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Frontend CI — Lint, format check, build, and unit tests
-# Runs on pushes and PRs to main/dev, skipping backend-only changes
-# ─────────────────────────────────────────────────────────────────────────────
+# Frontend CI - Lint, format check, build, and unit tests
+# Runs on PRs to main/dev, skipping backend-only changes
 name: Frontend Build
 
 on:
-  push:
-    branches: [main, dev]
-    paths-ignore: ['backend/**', 'pyproject.toml', 'uv.lock']
   pull_request:
     branches: [main, dev]
     paths-ignore: ['backend/**', 'pyproject.toml', 'uv.lock']
@@ -42,6 +37,8 @@ jobs:
         run: git diff --exit-code
 
       - name: Production build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: npm run build
 
   # ── Vitest unit tests ────────────────────────────────────────────────────

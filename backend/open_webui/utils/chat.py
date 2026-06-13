@@ -33,6 +33,8 @@ from open_webui.utils.filter import (
     get_sorted_filter_ids,
     process_filter_functions,
 )
+from open_webui.utils.credit.usage import CreditDeduct
+from open_webui.utils.credit.utils import check_credit_by_user_id
 from open_webui.utils.models import check_model_access, get_all_models
 from open_webui.utils.payload import convert_payload_openai_to_ollama
 from open_webui.utils.response import (
@@ -156,6 +158,8 @@ async def generate_chat_completion(
     bypass_filter: bool = False,
     bypass_system_prompt: bool = False,
 ):
+    check_credit_by_user_id(user_id=user.id, form_data=form_data)
+
     log.debug(f'generate_chat_completion: {form_data}')
     if BYPASS_MODEL_ACCESS_CONTROL:
         bypass_filter = True
@@ -276,21 +280,37 @@ async def generate_chat_completion(
             return await generate_function_chat_completion(request, form_data, user=user, models=models)
         if model.get('owned_by') == 'ollama':
             # Using /ollama/api/chat endpoint
-            form_data = convert_payload_openai_to_ollama(form_data)
-            response = await generate_ollama_chat_completion(
-                request=request,
-                form_data=form_data,
-                user=user,
-            )
-            if form_data.get('stream'):
+            credit_body = {**form_data}
+            ollama_form_data = convert_payload_openai_to_ollama(form_data)
+
+            previous_skip_ollama_credit = getattr(request.state, 'skip_ollama_credit', False)
+            request.state.skip_ollama_credit = True
+            try:
+                response = await generate_ollama_chat_completion(
+                    request=request,
+                    form_data=ollama_form_data,
+                    user=user,
+                )
+            finally:
+                request.state.skip_ollama_credit = previous_skip_ollama_credit
+
+            if ollama_form_data.get('stream'):
                 response.headers['content-type'] = 'text/event-stream'
                 return StreamingResponse(
-                    convert_streaming_response_ollama_to_openai(response),
+                    convert_streaming_response_ollama_to_openai(user, model_id, credit_body, response),
                     headers=dict(response.headers),
                     background=response.background,
                 )
             else:
-                return convert_response_ollama_to_openai(response)
+                with CreditDeduct(
+                    user=user,
+                    model_id=model_id,
+                    body=credit_body,
+                    is_stream=False,
+                ) as credit_deduct:
+                    response = convert_response_ollama_to_openai(response)
+                    credit_deduct.run(response)
+                    return credit_deduct.add_usage_to_resp(response)
         else:
             return await generate_openai_chat_completion(
                 request=request,

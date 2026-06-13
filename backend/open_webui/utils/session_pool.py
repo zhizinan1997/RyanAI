@@ -104,15 +104,47 @@ async def cleanup_response(
                 await result
 
 
-async def stream_wrapper(response, session=None, content_handler=None):
+async def stream_wrapper(*args, content_handler=None, is_embedding=False):
     """Wrap a stream to ensure cleanup happens even if streaming is interrupted.
 
-    This is more reliable than BackgroundTask which may not run if the client
-    disconnects.  When using the shared pool, ``session`` should be ``None``.
+    Supports both the upstream call shape ``(response, session=None)`` and the
+    OpenWebUI2 credit-aware shape ``(user, model_id, form_data, response, session=None)``.
+    When using the shared pool, ``session`` should be ``None``.
     """
+    user = model_id = form_data = None
+
+    if len(args) >= 4:
+        user, model_id, form_data, response = args[:4]
+        session = args[4] if len(args) >= 5 else None
+        if len(args) >= 6:
+            content_handler = args[5]
+    elif len(args) >= 1:
+        response = args[0]
+        session = args[1] if len(args) >= 2 else None
+        if len(args) >= 3:
+            content_handler = args[2]
+    else:
+        raise TypeError('stream_wrapper expected response arguments')
+
     try:
         stream = content_handler(response.content) if content_handler else response.content
-        async for chunk in stream:
-            yield chunk
+        if user is not None and model_id is not None and form_data is not None:
+            from open_webui.utils.credit.usage import CreditDeduct
+
+            with CreditDeduct(
+                user=user,
+                model_id=model_id,
+                body=form_data,
+                is_stream=True,
+                is_embedding=is_embedding,
+            ) as credit_deduct:
+                async for chunk in stream:
+                    credit_deduct.run(response=chunk)
+                    yield chunk
+
+                yield credit_deduct.usage_message
+        else:
+            async for chunk in stream:
+                yield chunk
     finally:
         await cleanup_response(response, session)

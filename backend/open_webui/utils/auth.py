@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from open_webui.constants import ERROR_MESSAGES
+from open_webui.config import WEBUI_URL
 from open_webui.env import (
     ENABLE_OTEL,
     ENABLE_PASSWORD_VALIDATION,
@@ -27,22 +28,39 @@ from open_webui.env import (
     OFFLINE_MODE,
     PASSWORD_VALIDATION_HINT,
     PASSWORD_VALIDATION_REGEX_PATTERN,
+    REDIS_CLUSTER,
     REDIS_KEY_PREFIX,
+    REDIS_SENTINEL_HOSTS,
+    REDIS_SENTINEL_PORT,
+    REDIS_URL,
     STATIC_DIR,
     TRUSTED_SIGNATURE_KEY,
     WEBUI_AUTH_TRUSTED_EMAIL_HEADER,
+    WEBUI_NAME,
     WEBUI_SECRET_KEY,
     pk,
 )
 from open_webui.models.auths import Auths
 from open_webui.models.users import Users
 from open_webui.utils.access_control import has_permission
+from open_webui.utils.redis import get_redis_connection, get_sentinels_from_env
+from open_webui.utils.smtp import send_email
 from pytz import UTC
 
 log = logging.getLogger(__name__)
 
 SESSION_SECRET = WEBUI_SECRET_KEY
 ALGORITHM = 'HS256'
+
+VERIFY_EMAIL_TEMPLATE = """<!doctype html>
+<html>
+<body style="font-family: Arial, sans-serif; color: #111827;">
+  <h2>Verify your email</h2>
+  <p>Please click the link below to activate your account.</p>
+  <p><a href="%(link)s">Activate account</a></p>
+  <p>If you did not request this, you can ignore this email.</p>
+</body>
+</html>"""
 
 ##############
 # Auth Utils
@@ -286,6 +304,51 @@ def get_http_authorization_cred(auth_header: str | None):
         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
     except Exception:
         return None
+
+
+def get_email_code_key(code: str) -> str:
+    prefix = f'{REDIS_KEY_PREFIX}:' if REDIS_KEY_PREFIX else ''
+    return f'{prefix}email_verify:{code}'
+
+
+def _get_email_verify_redis():
+    redis = get_redis_connection(
+        redis_url=REDIS_URL,
+        redis_sentinels=get_sentinels_from_env(REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT),
+        redis_cluster=REDIS_CLUSTER,
+    )
+    if not redis:
+        raise HTTPException(status_code=500, detail='Redis is not configured.')
+    return redis
+
+
+def send_verify_email(email: str):
+    redis = _get_email_verify_redis()
+    code = f'{uuid.uuid4().hex}{uuid.uuid1().hex}'
+    redis.set(
+        name=get_email_code_key(code=code),
+        value=email.lower(),
+        ex=timedelta(days=1),
+    )
+
+    base_url = WEBUI_URL.value.rstrip('/')
+    link = f'{base_url}/api/v1/auths/signup_verify/{code}'
+    title = f'{WEBUI_NAME} Email Verify'
+    send_email(
+        receiver=email,
+        subject=title,
+        body=VERIFY_EMAIL_TEMPLATE % {'link': link},
+    )
+
+
+def verify_email_by_code(code: str) -> str | None:
+    redis = _get_email_verify_redis()
+    email = redis.get(name=get_email_code_key(code=code))
+    if isinstance(email, bytes):
+        email = email.decode('utf-8')
+    if email:
+        redis.delete(get_email_code_key(code=code))
+    return email
 
 
 async def get_current_user(

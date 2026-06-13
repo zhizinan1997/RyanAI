@@ -4,6 +4,7 @@ import base64
 import io
 import logging
 import time
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,14 +13,17 @@ from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import ENABLE_PROFILE_IMAGE_URL_FORWARDING, PROFILE_IMAGE_ALLOWED_MIME_TYPES, STATIC_DIR
 from open_webui.internal.db import get_async_session
 from open_webui.models.auths import Auths
+from open_webui.models.credits import AddCreditForm, Credits, SetCreditForm, SetCreditFormDetail
 from open_webui.models.groups import Groups
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.models.users import (
+    UserCreditUpdateForm,
     UserGroupIdsListResponse,
     UserGroupIdsModel,
     UserInfoListResponse,
     UserInfoResponse,
     UserModel,
+    UserModelResponse,
     UserRoleUpdateForm,
     Users,
     UserSettings,
@@ -56,6 +60,13 @@ router = APIRouter()
 PAGE_ITEM_COUNT = 30
 
 
+def _get_credit_map(user_ids: list[str]) -> dict[str, str]:
+    return {
+        credit.user_id: '%.4f' % credit.credit
+        for credit in Credits.list_credits_by_user_id(user_ids=user_ids)
+    }
+
+
 @router.get('/', response_model=UserGroupIdsListResponse)
 async def get_users(
     query: str | None = None,
@@ -88,6 +99,7 @@ async def get_users(
     # Fetch groups for all users in a single query to avoid N+1
     user_ids = [user.id for user in users]
     user_groups = await Groups.get_groups_by_member_ids(user_ids, db=db)
+    credit_map = _get_credit_map(user_ids)
 
     return {
         'users': [
@@ -95,6 +107,7 @@ async def get_users(
                 **{
                     **user.model_dump(),
                     'group_ids': [group.id for group in user_groups.get(user.id, [])],
+                    'credit': credit_map.get(user.id, 0),
                 }
             )
             for user in users
@@ -108,7 +121,19 @@ async def get_all_users(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    return await Users.get_users(db=db)
+    result = await Users.get_users(db=db)
+    users = result['users']
+    credit_map = _get_credit_map([user.id for user in users])
+    return {
+        **result,
+        'users': [
+            {
+                **user.model_dump(),
+                'credit': credit_map.get(user.id, 0),
+            }
+            for user in users
+        ],
+    }
 
 
 @router.get('/search', response_model=UserInfoListResponse)
@@ -412,6 +437,7 @@ async def update_user_info_by_session_user(  # PATCH-style merge
 class UserActiveResponse(UserStatus):
     name: str
     profile_image_url: str | None = None
+    credit: str | float | None = 0
     groups: list | None = []
 
     is_active: bool
@@ -427,6 +453,7 @@ async def get_user_by_id(user_id: str, user=Depends(get_admin_user), db: AsyncSe
         return UserActiveResponse(
             **{
                 **user.model_dump(),
+                'credit': _get_credit_map([user_id]).get(user_id, 0),
                 'groups': [{'id': group.id, 'name': group.name} for group in groups],
                 'is_active': await Users.is_user_active(user_id, db=db),
             }
@@ -539,8 +566,9 @@ async def get_user_active_status_by_id(
 ############################
 
 
-@router.post('/{user_id}/update', response_model=UserModel | None)
+@router.post('/{user_id}/update', response_model=UserModelResponse | None)
 async def update_user_by_id(
+    request: Request,
     user_id: str,
     form_data: UserUpdateForm,
     session_user: UserModel = Depends(get_admin_user),
@@ -616,11 +644,34 @@ async def update_user_by_id(
             updated_user = user
 
         if updated_user:
-            # If the role changed, disconnect all socket sessions so stale
-            # privileges cached in SESSION_POOL are invalidated.
             if updated_user.role != user.role:
                 await disconnect_user_sessions(user_id)
-            return updated_user
+
+            if form_data.credit is not None:
+                credit = Credits.set_credit_by_user_id(
+                    SetCreditForm(
+                        user_id=user_id,
+                        credit=Decimal(str(form_data.credit)),
+                        detail=SetCreditFormDetail(
+                            api_path=str(request.url),
+                            api_params={'credit': form_data.credit},
+                            desc=f'updated by {session_user.name}',
+                        ),
+                    )
+                )
+                return UserModelResponse(
+                    **{
+                        **updated_user.model_dump(),
+                        'credit': '%.4f' % credit.credit,
+                    }
+                )
+
+            return UserModelResponse(
+                **{
+                    **updated_user.model_dump(),
+                    'credit': _get_credit_map([user_id]).get(user_id, 0),
+                }
+            )
 
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -631,6 +682,58 @@ async def update_user_by_id(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=ERROR_MESSAGES.USER_NOT_FOUND,
     )
+
+
+############################
+# UpdateCreditByUserId
+############################
+
+
+@router.put('/{user_id}/credit', response_model=None)
+async def update_credit_by_user_id(
+    request: Request,
+    user_id: str,
+    form_data: UserCreditUpdateForm,
+    session_user: UserModel = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    user = await Users.get_user_by_id(user_id, db=db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.USER_NOT_FOUND,
+        )
+
+    if form_data.amount is None and form_data.credit is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='amount or credit must be specified',
+        )
+
+    detail = SetCreditFormDetail(
+        api_path=str(request.url),
+        api_params=form_data.model_dump(),
+        desc=f'updated by {session_user.name}',
+    )
+
+    if form_data.credit is not None:
+        Credits.set_credit_by_user_id(
+            form_data=SetCreditForm(
+                user_id=user_id,
+                credit=Decimal(str(form_data.credit)),
+                detail=detail,
+            )
+        )
+    else:
+        Credits.add_credit_by_user_id(
+            form_data=AddCreditForm(
+                user_id=user_id,
+                amount=Decimal(str(form_data.amount)),
+                detail=detail,
+            )
+        )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 ############################

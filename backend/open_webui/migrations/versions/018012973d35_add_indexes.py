@@ -1,7 +1,7 @@
 """Add indexes
 
 Revision ID: 018012973d35
-Revises: d31026856c01
+Revises: 97c08d196e3d
 Create Date: 2025-08-13 03:00:00.000000
 
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = '018012973d35'
-down_revision = 'd31026856c01'
+down_revision = '97c08d196e3d'
 branch_labels = None
 depends_on = None
 

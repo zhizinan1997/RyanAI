@@ -132,7 +132,11 @@ class JSONField(types.TypeDecorator):  # TEXT-backed JSON storage
         return json.dumps(value) if value is not None else None
 
     def process_result_value(self, value: _T | None, dialect: Dialect) -> Any:
-        return json.loads(value) if value is not None else None
+        if value is None:
+            return None
+        if isinstance(value, (str, bytes, bytearray)):
+            return json.loads(value)
+        return value
 
     def copy(self, **kwargs: Any) -> Self:
         return JSONField(length=self.impl.length)

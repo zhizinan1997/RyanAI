@@ -1,0 +1,8 @@
+- commit message 必须遵循格式：<type>(<scope>): <subject>
+- 使用纯英文，避免使用中文或其他语言
+- type 可选值：feat, fix, docs, style, refactor, perf, test, chore
+- scope 描述影响的模块或功能，不能为空
+- subject 首字母小写，简洁明了，不超过 50 字符，且不以句号结尾
+- 如需详细说明，在标题后空行添加正文，每行不超过 72 字符
+- 如有重大变更，在正文末尾添加 BREAKING CHANGE: 并说明变更内容
+- 遵循语义化版本控制，保持提交信息一致性和可追溯性

@@ -40,6 +40,8 @@ from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access, has_connection_access
 from open_webui.utils.anthropic import get_anthropic_models, is_anthropic_url
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.credit.usage import CreditDeduct
+from open_webui.utils.credit.utils import check_credit_by_user_id
 from open_webui.utils.headers import get_custom_headers, include_user_info_headers
 from open_webui.utils.misc import (
     convert_logit_bias_input_to_json,
@@ -78,6 +80,20 @@ _STRIP_PROXY_HEADERS = frozenset({'Content-Encoding', 'Content-Length', 'Transfe
 def _clean_proxy_headers(raw_headers) -> dict:
     """Return a copy of *raw_headers* with stale encoding headers removed."""
     return {k: v for k, v in raw_headers.items() if k not in _STRIP_PROXY_HEADERS}
+
+
+def _embedding_credit_body(form_data: dict) -> dict:
+    input_data = form_data.get('input', '')
+    if isinstance(input_data, list):
+        input_text = '\n'.join(str(item) for item in input_data)
+    else:
+        input_text = str(input_data)
+
+    return {
+        'model': form_data.get('model'),
+        'messages': [{'role': 'user', 'content': input_text}],
+        'metadata': form_data.get('metadata') or {},
+    }
 
 
 async def send_get_request(
@@ -1069,6 +1085,8 @@ async def generate_chat_completion(
         bypass_filter = True
     bypass_system_prompt = getattr(request.state, 'bypass_system_prompt', False)
 
+    check_credit_by_user_id(user_id=user.id, form_data=form_data)
+
     idx = 0
 
     payload = {**form_data}
@@ -1244,7 +1262,7 @@ async def generate_chat_completion(
 
             streaming = True
             return StreamingResponse(
-                stream_wrapper(r, content_handler=stream_chunks_handler),
+                stream_wrapper(user, model_id, form_data, r, None, stream_chunks_handler),
                 status_code=r.status,
                 headers=_clean_proxy_headers(r.headers),
             )
@@ -1265,7 +1283,14 @@ async def generate_chat_completion(
             if is_responses and isinstance(response, dict):
                 response = convert_responses_result(response)
 
-            return response
+            with CreditDeduct(
+                user=user,
+                model_id=model_id,
+                body=form_data,
+                is_stream=False,
+            ) as credit_deduct:
+                credit_deduct.run(response)
+                return credit_deduct.add_usage_to_resp(response)
     except Exception as e:
         log.exception(e)
 
@@ -1290,6 +1315,10 @@ async def embeddings(request: Request, form_data: dict, user):
     Returns:
         dict: OpenAI-compatible embeddings response.
     """
+    credit_body = _embedding_credit_body(form_data)
+    if user:
+        check_credit_by_user_id(user_id=user.id, form_data=credit_body, is_embedding=True)
+
     idx = 0
     # Prepare payload/body
     body = json.dumps(form_data)
@@ -1350,7 +1379,7 @@ async def embeddings(request: Request, form_data: dict, user):
         if 'text/event-stream' in r.headers.get('Content-Type', ''):
             streaming = True
             return StreamingResponse(
-                stream_wrapper(r),
+                stream_wrapper(user, model_id, credit_body, r, is_embedding=True),
                 status_code=r.status,
                 headers=_clean_proxy_headers(r.headers),
             )
@@ -1365,6 +1394,17 @@ async def embeddings(request: Request, form_data: dict, user):
                     return JSONResponse(status_code=r.status, content=response_data)
                 else:
                     return PlainTextResponse(status_code=r.status, content=response_data)
+
+            if user:
+                with CreditDeduct(
+                    user=user,
+                    model_id=model_id,
+                    body=credit_body,
+                    is_stream=False,
+                    is_embedding=True,
+                ) as credit_deduct:
+                    credit_deduct.run(response_data if isinstance(response_data, dict) else credit_body)
+                    response_data = credit_deduct.add_usage_to_resp(response_data)
 
             return response_data
     except Exception as e:

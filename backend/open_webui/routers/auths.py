@@ -3,16 +3,18 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 import re
 import time
-import urllib
+import urllib.parse
 import uuid
+from pathlib import Path
 from ssl import CERT_NONE, CERT_REQUIRED, PROTOCOL_TLS
 from typing import List, Optional
 
 from aiohttp import ClientSession
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from ldap3 import NONE, Connection, Server, Tls
 from ldap3.utils.conv import escape_filter_chars
 from open_webui.config import (
@@ -23,6 +25,7 @@ from open_webui.config import (
     OAUTH_PROVIDERS,
     OPENID_END_SESSION_ENDPOINT,
     OPENID_PROVIDER_URL,
+    UPLOAD_DIR,
 )
 from open_webui.constants import ERROR_MESSAGES, WEBHOOK_MESSAGES
 from open_webui.env import (
@@ -50,6 +53,7 @@ from open_webui.models.auths import (
     Token,
     UpdatePasswordForm,
 )
+from open_webui.models.credits import Credits
 from open_webui.models.groups import Groups
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.models.users import (
@@ -70,7 +74,9 @@ from open_webui.utils.auth import (
     get_password_hash,
     get_verified_user,
     invalidate_token,
+    send_verify_email,
     validate_password,
+    verify_email_by_code,
     verify_password,
 )
 from open_webui.utils.groups import apply_default_group_assignment
@@ -79,7 +85,7 @@ from open_webui.utils.oauth import auth_manager_config
 from open_webui.utils.rate_limit import RateLimiter
 from open_webui.utils.redis import get_redis_client
 from open_webui.utils.webhook import post_webhook
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -89,6 +95,48 @@ log = logging.getLogger(__name__)
 # Forgive us our failed attempts, as we forgive those
 # who exceed their allotted rate against this gate.
 signin_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=5 * 3, window=60 * 3)
+
+
+SPLASH_NOTICE_MEDIA_DIR = UPLOAD_DIR / 'splash_notice'
+SPLASH_NOTICE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+SPLASH_NOTICE_MEDIA_MAX_SIZE = 15 * 1024 * 1024
+SPLASH_NOTICE_MEDIA_CONTENT_TYPES = {
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+}
+SPLASH_NOTICE_MEDIA_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+
+
+def get_splash_notice_media_url(file_name: str | None) -> str:
+    if not file_name:
+        return ''
+    return f'/api/v1/auths/admin/config/splash-notice/media/{urllib.parse.quote(file_name)}'
+
+
+def get_splash_notice_media_file_path(file_name: str | None) -> Path | None:
+    if not file_name:
+        return None
+
+    candidate = (SPLASH_NOTICE_MEDIA_DIR / Path(file_name).name).resolve()
+    media_dir = SPLASH_NOTICE_MEDIA_DIR.resolve()
+
+    if media_dir not in candidate.parents or not candidate.is_file():
+        return None
+
+    return candidate
+
+
+def delete_splash_notice_media_file(file_name: str | None) -> None:
+    file_path = get_splash_notice_media_file_path(file_name)
+    if file_path is None:
+        return
+
+    try:
+        file_path.unlink(missing_ok=True)
+    except Exception as e:
+        log.warning(f'Failed to delete splash notice media {file_name}: {e}')
 
 
 async def create_session_response(
@@ -129,6 +177,7 @@ async def create_session_response(
         )
 
     user_permissions = await get_permissions(user.id, request.app.state.config.USER_PERMISSIONS, db=db)
+    credit = Credits.init_credit_by_user_id(user.id)
 
     return {
         'token': token,
@@ -140,6 +189,7 @@ async def create_session_response(
         'role': user.role,
         'profile_image_url': f'/api/v1/users/{user.id}/profile/image',
         'permissions': user_permissions,
+        'credit': credit.credit,
     }
 
 
@@ -151,6 +201,7 @@ async def create_session_response(
 class SessionUserResponse(Token, UserProfileImageResponse):
     expires_at: int | None = None
     permissions: dict | None = None
+    credit: float | None = None
 
 
 class SessionUserInfoResponse(SessionUserResponse, UserStatus):
@@ -202,6 +253,7 @@ async def get_session_user(
         )
 
     user_permissions = await get_permissions(user.id, request.app.state.config.USER_PERMISSIONS, db=db)
+    credit = Credits.init_credit_by_user_id(user.id)
 
     response_data = {
         'token': token,
@@ -219,6 +271,7 @@ async def get_session_user(
         'status_message': user.status_message,
         'status_expires_at': user.status_expires_at,
         'permissions': user_permissions,
+        'credit': credit.credit,
     }
 
     return response_data
@@ -697,13 +750,16 @@ async def signup_handler(
     # If has_users() is checked before insert, concurrent requests during
     # first-user registration can all see an empty table and each get admin.
     hashed = get_password_hash(password)
+    has_users = await Users.has_users(db=db)
+    should_verify_email = has_users and request.app.state.config.ENABLE_SIGNUP_VERIFY
+    role = 'pending' if should_verify_email else request.app.state.config.DEFAULT_USER_ROLE
 
     user = await Auths.insert_new_auth(
         email=email.lower(),
         password=hashed,
         name=name,
         profile_image_url=profile_image_url,
-        role=request.app.state.config.DEFAULT_USER_ROLE,
+        role=role,
         db=db,
     )
     if not user:
@@ -715,6 +771,8 @@ async def signup_handler(
         await Users.update_user_role_by_id(user.id, 'admin', db=db)
         user = await Users.get_user_by_id(user.id, db=db)
         request.app.state.config.ENABLE_SIGNUP = False
+    elif should_verify_email:
+        send_verify_email(email=email.lower())
 
     if request.app.state.config.WEBHOOK_URL:
         await post_webhook(
@@ -760,6 +818,20 @@ async def signup(
     if not validate_email_format(form_data.email.lower()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.INVALID_EMAIL_FORMAT)
 
+    if has_users:
+        email_domain_whitelist = [
+            domain.strip().lower()
+            for domain in request.app.state.config.SIGNUP_EMAIL_DOMAIN_WHITELIST.split(',')
+            if domain.strip()
+        ]
+        if email_domain_whitelist:
+            domain = form_data.email.split('@')[-1].lower()
+            if domain not in email_domain_whitelist:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    detail=f'Only emails from {request.app.state.config.SIGNUP_EMAIL_DOMAIN_WHITELIST} are allowed',
+                )
+
     if await Users.get_user_by_email(form_data.email.lower(), db=db):
         raise HTTPException(400, detail=ERROR_MESSAGES.EMAIL_TAKEN)
 
@@ -783,6 +855,20 @@ async def signup(
     except Exception as err:
         log.error(f'Signup error: {str(err)}')
         raise HTTPException(500, detail='An internal error occurred during signup.')
+
+
+@router.get('/signup_verify/{code}')
+async def signup_verify(request: Request, code: str, db: AsyncSession = Depends(get_async_session)):
+    email = verify_email_by_code(code=code)
+    if not email:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail='Invalid code')
+
+    user = await Users.get_user_by_email(email, db=db)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    await Users.update_user_role_by_id(user.id, 'user', db=db)
+    return RedirectResponse(url=request.app.state.config.WEBUI_URL or '/')
 
 
 @router.post('/signout')
@@ -1004,6 +1090,13 @@ async def get_admin_config(request: Request, user=Depends(get_admin_user)):
         'ADMIN_EMAIL': request.app.state.config.ADMIN_EMAIL,
         'WEBUI_URL': request.app.state.config.WEBUI_URL,
         'ENABLE_SIGNUP': request.app.state.config.ENABLE_SIGNUP,
+        'ENABLE_SIGNUP_VERIFY': request.app.state.config.ENABLE_SIGNUP_VERIFY,
+        'SIGNUP_EMAIL_DOMAIN_WHITELIST': request.app.state.config.SIGNUP_EMAIL_DOMAIN_WHITELIST,
+        'SMTP_HOST': request.app.state.config.SMTP_HOST,
+        'SMTP_PORT': request.app.state.config.SMTP_PORT,
+        'SMTP_USERNAME': request.app.state.config.SMTP_USERNAME,
+        'SMTP_PASSWORD': request.app.state.config.SMTP_PASSWORD,
+        'SMTP_SENT_FROM': request.app.state.config.SMTP_SENT_FROM,
         'ENABLE_API_KEYS': request.app.state.config.ENABLE_API_KEYS,
         'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS': request.app.state.config.ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS,
         'API_KEYS_ALLOWED_ENDPOINTS': request.app.state.config.API_KEYS_ALLOWED_ENDPOINTS,
@@ -1025,6 +1118,10 @@ async def get_admin_config(request: Request, user=Depends(get_admin_user)):
         'ENABLE_USER_STATUS': request.app.state.config.ENABLE_USER_STATUS,
         'PENDING_USER_OVERLAY_TITLE': request.app.state.config.PENDING_USER_OVERLAY_TITLE,
         'PENDING_USER_OVERLAY_CONTENT': request.app.state.config.PENDING_USER_OVERLAY_CONTENT,
+        'ENABLE_SPLASH_NOTICE': request.app.state.config.ENABLE_SPLASH_NOTICE,
+        'SPLASH_NOTICE_TITLE': request.app.state.config.SPLASH_NOTICE_TITLE,
+        'SPLASH_NOTICE_CONTENT': request.app.state.config.SPLASH_NOTICE_CONTENT,
+        'SPLASH_NOTICE_MEDIA_URL': get_splash_notice_media_url(request.app.state.config.SPLASH_NOTICE_MEDIA),
         'RESPONSE_WATERMARK': request.app.state.config.RESPONSE_WATERMARK,
     }
 
@@ -1034,6 +1131,13 @@ class AdminConfig(BaseModel):
     ADMIN_EMAIL: str | None = None
     WEBUI_URL: str
     ENABLE_SIGNUP: bool
+    ENABLE_SIGNUP_VERIFY: bool = Field(default=False)
+    SIGNUP_EMAIL_DOMAIN_WHITELIST: str = Field(default='')
+    SMTP_HOST: str = Field(default='')
+    SMTP_PORT: str = Field(default='465')
+    SMTP_USERNAME: str = Field(default='')
+    SMTP_PASSWORD: str = Field(default='')
+    SMTP_SENT_FROM: str = Field(default='')
     ENABLE_API_KEYS: bool
     ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: bool
     API_KEYS_ALLOWED_ENDPOINTS: str
@@ -1055,6 +1159,10 @@ class AdminConfig(BaseModel):
     ENABLE_USER_STATUS: bool
     PENDING_USER_OVERLAY_TITLE: str | None = None
     PENDING_USER_OVERLAY_CONTENT: str | None = None
+    ENABLE_SPLASH_NOTICE: bool = Field(default=False)
+    SPLASH_NOTICE_TITLE: str | None = None
+    SPLASH_NOTICE_CONTENT: str | None = None
+    SPLASH_NOTICE_MEDIA_URL: str | None = None
     RESPONSE_WATERMARK: str | None = None
 
 
@@ -1064,6 +1172,13 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     request.app.state.config.ADMIN_EMAIL = form_data.ADMIN_EMAIL
     request.app.state.config.WEBUI_URL = form_data.WEBUI_URL
     request.app.state.config.ENABLE_SIGNUP = form_data.ENABLE_SIGNUP
+    request.app.state.config.ENABLE_SIGNUP_VERIFY = form_data.ENABLE_SIGNUP_VERIFY
+    request.app.state.config.SIGNUP_EMAIL_DOMAIN_WHITELIST = form_data.SIGNUP_EMAIL_DOMAIN_WHITELIST
+    request.app.state.config.SMTP_HOST = form_data.SMTP_HOST
+    request.app.state.config.SMTP_PORT = form_data.SMTP_PORT
+    request.app.state.config.SMTP_USERNAME = form_data.SMTP_USERNAME
+    request.app.state.config.SMTP_PASSWORD = form_data.SMTP_PASSWORD
+    request.app.state.config.SMTP_SENT_FROM = form_data.SMTP_SENT_FROM
 
     request.app.state.config.ENABLE_API_KEYS = form_data.ENABLE_API_KEYS
     request.app.state.config.ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS = form_data.ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS
@@ -1104,6 +1219,9 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
 
     request.app.state.config.PENDING_USER_OVERLAY_TITLE = form_data.PENDING_USER_OVERLAY_TITLE
     request.app.state.config.PENDING_USER_OVERLAY_CONTENT = form_data.PENDING_USER_OVERLAY_CONTENT
+    request.app.state.config.ENABLE_SPLASH_NOTICE = form_data.ENABLE_SPLASH_NOTICE
+    request.app.state.config.SPLASH_NOTICE_TITLE = form_data.SPLASH_NOTICE_TITLE
+    request.app.state.config.SPLASH_NOTICE_CONTENT = form_data.SPLASH_NOTICE_CONTENT
 
     request.app.state.config.RESPONSE_WATERMARK = form_data.RESPONSE_WATERMARK
 
@@ -1112,6 +1230,13 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         'ADMIN_EMAIL': request.app.state.config.ADMIN_EMAIL,
         'WEBUI_URL': request.app.state.config.WEBUI_URL,
         'ENABLE_SIGNUP': request.app.state.config.ENABLE_SIGNUP,
+        'ENABLE_SIGNUP_VERIFY': request.app.state.config.ENABLE_SIGNUP_VERIFY,
+        'SIGNUP_EMAIL_DOMAIN_WHITELIST': request.app.state.config.SIGNUP_EMAIL_DOMAIN_WHITELIST,
+        'SMTP_HOST': request.app.state.config.SMTP_HOST,
+        'SMTP_PORT': request.app.state.config.SMTP_PORT,
+        'SMTP_USERNAME': request.app.state.config.SMTP_USERNAME,
+        'SMTP_PASSWORD': request.app.state.config.SMTP_PASSWORD,
+        'SMTP_SENT_FROM': request.app.state.config.SMTP_SENT_FROM,
         'ENABLE_API_KEYS': request.app.state.config.ENABLE_API_KEYS,
         'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS': request.app.state.config.ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS,
         'API_KEYS_ALLOWED_ENDPOINTS': request.app.state.config.API_KEYS_ALLOWED_ENDPOINTS,
@@ -1133,8 +1258,85 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         'ENABLE_USER_STATUS': request.app.state.config.ENABLE_USER_STATUS,
         'PENDING_USER_OVERLAY_TITLE': request.app.state.config.PENDING_USER_OVERLAY_TITLE,
         'PENDING_USER_OVERLAY_CONTENT': request.app.state.config.PENDING_USER_OVERLAY_CONTENT,
+        'ENABLE_SPLASH_NOTICE': request.app.state.config.ENABLE_SPLASH_NOTICE,
+        'SPLASH_NOTICE_TITLE': request.app.state.config.SPLASH_NOTICE_TITLE,
+        'SPLASH_NOTICE_CONTENT': request.app.state.config.SPLASH_NOTICE_CONTENT,
+        'SPLASH_NOTICE_MEDIA_URL': get_splash_notice_media_url(request.app.state.config.SPLASH_NOTICE_MEDIA),
         'RESPONSE_WATERMARK': request.app.state.config.RESPONSE_WATERMARK,
     }
+
+
+@router.post('/admin/config/splash-notice/media')
+async def upload_splash_notice_media(
+    request: Request,
+    media: UploadFile = File(...),
+    user=Depends(get_admin_user),
+):
+    if not media.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No file selected')
+
+    extension = os.path.splitext(media.filename)[1].lower()
+    content_type = media.content_type or ''
+
+    if content_type not in SPLASH_NOTICE_MEDIA_CONTENT_TYPES or extension not in SPLASH_NOTICE_MEDIA_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Unsupported image format. Please upload a PNG, JPG, GIF, or WebP file.',
+        )
+
+    contents = await media.read()
+    if not contents:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Uploaded file is empty')
+
+    if len(contents) > SPLASH_NOTICE_MEDIA_MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Image is too large. Please keep it under 15 MB.',
+        )
+
+    file_name = f'{uuid.uuid4().hex}{extension}'
+    file_path = SPLASH_NOTICE_MEDIA_DIR / file_name
+
+    with open(file_path, 'wb') as output:
+        output.write(contents)
+
+    previous_file_name = request.app.state.config.SPLASH_NOTICE_MEDIA
+    request.app.state.config.SPLASH_NOTICE_MEDIA = file_name
+    delete_splash_notice_media_file(previous_file_name)
+
+    return {
+        'status': True,
+        'url': get_splash_notice_media_url(file_name),
+    }
+
+
+@router.delete('/admin/config/splash-notice/media')
+async def delete_splash_notice_media(
+    request: Request,
+    user=Depends(get_admin_user),
+):
+    previous_file_name = request.app.state.config.SPLASH_NOTICE_MEDIA
+    request.app.state.config.SPLASH_NOTICE_MEDIA = ''
+    delete_splash_notice_media_file(previous_file_name)
+
+    return {'status': True}
+
+
+@router.get('/admin/config/splash-notice/media/{file_name}')
+async def get_splash_notice_media(
+    request: Request,
+    file_name: str,
+):
+    configured_file_name = request.app.state.config.SPLASH_NOTICE_MEDIA
+
+    if not configured_file_name or Path(file_name).name != Path(configured_file_name).name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    file_path = get_splash_notice_media_file_path(configured_file_name)
+    if file_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    return FileResponse(file_path)
 
 
 class LdapServerConfig(BaseModel):

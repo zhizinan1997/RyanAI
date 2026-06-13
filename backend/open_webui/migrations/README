@@ -1,4 +1,6 @@
 Generic single-database configuration.
 
 Create new migrations with
-DATABASE_URL=<replace with actual url> alembic revision --autogenerate -m "a description"
+PYTHONPATH=../backend DATABASE_URL=sqlite:///data/webui.db alembic revision --autogenerate -m "a description"
+
+Update custom_migrations when new migrations are added.

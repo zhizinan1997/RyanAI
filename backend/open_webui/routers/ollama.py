@@ -36,6 +36,8 @@ from open_webui.models.models import Models
 from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.credit.usage import CreditDeduct
+from open_webui.utils.credit.utils import check_credit_by_user_id
 from open_webui.utils.headers import include_user_info_headers
 from open_webui.utils.misc import calculate_sha256
 from open_webui.utils.payload import (
@@ -57,6 +59,29 @@ _STRIP_PROXY_HEADERS = frozenset({'Content-Encoding', 'Content-Length', 'Transfe
 def _clean_proxy_headers(raw_headers) -> dict:
     """Return a copy of *raw_headers* with stale encoding headers removed."""
     return {k: v for k, v in raw_headers.items() if k not in _STRIP_PROXY_HEADERS}
+
+
+def _chat_credit_body(model: str, messages: list | None, metadata: dict | None = None, **extra) -> dict:
+    return {
+        'model': model,
+        'messages': messages or [],
+        'metadata': metadata or {},
+        **extra,
+    }
+
+
+def _prompt_credit_body(model: str, prompt: str | list | None, metadata: dict | None = None, **extra) -> dict:
+    if isinstance(prompt, list):
+        content = '\n'.join(str(item) for item in prompt)
+    else:
+        content = str(prompt or '')
+
+    return _chat_credit_body(
+        model=model,
+        messages=[{'role': 'user', 'content': content}],
+        metadata=metadata,
+        **extra,
+    )
 
 
 async def send_get_request(
@@ -97,6 +122,9 @@ async def send_request(
     stream: bool = False,
     content_type: str | None = None,
     metadata: dict | None = None,
+    credit_model_id: str | None = None,
+    credit_body: dict | None = None,
+    is_embedding: bool = False,
 ):
     r = None
     streaming = False
@@ -144,16 +172,41 @@ async def send_request(
                 response_headers['Content-Type'] = content_type
 
             streaming = True
+            if user is not None and credit_model_id is not None and credit_body is not None:
+                response_stream = stream_wrapper(
+                    user,
+                    credit_model_id,
+                    credit_body,
+                    r,
+                    None,
+                    is_embedding=is_embedding,
+                )
+            else:
+                response_stream = stream_wrapper(r)
+
             return StreamingResponse(
-                stream_wrapper(r),
+                response_stream,
                 status_code=r.status,
                 headers=response_headers,
             )
         else:
             try:
-                return await r.json()
+                response_data = await r.json()
             except Exception:
                 return None
+
+            if user is not None and credit_model_id is not None and credit_body is not None:
+                with CreditDeduct(
+                    user=user,
+                    model_id=credit_model_id,
+                    body=credit_body,
+                    is_stream=False,
+                    is_embedding=is_embedding,
+                ) as credit_deduct:
+                    credit_deduct.run(response_data if isinstance(response_data, dict) else credit_body)
+                    response_data = credit_deduct.add_usage_to_resp(response_data)
+
+            return response_data
 
     except HTTPException:
         raise
@@ -776,6 +829,9 @@ async def embed(
     log.info(f'generate_ollama_batch_embeddings {form_data}')
     await check_model_access(user, await Models.get_model_by_id(form_data.model), BYPASS_MODEL_ACCESS_CONTROL)
     await validate_ollama_backend_idx(request, form_data.model, url_idx, user)
+    credit_model_id = form_data.model
+    credit_body = _prompt_credit_body(credit_model_id, form_data.input)
+    check_credit_by_user_id(user_id=user.id, form_data=credit_body, is_embedding=True)
 
     if url_idx is None:
         model = form_data.model
@@ -803,6 +859,9 @@ async def embed(
         payload=form_data.model_dump_json(exclude_none=True).encode(),
         key=key,
         user=user,
+        credit_model_id=credit_model_id,
+        credit_body=credit_body,
+        is_embedding=True,
     )
 
 
@@ -830,6 +889,9 @@ async def embeddings(
     log.info(f'generate_ollama_embeddings {form_data}')
     await check_model_access(user, await Models.get_model_by_id(form_data.model), BYPASS_MODEL_ACCESS_CONTROL)
     await validate_ollama_backend_idx(request, form_data.model, url_idx, user)
+    credit_model_id = form_data.model
+    credit_body = _prompt_credit_body(credit_model_id, form_data.prompt)
+    check_credit_by_user_id(user_id=user.id, form_data=credit_body, is_embedding=True)
 
     if url_idx is None:
         model = form_data.model
@@ -857,6 +919,9 @@ async def embeddings(
         payload=form_data.model_dump_json(exclude_none=True).encode(),
         key=key,
         user=user,
+        credit_model_id=credit_model_id,
+        credit_body=credit_body,
+        is_embedding=True,
     )
 
 
@@ -891,6 +956,9 @@ async def generate_completion(
 
     await check_model_access(user, await Models.get_model_by_id(form_data.model), BYPASS_MODEL_ACCESS_CONTROL)
     await validate_ollama_backend_idx(request, form_data.model, url_idx, user)
+    credit_model_id = form_data.model
+    credit_body = _prompt_credit_body(credit_model_id, form_data.prompt, stream=form_data.stream)
+    check_credit_by_user_id(user_id=user.id, form_data=credit_body)
 
     if url_idx is None:
         await get_all_models(request, user=user)
@@ -916,6 +984,8 @@ async def generate_completion(
         key=get_api_key(url_idx, url, request.app.state.config.OLLAMA_API_CONFIGS),
         user=user,
         stream=True,
+        credit_model_id=credit_model_id,
+        credit_body=credit_body,
     )
 
 
@@ -1041,6 +1111,17 @@ async def generate_chat_completion(
     if prefix_id:
         payload['model'] = payload['model'].replace(f'{prefix_id}.', '')
 
+    skip_credit = getattr(request.state, 'skip_ollama_credit', False)
+    credit_model_id = model_id
+    credit_body = _chat_credit_body(
+        credit_model_id,
+        payload.get('messages'),
+        metadata,
+        stream=form_data.stream,
+    )
+    if not skip_credit:
+        check_credit_by_user_id(user_id=user.id, form_data=credit_body)
+
     return await send_request(
         f'{url}/api/chat',
         payload=json.dumps(payload),
@@ -1049,6 +1130,8 @@ async def generate_chat_completion(
         stream=form_data.stream,
         content_type='application/x-ndjson',
         metadata=metadata,
+        credit_model_id=None if skip_credit else credit_model_id,
+        credit_body=None if skip_credit else credit_body,
     )
 
 
@@ -1127,6 +1210,17 @@ async def generate_openai_completion(
     if prefix_id:
         payload['model'] = payload['model'].replace(f'{prefix_id}.', '')
 
+    skip_credit = getattr(request.state, 'skip_ollama_credit', False)
+    credit_model_id = model_id
+    credit_body = _prompt_credit_body(
+        credit_model_id,
+        payload.get('prompt'),
+        metadata,
+        stream=payload.get('stream', False),
+    )
+    if not skip_credit:
+        check_credit_by_user_id(user_id=user.id, form_data=credit_body)
+
     return await send_request(
         f'{url}/v1/completions',
         payload=json.dumps(payload),
@@ -1134,6 +1228,8 @@ async def generate_openai_completion(
         user=user,
         stream=payload.get('stream', False),
         metadata=metadata,
+        credit_model_id=None if skip_credit else credit_model_id,
+        credit_body=None if skip_credit else credit_body,
     )
 
 
@@ -1184,6 +1280,17 @@ async def generate_openai_chat_completion(
     if prefix_id:
         payload['model'] = payload['model'].replace(f'{prefix_id}.', '')
 
+    skip_credit = getattr(request.state, 'skip_ollama_credit', False)
+    credit_model_id = model_id
+    credit_body = _chat_credit_body(
+        credit_model_id,
+        payload.get('messages'),
+        metadata,
+        stream=payload.get('stream', False),
+    )
+    if not skip_credit:
+        check_credit_by_user_id(user_id=user.id, form_data=credit_body)
+
     return await send_request(
         f'{url}/v1/chat/completions',
         payload=json.dumps(payload),
@@ -1191,6 +1298,8 @@ async def generate_openai_chat_completion(
         user=user,
         stream=payload.get('stream', False),
         metadata=metadata,
+        credit_model_id=None if skip_credit else credit_model_id,
+        credit_body=None if skip_credit else credit_body,
     )
 
 

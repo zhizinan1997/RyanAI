@@ -1,7 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Release — Create GitHub release from CHANGELOG, trigger Docker builds
-# Runs on pushes to main when package.json version changes
-# ─────────────────────────────────────────────────────────────────────────────
 name: Release
 
 on:
@@ -13,62 +9,92 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── Create release and trigger downstream workflows ──────────────────────
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
-      actions: write
+    outputs:
+      release_created: ${{ steps.release.outputs.created || 'false' }}
+      release_tag: ${{ steps.release.outputs.tag || '' }}
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Abort if package.json unchanged
-        run: |
-          git diff --cached --diff-filter=d package.json || {
-            echo "package.json not modified — skipping release"
-            exit 1
-          }
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Read version
         id: pkg
-        run: echo "version=$(jq -r '.version' package.json)" >> $GITHUB_OUTPUT
+        run: echo "version=$(jq -r '.version' package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Check package version changed
+        id: version_check
+        run: |
+          before="${{ github.event.before }}"
+          current="${{ steps.pkg.outputs.version }}"
+
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git cat-file -e "${before}:package.json" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          previous="$(git show "${before}:package.json" | jq -r '.version')"
+          if [ "$previous" = "$current" ]; then
+            echo "package.json version unchanged ($current) - skipping release"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "package.json version changed from $previous to $current"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Extract release notes from CHANGELOG
+        if: steps.version_check.outputs.changed == 'true'
         run: |
           VER="${{ steps.pkg.outputs.version }}"
           awk "/^## \[${VER}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" \
             CHANGELOG.md > /tmp/release-notes.md
 
       - name: Publish GitHub release
+        id: release
+        if: steps.version_check.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "v${{ steps.pkg.outputs.version }}" &>/dev/null; then
-            echo "Release v${{ steps.pkg.outputs.version }} already exists — skipping creation"
+          tag="v${{ steps.pkg.outputs.version }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$tag" &>/dev/null; then
+            echo "Release $tag already exists - skipping creation"
+            echo "created=false" >> "$GITHUB_OUTPUT"
           else
-            gh release create "v${{ steps.pkg.outputs.version }}" \
-              --title "v${{ steps.pkg.outputs.version }}" \
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --title "$tag" \
               --notes-file /tmp/release-notes.md
+            echo "created=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Archive source
+        if: steps.release.outputs.created == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-archive
           path: |
             .
             !.git
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger Docker build
-        uses: actions/github-script@v8
-        with:
-          script: |
-            github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'docker.yaml',
-              ref: 'v${{ steps.pkg.outputs.version }}',
-            })
+  build-slim-image:
+    needs: publish
+    if: needs.publish.outputs.release_created == 'true'
+    uses: ./.github/workflows/docker.yaml
+    with:
+      release_tag: ${{ needs.publish.outputs.release_tag }}
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
