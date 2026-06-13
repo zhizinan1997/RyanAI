@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>开屏通知效果预览</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--bg-a: #edf3fb;
+				--bg-b: #f7fafc;
+				--bg-c: #dfe9f5;
+				--card: rgba(255, 255, 255, 0.92);
+				--card-soft: rgba(255, 255, 255, 0.66);
+				--border: rgba(255, 255, 255, 0.72);
+				--shadow: 0 50px 140px -42px rgba(15, 23, 42, 0.28);
+				--text: #111827;
+				--muted: #667085;
+				--primary: #3b82f6;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				min-height: 100vh;
+				font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+				color: var(--text);
+				background:
+					radial-gradient(circle at 15% 12%, rgba(147, 197, 253, 0.42), transparent 30%),
+					radial-gradient(circle at 84% 15%, rgba(191, 219, 254, 0.35), transparent 24%),
+					radial-gradient(circle at 50% 85%, rgba(255, 255, 255, 0.95), transparent 45%),
+					linear-gradient(135deg, var(--bg-a), var(--bg-b) 42%, var(--bg-c));
+				overflow: hidden;
+			}
+
+			.preview-app {
+				position: relative;
+				min-height: 100vh;
+				padding: 26px;
+			}
+
+			.preview-topbar {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				padding: 18px 22px;
+				border: 1px solid rgba(255, 255, 255, 0.5);
+				border-radius: 26px;
+				background: rgba(255, 255, 255, 0.34);
+				box-shadow: 0 18px 50px -36px rgba(15, 23, 42, 0.35);
+				backdrop-filter: blur(20px);
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				font-size: 15px;
+				font-weight: 700;
+				letter-spacing: 0.04em;
+			}
+
+			.brand-dot {
+				width: 12px;
+				height: 12px;
+				border-radius: 999px;
+				background: linear-gradient(135deg, #38bdf8, #2563eb);
+				box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
+			}
+
+			.fake-actions {
+				display: flex;
+				gap: 12px;
+			}
+
+			.fake-pill {
+				width: 84px;
+				height: 14px;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.6);
+			}
+
+			.preview-content {
+				display: grid;
+				grid-template-columns: 260px minmax(0, 1fr) 280px;
+				gap: 22px;
+				height: calc(100vh - 110px);
+				padding-top: 22px;
+			}
+
+			.panel,
+			.canvas-card,
+			.side-card {
+				border: 1px solid rgba(255, 255, 255, 0.56);
+				border-radius: 32px;
+				background: rgba(255, 255, 255, 0.42);
+				box-shadow: 0 24px 64px -42px rgba(15, 23, 42, 0.42);
+				backdrop-filter: blur(24px);
+			}
+
+			.panel {
+				padding: 18px;
+			}
+
+			.panel h2 {
+				margin: 0 0 14px;
+				font-size: 18px;
+			}
+
+			.panel h3 {
+				margin: 16px 0 8px;
+				font-size: 12px;
+				font-weight: 700;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				color: #475467;
+			}
+
+			.panel label {
+				display: block;
+				margin-bottom: 8px;
+				font-size: 13px;
+				font-weight: 600;
+				color: #334155;
+			}
+
+			.panel input[type='text'],
+			.panel textarea {
+				width: 100%;
+				border: 1px solid rgba(203, 213, 225, 0.95);
+				border-radius: 18px;
+				padding: 12px 14px;
+				background: rgba(255, 255, 255, 0.88);
+				color: #0f172a;
+				font: inherit;
+				outline: none;
+			}
+
+			.panel textarea {
+				min-height: 168px;
+				resize: vertical;
+				line-height: 1.7;
+			}
+
+			.panel input[type='file'] {
+				display: block;
+				width: 100%;
+				font: inherit;
+			}
+
+			.button-row {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 10px;
+				margin-top: 14px;
+			}
+
+			.btn {
+				border: 0;
+				border-radius: 16px;
+				padding: 11px 16px;
+				font: inherit;
+				font-weight: 700;
+				cursor: pointer;
+				transition:
+					transform 0.18s ease,
+					box-shadow 0.18s ease,
+					opacity 0.18s ease;
+			}
+
+			.btn:hover {
+				transform: translateY(-1px);
+			}
+
+			.btn:active {
+				transform: translateY(1px);
+			}
+
+			.btn-primary {
+				background: linear-gradient(180deg, #4b91ff, #377ef5);
+				color: white;
+				box-shadow: 0 18px 42px -24px rgba(55, 126, 245, 0.85);
+			}
+
+			.btn-secondary {
+				background: rgba(255, 255, 255, 0.82);
+				color: #1e293b;
+				box-shadow: 0 14px 30px -24px rgba(15, 23, 42, 0.4);
+			}
+
+			.canvas-card {
+				position: relative;
+				overflow: hidden;
+				padding: 26px;
+			}
+
+			.canvas-card::before,
+			.canvas-card::after {
+				content: '';
+				position: absolute;
+				border-radius: 999px;
+				filter: blur(12px);
+				opacity: 0.7;
+				pointer-events: none;
+			}
+
+			.canvas-card::before {
+				width: 220px;
+				height: 220px;
+				top: -60px;
+				right: 30px;
+				background: rgba(147, 197, 253, 0.36);
+			}
+
+			.canvas-card::after {
+				width: 180px;
+				height: 180px;
+				bottom: -40px;
+				left: 14%;
+				background: rgba(191, 219, 254, 0.42);
+			}
+
+			.canvas-grid {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 18px;
+				height: 100%;
+				position: relative;
+				z-index: 1;
+			}
+
+			.fake-card {
+				border-radius: 28px;
+				background: rgba(255, 255, 255, 0.58);
+				border: 1px solid rgba(255, 255, 255, 0.46);
+				padding: 20px;
+				backdrop-filter: blur(18px);
+				box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+			}
+
+			.fake-line,
+			.fake-block {
+				background: rgba(255, 255, 255, 0.72);
+				border-radius: 999px;
+			}
+
+			.fake-line {
+				height: 13px;
+				margin-bottom: 12px;
+			}
+
+			.fake-block {
+				height: 108px;
+				border-radius: 24px;
+			}
+
+			.side-card {
+				padding: 18px;
+				display: flex;
+				flex-direction: column;
+				gap: 16px;
+			}
+
+			.side-thumb {
+				height: 112px;
+				border-radius: 26px;
+				background:
+					linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(255, 255, 255, 0.82)),
+					rgba(255, 255, 255, 0.55);
+				border: 1px solid rgba(255, 255, 255, 0.6);
+			}
+
+			.overlay {
+				position: fixed;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 22px;
+				background: rgba(255, 255, 255, 0.06);
+				backdrop-filter: blur(16px) saturate(1.04);
+				opacity: 0;
+				pointer-events: none;
+				transition: opacity 0.22s ease;
+			}
+
+			.overlay.show {
+				opacity: 1;
+				pointer-events: auto;
+			}
+
+			.splash-modal {
+				position: relative;
+				width: min(1120px, calc(100vw - 44px));
+				min-height: min(640px, calc(100vh - 80px));
+				display: grid;
+				grid-template-columns: 4fr 6fr;
+				border-radius: 34px;
+				border: 1px solid var(--border);
+				background: var(--card);
+				box-shadow: var(--shadow);
+				overflow: hidden;
+				transform: translateY(18px) scale(0.985);
+				opacity: 0;
+				transition:
+					transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+					opacity 0.32s ease;
+			}
+
+			.overlay.show .splash-modal {
+				transform: translateY(0) scale(1);
+				opacity: 1;
+			}
+
+			.close-button {
+				position: absolute;
+				top: 18px;
+				right: 18px;
+				z-index: 5;
+				width: 40px;
+				height: 40px;
+				border: 1px solid rgba(255, 255, 255, 0.72);
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.28);
+				color: rgba(15, 23, 42, 0.68);
+				font-size: 24px;
+				line-height: 1;
+				cursor: pointer;
+				backdrop-filter: blur(16px);
+				box-shadow: 0 10px 30px -16px rgba(15, 23, 42, 0.45);
+			}
+
+			.copy-pane {
+				display: flex;
+				flex-direction: column;
+				padding: 40px 34px 34px;
+				background: rgba(255, 255, 255, 0.88);
+			}
+
+			.title {
+				margin: 10px 0 0;
+				font-size: clamp(34px, 4vw, 46px);
+				line-height: 1.08;
+				letter-spacing: -0.045em;
+			}
+
+			.markdown {
+				margin-top: 28px;
+				flex: 1;
+				font-size: 16px;
+				line-height: 1.85;
+				color: #334155;
+			}
+
+			.markdown p {
+				margin: 0 0 12px;
+			}
+
+			.markdown h1,
+			.markdown h2,
+			.markdown h3 {
+				margin: 0 0 14px;
+				line-height: 1.22;
+				color: #0f172a;
+			}
+
+			.markdown h1 {
+				font-size: 24px;
+			}
+
+			.markdown h2 {
+				font-size: 21px;
+			}
+
+			.markdown h3 {
+				font-size: 18px;
+			}
+
+			.markdown ul {
+				margin: 0 0 14px;
+				padding-left: 18px;
+			}
+
+			.markdown li {
+				margin: 6px 0;
+			}
+
+			.markdown strong {
+				color: #0f172a;
+			}
+
+			.markdown code {
+				padding: 2px 8px;
+				border-radius: 10px;
+				background: rgba(15, 23, 42, 0.08);
+			}
+
+			.cta {
+				align-self: flex-start;
+				margin-top: 18px;
+				border: 0;
+				border-radius: 16px;
+				padding: 14px 28px;
+				background: linear-gradient(180deg, #4b91ff, #377ef5);
+				color: white;
+				font-size: 16px;
+				font-weight: 700;
+				cursor: pointer;
+				box-shadow: 0 18px 44px -20px rgba(55, 126, 245, 0.82);
+			}
+
+			.visual-pane {
+				position: relative;
+				background:
+					radial-gradient(circle at 22% 20%, rgba(59, 130, 246, 0.18), transparent 28%),
+					radial-gradient(circle at 78% 18%, rgba(125, 211, 252, 0.15), transparent 20%),
+					linear-gradient(135deg, #edf4ff, #f7f9ff 54%, #ffffff);
+			}
+
+			.visual-pane::before {
+				content: '';
+				position: absolute;
+				top: 0;
+				bottom: 0;
+				left: 0;
+				width: 1px;
+				background: rgba(255, 255, 255, 0.76);
+			}
+
+			.visual-frame {
+				position: relative;
+				width: 100%;
+				height: 100%;
+				min-height: 540px;
+				overflow: hidden;
+			}
+
+			#previewImage {
+				width: 100%;
+				height: 100%;
+				object-fit: cover;
+				display: none;
+			}
+
+			.visual-mock {
+				position: absolute;
+				inset: 0;
+				display: grid;
+				place-items: center;
+				padding: 38px;
+			}
+
+			.mock-ui {
+				width: min(88%, 560px);
+				aspect-ratio: 4 / 3;
+				border-radius: 26px;
+				background: rgba(255, 255, 255, 0.54);
+				border: 1px solid rgba(255, 255, 255, 0.78);
+				box-shadow:
+					0 28px 90px -38px rgba(59, 130, 246, 0.26),
+					inset 0 1px 0 rgba(255, 255, 255, 0.62);
+				backdrop-filter: blur(18px);
+				padding: 20px;
+				display: grid;
+				grid-template-columns: 0.9fr 1.1fr;
+				gap: 16px;
+			}
+
+			.mock-left,
+			.mock-right {
+				border-radius: 22px;
+				background: rgba(255, 255, 255, 0.45);
+				border: 1px solid rgba(255, 255, 255, 0.66);
+				padding: 16px;
+			}
+
+			.mock-left .mini-line {
+				height: 12px;
+				margin-bottom: 10px;
+				border-radius: 999px;
+				background: rgba(15, 23, 42, 0.1);
+			}
+
+			.mock-right {
+				position: relative;
+				overflow: hidden;
+				background:
+					radial-gradient(circle at 18% 16%, rgba(59, 130, 246, 0.22), transparent 22%),
+					linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(255, 255, 255, 0.34));
+			}
+
+			.mock-window {
+				position: absolute;
+				left: 12%;
+				top: 16%;
+				width: 76%;
+				height: 68%;
+				border-radius: 20px;
+				background: rgba(255, 255, 255, 0.76);
+				box-shadow: 0 22px 40px -30px rgba(37, 99, 235, 0.45);
+			}
+
+			.mock-window::before {
+				content: '';
+				position: absolute;
+				left: 16px;
+				right: 16px;
+				top: 16px;
+				height: 22px;
+				border-radius: 999px;
+				background: rgba(241, 245, 249, 0.95);
+			}
+
+			.mock-window::after {
+				content: '';
+				position: absolute;
+				left: 18px;
+				right: 18px;
+				top: 58px;
+				bottom: 18px;
+				border-radius: 14px;
+				background:
+					linear-gradient(rgba(226, 232, 240, 0.9), rgba(226, 232, 240, 0.9)) 0 0 / 44% 12px
+						no-repeat,
+					linear-gradient(rgba(226, 232, 240, 0.72), rgba(226, 232, 240, 0.72)) 0 30px / 65% 12px
+						no-repeat,
+					linear-gradient(rgba(226, 232, 240, 0.72), rgba(226, 232, 240, 0.72)) 0 60px / 52% 12px
+						no-repeat,
+					linear-gradient(rgba(226, 232, 240, 0.72), rgba(226, 232, 240, 0.72)) 0 90px / 72% 12px
+						no-repeat,
+					linear-gradient(rgba(59, 130, 246, 0.82), rgba(59, 130, 246, 0.82)) right 0 top 0 / 4px
+						100% no-repeat;
+			}
+
+			.helper {
+				margin-top: 10px;
+				font-size: 12px;
+				line-height: 1.6;
+				color: #64748b;
+			}
+
+			@media (max-width: 1200px) {
+				.preview-content {
+					grid-template-columns: 280px minmax(0, 1fr);
+				}
+
+				.side-card {
+					display: none;
+				}
+			}
+
+			@media (max-width: 980px) {
+				body {
+					overflow: auto;
+				}
+
+				.preview-content {
+					grid-template-columns: 1fr;
+					height: auto;
+					padding-bottom: 24px;
+				}
+
+				.splash-modal {
+					grid-template-columns: 1fr;
+					min-height: auto;
+				}
+
+				.visual-pane {
+					display: none;
+				}
+
+				.overlay {
+					padding: 14px;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="preview-app">
+			<div class="preview-topbar">
+				<div class="brand">
+					<span class="brand-dot"></span>
+					<span>OpenWebUI 开屏通知效果预览</span>
+				</div>
+				<div class="fake-actions">
+					<div class="fake-pill"></div>
+					<div class="fake-pill" style="width: 64px"></div>
+				</div>
+			</div>
+
+			<div class="preview-content">
+				<aside class="panel">
+					<h2>快速调样式</h2>
+					<label for="titleInput">标题</label>
+					<input id="titleInput" type="text" />
+
+					<h3>内容</h3>
+					<textarea id="contentInput"></textarea>
+
+					<h3>右侧图片 / GIF</h3>
+					<input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" />
+					<div class="helper">建议直接上传一张横向截图或 GIF，最接近你后台最终配置的显示效果。</div>
+
+					<div class="button-row">
+						<button id="applyButton" class="btn btn-primary" type="button">应用内容</button>
+						<button id="reopenButton" class="btn btn-secondary" type="button">重新打开弹窗</button>
+						<button id="resetImageButton" class="btn btn-secondary" type="button">清除图片</button>
+					</div>
+				</aside>
+
+				<main class="canvas-card">
+					<div class="canvas-grid">
+						<div class="fake-card">
+							<div class="fake-line" style="width: 48%"></div>
+							<div class="fake-line" style="width: 84%"></div>
+							<div class="fake-line" style="width: 66%"></div>
+							<div class="fake-block" style="margin-top: 22px"></div>
+						</div>
+						<div class="fake-card">
+							<div class="fake-line" style="width: 54%"></div>
+							<div class="fake-block" style="height: 156px; margin-top: 18px"></div>
+						</div>
+						<div class="fake-card">
+							<div class="fake-block" style="height: 188px"></div>
+						</div>
+						<div class="fake-card">
+							<div class="fake-line" style="width: 72%"></div>
+							<div class="fake-line" style="width: 58%"></div>
+							<div class="fake-line" style="width: 78%"></div>
+							<div class="fake-block" style="height: 88px; margin-top: 24px"></div>
+						</div>
+					</div>
+				</main>
+
+				<aside class="side-card">
+					<div class="side-thumb"></div>
+					<div class="side-thumb" style="height: 180px"></div>
+					<div class="side-thumb" style="height: 90px"></div>
+				</aside>
+			</div>
+		</div>
+
+		<div id="overlay" class="overlay show">
+			<div class="splash-modal">
+				<button id="closeButton" class="close-button" type="button" aria-label="关闭">×</button>
+
+				<section class="copy-pane">
+					<h1 id="modalTitle" class="title"></h1>
+					<div id="modalContent" class="markdown"></div>
+					<button id="ctaButton" class="cta" type="button">立即体验</button>
+				</section>
+
+				<section class="visual-pane">
+					<div class="visual-frame">
+						<img id="previewImage" alt="开屏通知视觉素材" />
+						<div id="visualMock" class="visual-mock">
+							<div class="mock-ui">
+								<div class="mock-left">
+									<div class="mini-line" style="width: 76%"></div>
+									<div class="mini-line" style="width: 54%"></div>
+									<div class="mini-line" style="width: 82%"></div>
+									<div class="mini-line" style="width: 60%"></div>
+									<div class="mini-line" style="width: 72%; margin-top: 26px"></div>
+									<div class="mini-line" style="width: 58%"></div>
+								</div>
+								<div class="mock-right">
+									<div class="mock-window"></div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</section>
+			</div>
+		</div>
+
+		<script>
+			const defaultTitle = '新增 9 款高级组件';
+			const defaultContent = [
+				'### 功能组件再升级',
+				'',
+				'- 新增导航菜单、下拉菜单、标签页、分段器、折叠面板、分页器、数字步进器、滑动条、应用场景更丰富',
+				'- 交互方式更精细，动画更流畅',
+				'- 适合做更新公告、版本功能介绍或活动通知',
+				'',
+				'**提示：** 右侧建议放截图、宣传图或 GIF 动图。'
+			].join('\n');
+
+			const overlay = document.getElementById('overlay');
+			const titleInput = document.getElementById('titleInput');
+			const contentInput = document.getElementById('contentInput');
+			const imageInput = document.getElementById('imageInput');
+			const modalTitle = document.getElementById('modalTitle');
+			const modalContent = document.getElementById('modalContent');
+			const previewImage = document.getElementById('previewImage');
+			const visualMock = document.getElementById('visualMock');
+
+			function escapeHtml(value) {
+				return value
+					.replaceAll('&', '&amp;')
+					.replaceAll('<', '&lt;')
+					.replaceAll('>', '&gt;')
+					.replaceAll('"', '&quot;')
+					.replaceAll("'", '&#39;');
+			}
+
+			function applyInlineMarkdown(value) {
+				return value
+					.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+					.replace(/`(.+?)`/g, '<code>$1</code>')
+					.replace(
+						/\[(.+?)\]\((https?:\/\/[^\s)]+)\)/g,
+						'<a href="$2" target="_blank" rel="noreferrer">$1</a>'
+					);
+			}
+
+			function renderMarkdown(source) {
+				const lines = escapeHtml(source).split(/\r?\n/);
+				let html = '';
+				let inList = false;
+
+				const closeList = () => {
+					if (inList) {
+						html += '</ul>';
+						inList = false;
+					}
+				};
+
+				for (const rawLine of lines) {
+					const line = rawLine.trim();
+
+					if (!line) {
+						closeList();
+						continue;
+					}
+
+					if (line.startsWith('### ')) {
+						closeList();
+						html += `<h3>${applyInlineMarkdown(line.slice(4))}</h3>`;
+						continue;
+					}
+
+					if (line.startsWith('## ')) {
+						closeList();
+						html += `<h2>${applyInlineMarkdown(line.slice(3))}</h2>`;
+						continue;
+					}
+
+					if (line.startsWith('# ')) {
+						closeList();
+						html += `<h1>${applyInlineMarkdown(line.slice(2))}</h1>`;
+						continue;
+					}
+
+					if (line.startsWith('- ') || line.startsWith('* ')) {
+						if (!inList) {
+							html += '<ul>';
+							inList = true;
+						}
+						html += `<li>${applyInlineMarkdown(line.slice(2))}</li>`;
+						continue;
+					}
+
+					closeList();
+					html += `<p>${applyInlineMarkdown(line)}</p>`;
+				}
+
+				closeList();
+				return html;
+			}
+
+			function applyPreview() {
+				modalTitle.textContent = titleInput.value.trim() || '开屏通知';
+				modalContent.innerHTML = renderMarkdown(contentInput.value.trim());
+			}
+
+			function showOverlay() {
+				overlay.classList.add('show');
+			}
+
+			function hideOverlay() {
+				overlay.classList.remove('show');
+			}
+
+			titleInput.value = defaultTitle;
+			contentInput.value = defaultContent;
+			applyPreview();
+
+			document.getElementById('applyButton').addEventListener('click', () => {
+				applyPreview();
+				showOverlay();
+			});
+
+			document.getElementById('reopenButton').addEventListener('click', showOverlay);
+			document.getElementById('closeButton').addEventListener('click', hideOverlay);
+			document.getElementById('ctaButton').addEventListener('click', hideOverlay);
+
+			document.getElementById('resetImageButton').addEventListener('click', () => {
+				imageInput.value = '';
+				previewImage.src = '';
+				previewImage.style.display = 'none';
+				visualMock.style.display = 'grid';
+				showOverlay();
+			});
+
+			imageInput.addEventListener('change', (event) => {
+				const [file] = event.target.files || [];
+				if (!file) {
+					return;
+				}
+
+				const objectUrl = URL.createObjectURL(file);
+				previewImage.src = objectUrl;
+				previewImage.style.display = 'block';
+				visualMock.style.display = 'none';
+				showOverlay();
+			});
+		</script>
+	</body>
+</html>

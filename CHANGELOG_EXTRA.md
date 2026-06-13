@@ -1,0 +1,471 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.8.12.1] - 2026.03.27
+
+### Changed
+
+- 合并官方 [0.8.12](https://github.com/open-webui/open-webui/releases/tag/v0.8.12) 改动
+
+## [0.8.11.1] - 2026.03.26
+
+### Changed
+
+- 合并官方 [0.8.11](https://github.com/open-webui/open-webui/releases/tag/v0.8.11) 改动
+
+## [0.8.10.2] - 2026.03.18
+
+### Added
+
+- 增加对 gpt-5.4-mini 的适配
+
+## [0.8.10.1] - 2026.03.09
+
+### Changed
+
+- 合并官方 [0.8.10](https://github.com/open-webui/open-webui/releases/tag/v0.8.10) 改动
+
+## [0.8.9.1] - 2026.03.08
+
+### Changed
+
+- 合并官方 [0.8.9](https://github.com/open-webui/open-webui/releases/tag/v0.8.9) 改动
+
+## [0.8.8.1] - 2026.03.03
+
+### Changed
+
+- 合并官方 [0.8.8](https://github.com/open-webui/open-webui/releases/tag/v0.8.8) 改动
+
+## [0.8.7.1] - 2026.03.02
+
+### Changed
+
+- 合并官方 [0.8.7](https://github.com/open-webui/open-webui/releases/tag/v0.8.7) 改动
+
+## [0.8.5.1] - 2026.02.24
+
+### Changed
+
+- 合并官方 [0.8.5](https://github.com/open-webui/open-webui/releases/tag/v0.8.5) 改动
+
+## [0.8.3.1] - 2026.02.19
+
+### Changed
+
+- 合并官方 [0.8.3](https://github.com/open-webui/open-webui/releases/tag/v0.8.3) 改动
+
+## [0.8.1.1] - 2026.02.14
+
+### Changed
+
+- 合并官方 [0.8.1](https://github.com/open-webui/open-webui/releases/tag/v0.8.1) 改动
+- 移除 Responses 接口
+
+## [0.8.0.2] - 2026.02.13
+
+### Fixed
+
+- 修复模型价格设置不能为小数的问题
+
+## [0.8.0.1] - 2026.02.13
+
+### Changed
+
+- 合并官方 [0.8.0](https://github.com/open-webui/open-webui/releases/tag/v0.8.0) 改动
+
+## [0.7.2.5] - 2026.01.28
+
+### Changed
+
+- 优化对话接口调用失败的提示
+
+## [0.7.2.1] - 2026.01.11
+
+### Changed
+
+- 合并官方 [0.7.2](https://github.com/open-webui/open-webui/releases/tag/v0.7.2) 改动
+
+## [0.7.1.1] - 2026.01.10
+
+### Changed
+
+- 合并官方 [0.7.1](https://github.com/open-webui/open-webui/releases/tag/v0.7.1) 改动
+
+## [0.6.43.2] - 2025.12.22
+
+### Fixed
+
+- 修复嵌入计费计算错误的问题
+
+## [0.6.43.1] - 2025.12.22
+
+### Changed
+
+- 合并官方 [0.6.43](https://github.com/open-webui/open-webui/releases/tag/v0.6.43) 改动
+
+## [0.6.42.1] - 2025.12.21
+
+### Added
+
+- 支持空响应时不计费 (管理员面板-设置-积分)
+- 积分统计面板支持通过用户名模糊筛选 (管理员面板-用户-积分统计)
+- 支持配置邮件发送邮箱 (管理员面板-设置-通用)
+
+### Changed
+
+- 对部分配置增加额外的校验和提示
+- 优化积分统计面板、积分日志、兑换码管理的加载性能
+- 合并官方 [0.6.42](https://github.com/open-webui/open-webui/releases/tag/v0.6.42) 改动
+
+### Fixed
+
+- 修复部分场景频道消息加载失败的问题
+- 修复并发执行 DB 初始化的问题
+
+## [0.6.41.1] - 2025.12.03
+
+### Changed
+
+- 合并官方 [0.6.41](https://github.com/open-webui/open-webui/releases/tag/v0.6.41) 改动
+
+## [0.6.40.2] - 2025.11.27
+
+### Changed
+
+- 补充部分官方 Logo 和静态文件
+
+### Fixed
+
+- 增强对非标准流式响应的兼容性 (如 Deepseek API)
+
+## [0.6.40.1] - 2025.11.26
+
+### Changed
+
+- 合并官方 [0.6.40](https://github.com/open-webui/open-webui/releases/tag/v0.6.40) 改动
+
+## [0.6.38.1] - 2025.11.24
+
+### Changed
+
+- 合并官方 [0.6.38](https://github.com/open-webui/open-webui/releases/tag/v0.6.38) 改动
+
+## [0.6.37.1] - 2025.11.24
+
+### Added
+
+- 支持为超长上下文配置单独的价格 (管理员面板-设置-模型-模型价格配置)
+
+### Changed
+
+- 合并官方 [0.6.37](https://github.com/open-webui/open-webui/releases/tag/v0.6.37) 改动
+
+### Fixed
+
+- 修复用户调整配置项 (UserValves) 直接触发消息发送的问题
+
+## [0.6.36.1] - 2025.11.07
+
+### Changed
+
+- 合并官方 [0.6.36](https://github.com/open-webui/open-webui/releases/tag/v0.6.36) 改动
+
+## [0.6.34.1] - 2025.10.17
+
+### Changed
+
+- 合并官方 [0.6.34](https://github.com/open-webui/open-webui/releases/tag/v0.6.34) 改动
+
+## [0.6.33.1] - 2025.10.08
+
+### Changed
+
+- 合并官方 [0.6.33](https://github.com/open-webui/open-webui/releases/tag/v0.6.33) 改动
+
+## [0.6.32.1] - 2025.09.29
+
+### Added
+
+- 支持支付宝当面付/订单码支付 (管理员面板-设置-积分-支付宝)
+
+### Changed
+
+- 合并官方 [0.6.32](https://github.com/open-webui/open-webui/releases/tag/v0.6.32) 改动
+
+## [0.6.31.1] - 2025.09.26
+
+### Changed
+
+- 移除 Markdown 编辑器
+- 移除自定义代码块样式
+- 合并官方 [0.6.31](https://github.com/open-webui/open-webui/releases/tag/v0.6.31) 改动
+
+### Fixed
+
+- 修复使用 `@` 选择模型时模型图标加载异常的问题
+
+## [0.6.30.1] - 2025.09.18
+
+### Changed
+
+- 合并官方 [0.6.30](https://github.com/open-webui/open-webui/releases/tag/v0.6.30) 改动
+
+## [0.6.28.1] - 2025.09.11
+
+### Changed
+
+- 合并官方 [0.6.28](https://github.com/open-webui/open-webui/releases/tag/v0.6.28) 改动
+
+## [0.6.27.1] - 2025.09.10
+
+### Changed
+
+- 合并官方 [0.6.27](https://github.com/open-webui/open-webui/releases/tag/v0.6.27) 改动
+
+## [0.6.26.1] - 2025.08.28
+
+### Changed
+
+- 合并官方 [0.6.26](https://github.com/open-webui/open-webui/releases/tag/v0.6.26) 改动
+
+## [0.6.25.1] - 2025.08.22
+
+### Changed
+
+- 合并官方 [0.6.25](https://github.com/open-webui/open-webui/releases/tag/v0.6.25) 改动
+
+## [0.6.24.1] - 2025.08.22
+
+### Changed
+
+- 合并官方 [0.6.24](https://github.com/open-webui/open-webui/releases/tag/v0.6.24) 改动
+
+## [0.6.23.1] - 2025.08.22
+
+### Changed
+
+- 积分日志与兑换码的样式调整为 OpenWebUI 的统一样式
+- 支持禁用自定义编辑器和代码块
+- 优化 DB 初始化流程
+- 移除不必要的对话日志加载逻辑
+- 合并官方 [0.6.23](https://github.com/open-webui/open-webui/releases/tag/v0.6.23) 改动
+
+### Fixed
+
+- 修复自定义用户待激活界面提示不生效的问题
+- 修复弹窗内容无法复制的问题
+
+## [0.6.22.1] - 2025.08.11
+
+### Added
+
+- 积分充值页面增加兑换码功能 (设置-积分)
+- 增加兑换码管理功能 (管理员面板-用户-兑换码)
+
+### Changed
+
+- 合并官方 [0.6.22](https://github.com/open-webui/open-webui/releases/tag/v0.6.22) 改动
+
+## [0.6.21.1] - 2025.08.10
+
+### Changed
+
+- 合并官方 [0.6.21](https://github.com/open-webui/open-webui/releases/tag/v0.6.21) 改动
+
+## [0.6.20.1] - 2025.08.10
+
+### Added
+
+- 支持配置提示 Token 缓存价格 (管理员面板-设置-模型-模型价格配置)
+- 支持删除历史积分日志 (管理员面板-用户-积分日志)
+- 增加 GPT-5 系列模型的 max_completion_tokens 参数适配
+
+### Changed
+
+- 移除积分统计面板的数字展示
+- 合并官方 [0.6.20](https://github.com/open-webui/open-webui/releases/tag/v0.6.20) 改动
+
+### Fixed
+
+- 修复代码解释器运行异常
+
+## [0.6.18.1] - 2025.07.20
+
+### Changed
+
+- 合并官方 [0.6.18](https://github.com/open-webui/open-webui/releases/tag/v0.6.18) 改动
+
+## [0.6.16.1] - 2025.07.15
+
+### Added
+
+- 支持对请求 Body 中的内容进行额外计费 (管理员面板-设置-积分-自定义价格配置)
+
+### Changed
+
+- 移除英文/中文以外的语言支持
+- 合并官方 [0.6.16](https://github.com/open-webui/open-webui/releases/tag/v0.6.16) 改动
+
+## [0.6.15.1] - 2025.06.18
+
+### Changed
+
+- 合并官方 [0.6.15](https://github.com/open-webui/open-webui/releases/tag/v0.6.15) 改动
+
+## [0.6.14.1] - 2025.06.11
+
+### Added
+
+- 支持自定义模型 Logo URL
+- 增加 HTTP Read Buffer Size 配置
+- 请求异常时跳过计费
+- 对 Embedding 接口计费 (/api/embeddings)
+
+### Changed
+
+- 修改积分统计的最大范围为最近 180 天
+- 合并官方 [0.6.14](https://github.com/open-webui/open-webui/releases/tag/v0.6.14) 改动
+
+## [0.6.13.1] - 2025.05.30
+
+### Added
+
+- 支持对 Azure OpenAI 及 Ollama 的嵌入计费 (管理员面板-设置-积分)
+
+### Changed
+
+- 合并官方 [0.6.13](https://github.com/open-webui/open-webui/releases/tag/v0.6.13) 改动
+
+## [0.6.12.1] - 2025.05.29
+
+### Added
+
+- 支持对 OpenAI 的嵌入计费 (管理员面板-设置-积分)
+
+### Changed
+
+- 合并官方 [0.6.12](https://github.com/open-webui/open-webui/releases/tag/v0.6.12) 改动
+
+## [0.6.11.1] - 2025.05.27
+
+### Changed
+
+- 优化用量信息的交互
+- 合并官方 [0.6.11](https://github.com/open-webui/open-webui/releases/tag/v0.6.11) 改动
+
+### Fixed
+
+- 修复积分日志在部分场景下的样式异常
+
+## [0.6.10.1] - 2025.05.19
+
+### Added
+
+- 积分统计增加总充值和总消耗信息
+
+### Changed
+
+- 积分统计增加自定义时间范围选择
+- 积分日志搜索修改为搜索用户名
+- 移除自定义滚动条样式
+- 修改积分日志单页数量为 30
+- 合并官方 [0.6.10](https://github.com/open-webui/open-webui/releases/tag/v0.6.10) 改动
+
+## [0.6.9.1] - 2025.05.11
+
+### Added
+
+- 支持查看详细积分记录 (管理员面板-用户-积分日志)
+- 注册邮箱验证及邮箱域名白名单
+- 支持配置单次请求最低消费
+- 支持配置支付方式优先级 (二维码或者跳转)
+- 增加更多积分余额校验
+
+### Changed
+
+- 合并官方 [0.6.9](https://github.com/open-webui/open-webui/releases/tag/v0.6.9) 改动
+
+### Fixed
+
+- 修复图片 Token 计算异常
+
+## [0.6.7.2] - 2025.05.08
+
+### Changed
+
+- 支付方式优先展示二维码
+
+## [0.6.7.1] - 2025.05.07
+
+### Changed
+
+- 合并官方 [0.6.7](https://github.com/open-webui/open-webui/releases/tag/v0.6.7) 改动
+
+## [0.6.6.1] - 2025-05-05
+
+### Added
+
+- 新增管理页面 (管理员面板-设置-积分)
+- 新增报表页面 (管理员面板-用户-积分统计)
+- 支持配置积分兑换比例 (用于充值折扣)
+- 支持对特性按次计费 (如网页搜索、图片生成)
+- 支持配置请求模型需要的最低余额
+- 工作空间中配置的模型使用基础模型价格计费
+- 支持配置用户的初始积分
+- 模型选项增加模型价格提示
+- 支持对 Ollama 模型计费
+
+### Changed
+
+- 优化 Usage 兼容性
+- 优化积分日志内容
+- 优化充值二维码展示效果
+- 优化响应数据的 Usage 格式
+- 优化初始积分的小数位数
+- 优化免费请求的积分余额校验
+- 优化 Token 计算精确度
+
+### Fixed
+
+- 修复易支付的兼容问题
+- 修复调用 chat.completion api 的兼容问题
+
+## [0.6.5.16] - 2025-04-16
+
+### Added
+
+- 支持按照请求次数计费
+- 支持 Pipe 模型计费
+- 在对话 Usage 中增加扣费信息
+- 增加 Markdown 编辑器
+- 增加代码块折叠功能
+- 支持通过 API 批量修改模型价格
+- 支持设置允许充值的金额范围
+
+### Changed
+
+- 优化易支付支付后的跳转
+- 优化较长上下文的计算性能
+
+### Fixed
+
+- 修复支付连接无法在微信内置浏览器打开的问题
+- 修复余额不足的异常没有保存到对话日志的问题
+
+## [0.6.4.9] - 2025-04-16
+
+### Added
+
+- 支持配置模型价格
+- 支持用户充值积分 (易支付)
+
+## [0.6.4.1] - 2025-04-13
+
+### Added
+
+- 支持自定义 Logo & Title
