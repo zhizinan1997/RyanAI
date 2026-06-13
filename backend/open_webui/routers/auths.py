@@ -772,7 +772,7 @@ async def signup_handler(
         user = await Users.get_user_by_id(user.id, db=db)
         request.app.state.config.ENABLE_SIGNUP = False
     elif should_verify_email:
-        send_verify_email(email=email.lower())
+        await send_verify_email(email=email.lower(), db=db)
 
     if request.app.state.config.WEBHOOK_URL:
         await post_webhook(
@@ -859,7 +859,7 @@ async def signup(
 
 @router.get('/signup_verify/{code}')
 async def signup_verify(request: Request, code: str, db: AsyncSession = Depends(get_async_session)):
-    email = verify_email_by_code(code=code)
+    email = await verify_email_by_code(code=code, db=db)
     if not email:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail='Invalid code')
 

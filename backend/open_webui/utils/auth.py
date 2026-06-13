@@ -6,6 +6,8 @@ import hmac
 import json
 import logging
 import os
+import secrets
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Union
@@ -28,11 +30,7 @@ from open_webui.env import (
     OFFLINE_MODE,
     PASSWORD_VALIDATION_HINT,
     PASSWORD_VALIDATION_REGEX_PATTERN,
-    REDIS_CLUSTER,
     REDIS_KEY_PREFIX,
-    REDIS_SENTINEL_HOSTS,
-    REDIS_SENTINEL_PORT,
-    REDIS_URL,
     STATIC_DIR,
     TRUSTED_SIGNATURE_KEY,
     WEBUI_AUTH_TRUSTED_EMAIL_HEADER,
@@ -41,16 +39,18 @@ from open_webui.env import (
     pk,
 )
 from open_webui.models.auths import Auths
+from open_webui.models.email_verifications import EmailVerifications
 from open_webui.models.users import Users
 from open_webui.utils.access_control import has_permission
-from open_webui.utils.redis import get_redis_connection, get_sentinels_from_env
 from open_webui.utils.smtp import send_email
 from pytz import UTC
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
 
 SESSION_SECRET = WEBUI_SECRET_KEY
 ALGORITHM = 'HS256'
+EMAIL_VERIFY_CODE_TTL = 24 * 60 * 60
 
 VERIFY_EMAIL_TEMPLATE = """<!doctype html>
 <html>
@@ -303,30 +303,21 @@ def get_http_authorization_cred(auth_header: str | None):
         return None
 
 
-def get_email_code_key(code: str) -> str:
-    prefix = f'{REDIS_KEY_PREFIX}:' if REDIS_KEY_PREFIX else ''
-    return f'{prefix}email_verify:{code}'
+def get_email_code_hash(code: str) -> str:
+    return hashlib.sha256(code.encode('utf-8')).hexdigest()
 
 
-def _get_email_verify_redis():
-    redis = get_redis_connection(
-        redis_url=REDIS_URL,
-        redis_sentinels=get_sentinels_from_env(REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT),
-        redis_cluster=REDIS_CLUSTER,
+async def send_verify_email(email: str, db: AsyncSession | None = None):
+    code = secrets.token_urlsafe(32)
+    now = int(time.time())
+    verification = await EmailVerifications.create_verification(
+        email=email.lower(),
+        code_hash=get_email_code_hash(code=code),
+        expires_at=now + EMAIL_VERIFY_CODE_TTL,
+        db=db,
     )
-    if not redis:
-        raise HTTPException(status_code=500, detail='Redis is not configured.')
-    return redis
-
-
-def send_verify_email(email: str):
-    redis = _get_email_verify_redis()
-    code = f'{uuid.uuid4().hex}{uuid.uuid1().hex}'
-    redis.set(
-        name=get_email_code_key(code=code),
-        value=email.lower(),
-        ex=timedelta(days=1),
-    )
+    if not verification:
+        raise HTTPException(status_code=500, detail='Failed to create email verification code.')
 
     base_url = WEBUI_URL.value.rstrip('/')
     link = f'{base_url}/api/v1/auths/signup_verify/{code}'
@@ -338,14 +329,13 @@ def send_verify_email(email: str):
     )
 
 
-def verify_email_by_code(code: str) -> str | None:
-    redis = _get_email_verify_redis()
-    email = redis.get(name=get_email_code_key(code=code))
-    if isinstance(email, bytes):
-        email = email.decode('utf-8')
-    if email:
-        redis.delete(get_email_code_key(code=code))
-    return email
+async def verify_email_by_code(code: str, db: AsyncSession | None = None) -> str | None:
+    if not code:
+        return None
+    return await EmailVerifications.consume_code(
+        code_hash=get_email_code_hash(code=code),
+        db=db,
+    )
 
 
 async def get_current_user(
