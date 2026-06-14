@@ -135,6 +135,12 @@ from open_webui.config import (
     CREDIT_EXCHANGE_RATIO,
     CREDIT_NO_CHARGE_EMPTY_RESPONSE,
     CREDIT_NO_CREDIT_MSG,
+    ENABLE_TAROT_LOTTERY,
+    TAROT_REWARD_CONFIG,
+    LOTTERY_TIMEZONE,
+    ENABLE_DAILY_CREDIT_RESET,
+    DAILY_RESET_CREDIT,
+    LOTTERY_DAILY_RESET_MARK,
     DATALAB_MARKER_ADDITIONAL_CONFIG,
     DATALAB_MARKER_API_BASE_URL,
     DATALAB_MARKER_API_KEY,
@@ -535,6 +541,7 @@ from open_webui.routers import (
     groups,
     images,
     knowledge,
+    lottery,
     memories,
     models,
     notes,
@@ -1434,6 +1441,12 @@ app.state.config.CREDIT_NO_CHARGE_EMPTY_RESPONSE = CREDIT_NO_CHARGE_EMPTY_RESPON
 app.state.config.CREDIT_NO_CREDIT_MSG = CREDIT_NO_CREDIT_MSG
 app.state.config.CREDIT_EXCHANGE_RATIO = CREDIT_EXCHANGE_RATIO
 app.state.config.CREDIT_DEFAULT_CREDIT = CREDIT_DEFAULT_CREDIT
+app.state.config.ENABLE_TAROT_LOTTERY = ENABLE_TAROT_LOTTERY
+app.state.config.TAROT_REWARD_CONFIG = TAROT_REWARD_CONFIG
+app.state.config.LOTTERY_TIMEZONE = LOTTERY_TIMEZONE
+app.state.config.ENABLE_DAILY_CREDIT_RESET = ENABLE_DAILY_CREDIT_RESET
+app.state.config.DAILY_RESET_CREDIT = DAILY_RESET_CREDIT
+app.state.config.LOTTERY_DAILY_RESET_MARK = LOTTERY_DAILY_RESET_MARK
 app.state.config.USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE = USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE
 app.state.config.USAGE_DEFAULT_ENCODING_MODEL = USAGE_DEFAULT_ENCODING_MODEL
 app.state.config.USAGE_CALCULATE_DEFAULT_REQUEST_PRICE = USAGE_CALCULATE_DEFAULT_REQUEST_PRICE
@@ -1516,6 +1529,7 @@ app.include_router(configs.router, prefix='/api/v1/configs', tags=['configs'])
 app.include_router(auths.router, prefix='/api/v1/auths', tags=['auths'])
 app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 app.include_router(credit.router, prefix='/api/v1/credit', tags=['credit'])
+app.include_router(lottery.router, prefix='/api/v1/lottery', tags=['lottery'])
 
 
 app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])

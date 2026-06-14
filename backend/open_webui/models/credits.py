@@ -244,6 +244,21 @@ class CreditsTable:
             db.commit()
         return self.get_credit_by_user_id(form_data.user_id)
 
+    def reset_all_credits(self, value: Decimal) -> int:
+        """Bulk-reset every user's credit to a fixed value (daily reset). Returns affected rows.
+
+        Intentionally does NOT write per-user credit_log rows (a daily system reset over
+        all users would otherwise flood the log). Users without a credit row are created
+        lazily on their next activity using CREDIT_DEFAULT_CREDIT.
+        """
+        with get_db() as db:
+            affected = (
+                db.query(Credit)
+                .update({'credit': value, 'updated_at': int(time.time())}, synchronize_session=False)
+            )
+            db.commit()
+        return affected
+
 
 Credits = CreditsTable()
 

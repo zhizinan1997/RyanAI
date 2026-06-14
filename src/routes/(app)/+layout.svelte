@@ -42,6 +42,7 @@
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
+	import TarotFloatingButton from '$lib/components/lottery/TarotFloatingButton.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
@@ -465,6 +466,8 @@
 				{/if}
 
 				<Sidebar />
+
+				<TarotFloatingButton />
 
 				{#if loaded}
 					<slot />

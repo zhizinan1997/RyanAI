@@ -11,6 +11,7 @@
 	import Credit from './Users/Credit.svelte';
 	import CreditLog from '$lib/components/admin/Users/CreditLog.svelte';
 	import RedemptionCodes from '$lib/components/admin/Users/RedemptionCodes.svelte';
+	import Lottery from '$lib/components/admin/Users/Lottery.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -18,7 +19,9 @@
 	$: {
 		const pathParts = $page.url.pathname.split('/');
 		const tabFromPath = pathParts[pathParts.length - 1];
-		selectedTab = ['overview', 'groups', 'credit', 'creditLog', 'redemption'].includes(tabFromPath)
+		selectedTab = ['overview', 'groups', 'credit', 'creditLog', 'redemption', 'lottery'].includes(
+			tabFromPath
+		)
 			? tabFromPath
 			: 'overview';
 	}
@@ -190,6 +193,30 @@
 			</div>
 			<div class=" self-center">{$i18n.t('Redemption Code')}</div>
 		</a>
+
+		<a
+			id="lottery"
+			href="/admin/users/lottery"
+			draggable="false"
+			class="px-0.5 py-1 min-w-fit rounded-lg lg:flex-none flex text-right transition select-none {selectedTab ===
+			'lottery'
+				? ''
+				: ' text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'}"
+		>
+			<div class=" self-center mr-2">
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					viewBox="0 0 16 16"
+					fill="currentColor"
+					class="w-4 h-4"
+				>
+					<path
+						d="M8 1.5a.5.5 0 0 1 .447.276l1.658 3.358 3.706.539a.5.5 0 0 1 .277.853l-2.682 2.615.633 3.69a.5.5 0 0 1-.726.527L8 11.6l-3.32 1.745a.5.5 0 0 1-.725-.527l.633-3.69L1.905 6.526a.5.5 0 0 1 .277-.853l3.706-.539L7.553 1.776A.5.5 0 0 1 8 1.5z"
+					/>
+				</svg>
+			</div>
+			<div class=" self-center">{$i18n.t('Lottery')}</div>
+		</a>
 	</div>
 
 	<div class="flex-1 mt-1 lg:mt-0 px-[16px] lg:pr-[16px] lg:pl-0 overflow-y-scroll">
@@ -203,6 +230,8 @@
 			<CreditLog />
 		{:else if selectedTab === 'redemption'}
 			<RedemptionCodes />
+		{:else if selectedTab === 'lottery'}
+			<Lottery />
 		{/if}
 	</div>
 </div>

@@ -4193,6 +4193,50 @@ CREDIT_DEFAULT_CREDIT = ConfigVar(
     os.getenv('CREDIT_DEFAULT_CREDIT', '0'),
 )
 
+####################################
+# Tarot Lottery / Daily Reset
+####################################
+
+ENABLE_TAROT_LOTTERY = ConfigVar(
+    'ENABLE_TAROT_LOTTERY',
+    'lottery.enable',
+    os.getenv('ENABLE_TAROT_LOTTERY', 'False').lower() == 'true',
+)
+
+TAROT_REWARD_CONFIG = ConfigVar(
+    'TAROT_REWARD_CONFIG',
+    'lottery.reward_config',
+    os.getenv(
+        'TAROT_REWARD_CONFIG',
+        '[{"amount":3,"weight":45},{"amount":5,"weight":30},{"amount":10,"weight":18},{"amount":20,"weight":6},{"amount":66,"weight":1}]',
+    ),
+)
+
+LOTTERY_TIMEZONE = ConfigVar(
+    'LOTTERY_TIMEZONE',
+    'lottery.timezone',
+    os.getenv('LOTTERY_TIMEZONE', 'Asia/Shanghai'),
+)
+
+ENABLE_DAILY_CREDIT_RESET = ConfigVar(
+    'ENABLE_DAILY_CREDIT_RESET',
+    'lottery.daily_reset.enable',
+    os.getenv('ENABLE_DAILY_CREDIT_RESET', 'False').lower() == 'true',
+)
+
+DAILY_RESET_CREDIT = ConfigVar(
+    'DAILY_RESET_CREDIT',
+    'lottery.daily_reset.credit',
+    os.getenv('DAILY_RESET_CREDIT', '3'),
+)
+
+# Internal marker: last date (in LOTTERY_TIMEZONE) the daily reset ran. Not user-facing.
+LOTTERY_DAILY_RESET_MARK = ConfigVar(
+    'LOTTERY_DAILY_RESET_MARK',
+    'lottery.daily_reset.mark',
+    os.getenv('LOTTERY_DAILY_RESET_MARK', ''),
+)
+
 USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE = ConfigVar(
     'USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE',
     'credit.calculate.model_prefix_to_remove',

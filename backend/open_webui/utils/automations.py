@@ -158,12 +158,62 @@ async def automation_worker_loop(app) -> None:
     await scheduler_worker_loop(app)
 
 
+async def _check_daily_credit_reset(app) -> None:
+    """Reset ALL users' credit to a fixed value at 00:00 of the configured timezone.
+
+    Idempotent per day via a stored date marker (LOTTERY_DAILY_RESET_MARK) plus a
+    best-effort Redis lock for multi-instance deployments.
+    """
+    from decimal import Decimal
+
+    from open_webui.models.credits import Credits
+
+    cfg = app.state.config
+    tz_name = getattr(cfg, 'LOTTERY_TIMEZONE', 'Asia/Shanghai') or 'Asia/Shanghai'
+    zi = _resolve_tz(tz_name) or ZoneInfo('UTC')
+    today = datetime.now(zi).strftime('%Y-%m-%d')
+
+    if (getattr(cfg, 'LOTTERY_DAILY_RESET_MARK', '') or '') == today:
+        return
+
+    # multi-instance guard: only one instance performs the reset
+    try:
+        from open_webui.env import (
+            REDIS_CLUSTER,
+            REDIS_SENTINEL_HOSTS,
+            REDIS_SENTINEL_PORT,
+            REDIS_URL,
+        )
+        from open_webui.utils.redis import get_redis_connection, get_sentinels_from_env
+
+        redis = get_redis_connection(
+            redis_url=REDIS_URL,
+            redis_sentinels=get_sentinels_from_env(REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT),
+            redis_cluster=REDIS_CLUSTER,
+        )
+        if redis and not redis.set(f'daily_credit_reset:{today}', '1', nx=True, ex=3600):
+            cfg.LOTTERY_DAILY_RESET_MARK = today  # another instance is handling it
+            return
+    except Exception:
+        pass
+
+    try:
+        value = Decimal(str(getattr(cfg, 'DAILY_RESET_CREDIT', '3') or '3'))
+    except Exception:
+        value = Decimal('3')
+
+    affected = Credits.reset_all_credits(value)
+    cfg.LOTTERY_DAILY_RESET_MARK = today
+    log.info(f'Daily credit reset: {affected} users -> {value} ({today} {tz_name})')
+
+
 async def scheduler_worker_loop(app) -> None:
     """Unified background scheduler for all time-based work.
 
     Handles:
       1. Automation execution  (ENABLE_AUTOMATIONS)
       2. Calendar event alerts (ENABLE_CALENDAR)
+      3. Daily credit reset    (ENABLE_DAILY_CREDIT_RESET)
 
     Runs on every instance. Poll interval is configurable via
     SCHEDULER_POLL_INTERVAL env var (default: 10 seconds).
@@ -189,6 +239,13 @@ async def scheduler_worker_loop(app) -> None:
                     await _check_calendar_alerts(app)
                 except Exception:
                     log.exception('Scheduler: calendar alert error')
+
+            # ── Daily Credit Reset (北京时间 0 点全员积分清零) ──
+            if getattr(app.state.config, 'ENABLE_DAILY_CREDIT_RESET', False):
+                try:
+                    await _check_daily_credit_reset(app)
+                except Exception:
+                    log.exception('Scheduler: daily credit reset error')
 
         except Exception:
             log.exception('Scheduler worker error')
