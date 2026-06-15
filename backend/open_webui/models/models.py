@@ -11,7 +11,7 @@ from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
 from open_webui.utils.validate import validate_profile_image_url
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, update
+from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,7 +83,7 @@ class Model(Base):
     name = Column(Text)  # human-readable display name
     params = Column(JSONField)  # see ModelParams
     meta = Column(JSONField)  # see ModelMeta
-    price = Column(JSONField, nullable=True)
+    price = Column(JSON().with_variant(JSONB, 'postgresql'), nullable=True)
     is_active = Column(Boolean, default=True)  # soft-disable toggle
     updated_at = Column(BigInteger)  # epoch seconds
     created_at = Column(BigInteger)  # epoch seconds
@@ -507,7 +507,7 @@ class ModelsTable:
         try:
             async with get_async_db_context(db) as db:
                 # update only the fields that are present in the model
-                data = model.model_dump(exclude={'id', 'access_grants'})
+                data = model.model_dump(exclude={'id', 'access_grants'}, exclude_unset=True)
                 data['updated_at'] = int(time.time())
                 await db.execute(update(Model).filter_by(id=id).values(**data))
 

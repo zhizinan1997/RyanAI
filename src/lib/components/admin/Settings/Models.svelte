@@ -210,11 +210,15 @@
 
 		if (workspaceModels.find((m) => m.id === model.id)) {
 			const res = await updateModelById(localStorage.token, model.id, model).catch((error) => {
+				toast.error(error?.detail ?? `${error}`);
 				return null;
 			});
 
-			if (res && showToast) {
-				toast.success($i18n.t('Model updated successfully'));
+			if (res) {
+				if (showToast) {
+					toast.success($i18n.t('Model updated successfully'));
+					await init();
+				}
 			}
 		} else {
 			const res = await createNewModel(localStorage.token, {
@@ -226,6 +230,7 @@
 				access_grants: [],
 				...model
 			}).catch((error) => {
+				toast.error(error?.detail ?? `${error}`);
 				return null;
 			});
 
@@ -762,9 +767,9 @@
 			edit
 			model={models.find((m) => m.id === selectedModelId)}
 			preset={false}
-			onSubmit={(model) => {
+			onSubmit={async (model) => {
 				console.log(model);
-				upsertModelHandler(model);
+				await upsertModelHandler(model);
 				selectedModelId = null;
 			}}
 			onBack={async () => {

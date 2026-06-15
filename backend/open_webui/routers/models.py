@@ -681,7 +681,7 @@ async def update_model_by_id(
         'sharing.public_models',
     )
 
-    model = await Models.update_model_by_id(form_data.id, ModelForm(**form_data.model_dump()), db=db)
+    model = await Models.update_model_by_id(form_data.id, form_data, db=db)
     return model
 
 
