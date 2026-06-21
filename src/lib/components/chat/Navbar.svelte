@@ -4,7 +4,6 @@
 
 	import {
 		WEBUI_NAME,
-		banners,
 		chatId,
 		config,
 		mobile,
@@ -25,6 +24,7 @@
 	import Tooltip from '../common/Tooltip.svelte';
 	import Menu from '$lib/components/layout/Navbar/Menu.svelte';
 	import UserMenu from '$lib/components/layout/Sidebar/UserMenu.svelte';
+	import NotificationCenter from './NotificationCenter.svelte';
 	import AdjustmentsHorizontal from '../icons/AdjustmentsHorizontal.svelte';
 
 	import PencilSquare from '../icons/PencilSquare.svelte';
@@ -56,16 +56,6 @@
 	export let archiveChatHandler: (id: string) => void;
 	export let deleteChatHandler: (id: string) => void;
 	export let moveChatHandler: (id: string, folderId: string) => void;
-
-	let closedBannerIds = [];
-
-	const getDismissedBannerIds = (): string[] => {
-		try {
-			return JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]');
-		} catch {
-			return [];
-		}
-	};
 
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
@@ -128,6 +118,8 @@
 
 				<div class="self-start flex flex-none items-center text-gray-600 dark:text-gray-400">
 					<!-- <div class="md:hidden flex self-center w-[1px] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
+
+					<NotificationCenter />
 
 					{#if $user?.role === 'user' ? ($user?.permissions?.chat?.temporary ?? true) && !($user?.permissions?.chat?.temporary_enforced ?? false) : true}
 						{#if !chat?.id}
@@ -281,7 +273,7 @@
 	{/if}
 
 	<div class="absolute top-[100%] left-0 right-0 h-fit">
-		{#if !history.currentId && !$chatId && ($banners.length > 0 || ($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
+		{#if !history.currentId && !$chatId && (($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
 			<div class=" w-full z-30">
 				<div class=" flex flex-col gap-1 w-full">
 					{#if ($config?.license_metadata?.type ?? null) === 'trial'}
@@ -308,27 +300,6 @@
 						/>
 					{/if}
 
-					{#each $banners.filter((b) => ![...getDismissedBannerIds(), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
-						<Banner
-							{banner}
-							on:dismiss={(e) => {
-								const bannerId = e.detail;
-
-								if (banner.dismissible) {
-									localStorage.setItem(
-										'dismissedBannerIds',
-										JSON.stringify(
-											[bannerId, ...getDismissedBannerIds()].filter((id) =>
-												$banners.find((b) => b.id === id)
-											)
-										)
-									);
-								} else {
-									closedBannerIds = [...closedBannerIds, bannerId];
-								}
-							}}
-						/>
-					{/each}
 				</div>
 			</div>
 		{/if}

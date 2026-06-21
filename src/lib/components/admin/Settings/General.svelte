@@ -11,21 +11,23 @@
 		updateLdapConfig,
 		updateLdapServer
 	} from '$lib/apis/auths';
-	import { getBanners, setBanners } from '$lib/apis/configs';
+	import { createNotification, getNotifications, updateNotification } from '$lib/apis/configs';
 	import { getGroups } from '$lib/apis/groups';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { WEBUI_BUILD_HASH, WEBUI_VERSION } from '$lib/constants';
-	import { banners as _banners, config, showChangelog } from '$lib/stores';
-	import type { Banner } from '$lib/types';
+	import { config, notifications as _notifications, showChangelog } from '$lib/stores';
+	import type { Notification } from '$lib/types';
 	import { compareVersion } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
+	import type { Writable } from 'svelte/store';
+	import type { i18n as i18nType } from 'i18next';
 	import { toast } from 'svelte-sonner';
 	import Textarea from '$lib/components/common/Textarea.svelte';
-	import Banners from './Interface/Banners.svelte';
+	import NotificationsEditor from './Interface/Banners.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: Writable<i18nType> = getContext('i18n');
 
 	export let saveHandler: Function;
 
@@ -39,7 +41,7 @@
 	let webhookUrl = '';
 	let groups = [];
 
-	let banners: Banner[] = [];
+	let notifications: Notification[] = [];
 
 	// LDAP
 	let ENABLE_LDAP = false;
@@ -84,8 +86,30 @@
 		}
 	};
 
-	const updateBanners = async () => {
-		_banners.set(await setBanners(localStorage.token, banners));
+	const updateNotifications = async () => {
+		for (const notification of notifications) {
+			const payload = {
+				type: notification.type || 'info',
+				title: notification.title ?? '',
+				content: notification.content ?? '',
+				active: notification.active ?? true,
+				dismissible: notification.dismissible ?? true,
+				published_at: notification.published_at ?? null
+			};
+
+			if (notification.id.startsWith('local-')) {
+				if (payload.content.trim() === '') {
+					continue;
+				}
+				await createNotification(localStorage.token, payload);
+			} else {
+				await updateNotification(localStorage.token, notification.id, payload);
+			}
+		}
+
+		const refreshed = await getNotifications(localStorage.token, 1, 100, true);
+		notifications = refreshed.items;
+		_notifications.set(refreshed.items);
 	};
 
 	const updateHandler = async () => {
@@ -94,7 +118,7 @@
 		await updateLdapConfig(localStorage.token, ENABLE_LDAP);
 		await updateLdapServerHandler();
 
-		await updateBanners();
+		await updateNotifications();
 
 		await config.set(await getBackendConfig());
 
@@ -129,7 +153,7 @@
 		const ldapConfig = await getLdapConfig(localStorage.token);
 		ENABLE_LDAP = ldapConfig.ENABLE_LDAP;
 
-		banners = await getBanners(localStorage.token);
+		notifications = (await getNotifications(localStorage.token, 1, 100, true)).items;
 	});
 </script>
 
@@ -954,23 +978,26 @@
 					<div class="mb-2.5">
 						<div class="flex w-full justify-between">
 							<div class=" self-center text-xs">
-								{$i18n.t('Banners')}
+								{$i18n.t('Notifications')}
 							</div>
 
 							<button
 								class="p-1 px-3 text-xs flex rounded-sm transition"
 								type="button"
 								on:click={() => {
-									if (banners.length === 0 || banners.at(-1).content !== '') {
-										banners = [
-											...banners,
+									if (notifications.length === 0 || notifications.at(-1).content !== '') {
+										notifications = [
+											...notifications,
 											{
-												id: uuidv4(),
-												type: '',
+												id: `local-${uuidv4()}`,
+												type: 'info',
 												title: '',
 												content: '',
+												active: true,
 												dismissible: true,
-												timestamp: Math.floor(Date.now() / 1000)
+												created_at: Math.floor(Date.now() / 1000),
+												updated_at: Math.floor(Date.now() / 1000),
+												published_at: Math.floor(Date.now() / 1000)
 											}
 										];
 									}
@@ -989,7 +1016,7 @@
 							</button>
 						</div>
 
-						<Banners bind:banners />
+						<NotificationsEditor bind:notifications />
 					</div>
 				</div>
 			</div>

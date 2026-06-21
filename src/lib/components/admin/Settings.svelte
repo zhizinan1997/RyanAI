@@ -228,6 +228,7 @@
 				'ui',
 				'appearance',
 				'banners',
+				'notifications',
 				'tasks',
 				'prompt suggestions',
 				'title generation',
