@@ -1232,13 +1232,35 @@
 									<Tooltip
 										elementId="usage-detail-{message.id}"
 										theme="usage-detail"
-										tippyOptions={{ interactive: true, maxWidth: 'min(320px, calc(100vw - 24px))' }}
-										placement="bottom"
+										tippyOptions={{
+											interactive: true,
+											appendTo: () => document.body,
+											maxWidth: 'min(320px, calc(100vw - 24px))',
+											popperOptions: {
+												strategy: 'fixed',
+												modifiers: [
+													{
+														name: 'flip',
+														options: {
+															fallbackPlacements: ['top', 'bottom-start', 'top-start']
+														}
+													},
+													{
+														name: 'preventOverflow',
+														options: {
+															padding: 12,
+															boundary: 'viewport'
+														}
+													}
+												]
+											}
+										}}
+										placement="bottom-start"
 									>
 										<div
 											slot="tooltip"
 											id="usage-detail-{message.id}"
-											class="w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-gray-200 bg-white p-3 text-gray-900 shadow-lg shadow-gray-900/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:shadow-black/30"
+											class="max-h-[min(22rem,calc(100vh-1.5rem))] w-80 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 text-gray-900 shadow-lg shadow-gray-900/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:shadow-black/30"
 										>
 											<div class="mb-2 flex items-center justify-between gap-3">
 												<div>
