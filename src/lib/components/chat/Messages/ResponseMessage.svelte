@@ -30,7 +30,6 @@
 		copyToClipboard as _copyToClipboard,
 		approximateToHumanReadable,
 		getMessageContentParts,
-		sanitizeResponseContent,
 		createMessagesList,
 		formatDate,
 		removeDetails,
@@ -113,6 +112,7 @@
 			load_duration?: number;
 			usage?: unknown;
 		};
+		usage?: Record<string, unknown>;
 		annotation?: { type: string; rating: number };
 	}
 
@@ -135,6 +135,92 @@
 			}
 		}
 	}
+
+	type UsageDetail = {
+		label: string;
+		value: string;
+		tone: string;
+	};
+
+	const toFiniteNumber = (value: unknown): number | null => {
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			return value;
+		}
+
+		if (typeof value === 'string' && value.trim() !== '') {
+			const number = Number(value);
+			return Number.isFinite(number) ? number : null;
+		}
+
+		return null;
+	};
+
+	const pickUsageNumber = (
+		usage: Record<string, unknown> | undefined,
+		keys: string[]
+	): number | null => {
+		if (!usage) {
+			return null;
+		}
+
+		for (const key of keys) {
+			const value = toFiniteNumber(usage[key]);
+			if (value !== null) {
+				return value;
+			}
+		}
+
+		return null;
+	};
+
+	const formatUsageNumber = (value: number | null, maximumFractionDigits = 0) =>
+		value === null
+			? '未返回'
+			: new Intl.NumberFormat('zh-CN', {
+					maximumFractionDigits
+				}).format(value);
+
+	const getUsageDetails = (usage: Record<string, unknown> | undefined): UsageDetail[] => {
+		const promptTokens = pickUsageNumber(usage, [
+			'prompt_tokens',
+			'input_tokens',
+			'prompt_eval_count'
+		]);
+		const completionTokens = pickUsageNumber(usage, [
+			'completion_tokens',
+			'output_tokens',
+			'eval_count'
+		]);
+		const totalTokens =
+			pickUsageNumber(usage, ['total_tokens']) ??
+			(promptTokens !== null && completionTokens !== null ? promptTokens + completionTokens : null);
+		const creditCost = pickUsageNumber(usage, ['total_cost', 'total_price', 'cost', 'credit_cost']);
+
+		return [
+			{
+				label: '提问 tokens',
+				value: formatUsageNumber(promptTokens),
+				tone: 'bg-sky-50 text-sky-700 border-sky-100 dark:bg-sky-500/10 dark:text-sky-200 dark:border-sky-500/20'
+			},
+			{
+				label: '模型回答 tokens',
+				value: formatUsageNumber(completionTokens),
+				tone: 'bg-emerald-50 text-emerald-700 border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-200 dark:border-emerald-500/20'
+			},
+			{
+				label: '总消耗 tokens',
+				value: formatUsageNumber(totalTokens),
+				tone: 'bg-violet-50 text-violet-700 border-violet-100 dark:bg-violet-500/10 dark:text-violet-200 dark:border-violet-500/20'
+			},
+			{
+				label: '消耗积分',
+				value: formatUsageNumber(creditCost, 6),
+				tone: 'bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-500/10 dark:text-amber-200 dark:border-amber-500/20'
+			}
+		];
+	};
+
+	$: usageDetails = getUsageDetails(message.usage);
 
 	export let siblings;
 
@@ -1144,28 +1230,50 @@
 
 								{#if message.usage}
 									<Tooltip
-										content={message.usage
-											? `<pre>${sanitizeResponseContent(
-													JSON.stringify(message.usage, null, 2)
-														.replace(/"([^(")"]+)":/g, '$1:')
-														.slice(1, -1)
-														.split('\n')
-														.map((line) => line.slice(2))
-														.map((line) => (line.endsWith(',') ? line.slice(0, -1) : line))
-														.join('\n')
-												)}</pre>`
-											: ''}
-										tippyOptions={{ interactive: true }}
+										elementId="usage-detail-{message.id}"
+										theme="usage-detail"
+										tippyOptions={{ interactive: true, maxWidth: 'min(320px, calc(100vw - 24px))' }}
 										placement="bottom"
 									>
+										<div
+											slot="tooltip"
+											id="usage-detail-{message.id}"
+											class="w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border border-gray-200 bg-white p-3 text-gray-900 shadow-lg shadow-gray-900/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:shadow-black/30"
+										>
+											<div class="mb-2 flex items-center justify-between gap-3">
+												<div>
+													<div class="text-sm font-semibold leading-5">消耗详情</div>
+													<div
+														class="mt-0.5 text-[11px] leading-4 text-gray-500 dark:text-gray-400"
+													>
+														本次模型回复
+													</div>
+												</div>
+												<div
+													class="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-medium text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+												>
+													用量
+												</div>
+											</div>
+
+											<div class="grid grid-cols-2 gap-2">
+												{#each usageDetails as detail}
+													<div class="rounded-lg border p-2.5 {detail.tone}">
+														<div class="text-[11px] leading-4 opacity-80">{detail.label}</div>
+														<div class="mt-1 text-base font-semibold leading-5 tracking-normal">
+															{detail.value}
+														</div>
+													</div>
+												{/each}
+											</div>
+										</div>
+
 										<button
-											aria-hidden="true"
+											type="button"
+											aria-label="查看消耗详情"
 											class=" {isLastMessage || ($settings?.highContrastMode ?? false)
 												? 'visible'
 												: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition whitespace-pre-wrap"
-											on:click={() => {
-												console.log(message);
-											}}
 											id="info-{message.id}"
 										>
 											<svg
@@ -1529,5 +1637,15 @@
 	.buttons {
 		-ms-overflow-style: none; /* IE and Edge */
 		scrollbar-width: none; /* Firefox */
+	}
+
+	:global(.tippy-box[data-theme~='usage-detail']) {
+		background: transparent;
+		color: inherit;
+		box-shadow: none;
+	}
+
+	:global(.tippy-box[data-theme~='usage-detail'] > .tippy-content) {
+		padding: 0;
 	}
 </style>

@@ -94,6 +94,8 @@
 	import Component from '../icons/Component.svelte';
 	import PlusAlt from '../icons/PlusAlt.svelte';
 	import Dropdown from '../common/Dropdown.svelte';
+	import ChevronDown from '../icons/ChevronDown.svelte';
+	import Check from '../icons/Check.svelte';
 
 	import CommandSuggestionList from './MessageInput/CommandSuggestionList.svelte';
 	import Knobs from '../icons/Knobs.svelte';
@@ -105,7 +107,7 @@
 	import QueuedMessageItem from './MessageInput/QueuedMessageItem.svelte';
 	import TaskList from './Messages/ResponseMessage/TaskList.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	export let onUpload: Function = (e) => {};
 	export let onChange: Function = () => {};
@@ -133,6 +135,7 @@
 
 	export let prompt = '';
 	export let files = [];
+	export let params: Record<string, any> = {};
 
 	export let selectedToolIds = [];
 	export let selectedSkillIds = [];
@@ -187,6 +190,124 @@
 		webSearchEnabled,
 		codeInterpreterEnabled
 	});
+
+	const intelligenceTiers = ['fast', 'balanced', 'advanced'];
+	const defaultIntelligenceConfig = {
+		enabled: false,
+		param: 'reasoning_effort',
+		default: 'advanced',
+		options: {
+			fast: 'low',
+			balanced: 'medium',
+			advanced: 'high'
+		}
+	};
+
+	let showIntelligenceMenu = false;
+	let intelligenceConfig: any = null;
+	let currentIntelligenceTier: string | null = null;
+
+	const normalizeIntelligenceConfig = (config: any = {}) => {
+		const options = {
+			...defaultIntelligenceConfig.options,
+			...(config?.options ?? {})
+		};
+
+		return {
+			...defaultIntelligenceConfig,
+			...config,
+			param:
+				typeof config?.param === 'string' && config.param.trim()
+					? config.param.trim()
+					: defaultIntelligenceConfig.param,
+			default: intelligenceTiers.includes(config?.default)
+				? config.default
+				: defaultIntelligenceConfig.default,
+			options: {
+				fast:
+					typeof options.fast === 'string' && options.fast !== ''
+						? options.fast
+						: defaultIntelligenceConfig.options.fast,
+				balanced:
+					typeof options.balanced === 'string' && options.balanced !== ''
+						? options.balanced
+						: defaultIntelligenceConfig.options.balanced,
+				advanced:
+					typeof options.advanced === 'string' && options.advanced !== ''
+						? options.advanced
+						: defaultIntelligenceConfig.options.advanced
+			}
+		};
+	};
+
+	const getSelectedModel = () => {
+		if (selectedModelIds.length !== 1) {
+			return null;
+		}
+
+		return atSelectedModel?.id === selectedModelIds[0]
+			? atSelectedModel
+			: $models.find((model) => model.id === selectedModelIds[0]);
+	};
+
+	const getEnabledIntelligenceConfig = () => {
+		const model: any = getSelectedModel();
+		const config = model?.info?.meta?.intelligence_config ?? model?.meta?.intelligence_config;
+
+		if (!config?.enabled) {
+			return null;
+		}
+
+		return normalizeIntelligenceConfig(config);
+	};
+
+	const getIntelligenceTierLabel = (tier: string | null) => {
+		if (tier === 'fast') return $i18n.t('Fast');
+		if (tier === 'balanced') return $i18n.t('Balanced');
+		if (tier === 'advanced') return $i18n.t('Advanced');
+		return $i18n.t('Custom');
+	};
+
+	const getCurrentIntelligenceTier = () => {
+		if (!intelligenceConfig) {
+			return null;
+		}
+
+		const value = params?.[intelligenceConfig.param];
+		const tier = intelligenceTiers.find((tier) => intelligenceConfig.options[tier] === value);
+
+		if (tier) {
+			return tier;
+		}
+
+		if (value !== undefined && value !== null && value !== '') {
+			return 'custom';
+		}
+
+		return intelligenceConfig.default;
+	};
+
+	const setIntelligenceTier = (tier: string) => {
+		if (!intelligenceConfig || !intelligenceTiers.includes(tier)) {
+			return;
+		}
+
+		params = {
+			...(params ?? {}),
+			[intelligenceConfig.param]: intelligenceConfig.options[tier]
+		};
+	};
+
+	$: intelligenceConfig = getEnabledIntelligenceConfig();
+	$: currentIntelligenceTier = getCurrentIntelligenceTier();
+	$: if (
+		intelligenceConfig &&
+		(params?.[intelligenceConfig.param] === undefined ||
+			params?.[intelligenceConfig.param] === null ||
+			params?.[intelligenceConfig.param] === '')
+	) {
+		setIntelligenceTier(intelligenceConfig.default);
+	}
 
 	const inputVariableHandler = async (text: string): Promise<string> => {
 		inputVariables = extractInputVariables(text);
@@ -1962,6 +2083,46 @@
 											</Tooltip>
 										</div>
 									{:else}
+										{#if intelligenceConfig}
+											<Dropdown bind:show={showIntelligenceMenu} align="end" side="top">
+												<button
+													type="button"
+													class="flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+													aria-label={$i18n.t('Intelligence Level')}
+												>
+													<span>{getIntelligenceTierLabel(currentIntelligenceTier)}</span>
+													<ChevronDown className="size-3.5" strokeWidth="2" />
+												</button>
+
+												<div slot="content">
+													<div
+														class="min-w-32 rounded-2xl px-1 py-1 border border-gray-100 dark:border-gray-800 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg"
+													>
+														<div class="px-3 py-1.5 text-xs text-gray-400 dark:text-gray-500">
+															{$i18n.t('Intelligence')}
+														</div>
+
+														{#each intelligenceTiers as tier}
+															<button
+																type="button"
+																class="w-full flex items-center justify-between gap-3 px-3 py-2 text-sm rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+																on:click={() => {
+																	setIntelligenceTier(tier);
+																	showIntelligenceMenu = false;
+																}}
+															>
+																<span>{getIntelligenceTierLabel(tier)}</span>
+
+																{#if currentIntelligenceTier === tier}
+																	<Check className="size-4" strokeWidth="2" />
+																{/if}
+															</button>
+														{/each}
+													</div>
+												</div>
+											</Dropdown>
+										{/if}
+
 										{#if prompt !== '' && !history?.currentId && !$selectedTerminalId && ($config?.features?.enable_notes ?? false) && ($_user?.role === 'admin' || ($_user?.permissions?.features?.notes ?? true))}
 											<!-- {$i18n.t('Create Note')}  -->
 											<Tooltip content={$i18n.t('Create note')} className=" flex items-center">

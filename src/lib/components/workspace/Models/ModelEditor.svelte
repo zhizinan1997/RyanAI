@@ -19,6 +19,7 @@
 	import ActionsSelector from '$lib/components/workspace/Models/ActionsSelector.svelte';
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
+	import Switch from '$lib/components/common/Switch.svelte';
 	import AccessControl from '../common/AccessControl.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
@@ -31,7 +32,7 @@
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
 	import { updateModelAccessGrants } from '$lib/apis/models';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	export let onSubmit: Function;
 	export let onBack: null | Function = null;
@@ -120,6 +121,41 @@
 	let terminalId = '';
 	let tts = { voice: '' };
 
+	const defaultIntelligenceConfig = {
+		enabled: false,
+		param: 'reasoning_effort',
+		default: 'advanced',
+		options: {
+			fast: 'low',
+			balanced: 'medium',
+			advanced: 'high'
+		}
+	};
+
+	let intelligenceConfig: any = structuredClone(defaultIntelligenceConfig);
+
+	const normalizeIntelligenceConfig = (config: any = {}) => {
+		const options = {
+			...defaultIntelligenceConfig.options,
+			...(config?.options ?? {})
+		};
+
+		const defaultTier = ['fast', 'balanced', 'advanced'].includes(config?.default)
+			? config.default
+			: defaultIntelligenceConfig.default;
+
+		return {
+			...defaultIntelligenceConfig,
+			...config,
+			param:
+				typeof config?.param === 'string' && config.param.trim()
+					? config.param.trim()
+					: defaultIntelligenceConfig.param,
+			default: defaultTier,
+			options
+		};
+	};
+
 	const submitHandler = async () => {
 		loading = true;
 
@@ -151,6 +187,7 @@
 
 		info.access_grants = accessGrants;
 		info.meta.capabilities = capabilities;
+		(info.meta as any).intelligence_config = normalizeIntelligenceConfig(intelligenceConfig);
 
 		if (enableDescription) {
 			info.meta.description = info.meta.description.trim() === '' ? null : info.meta.description;
@@ -304,6 +341,9 @@
 			}
 
 			system = model?.params?.system ?? '';
+			intelligenceConfig = normalizeIntelligenceConfig(
+				((model as any)?.meta as any)?.intelligence_config ?? {}
+			);
 
 			params = { ...params, ...model?.params };
 			params.stop = params?.stop
@@ -899,6 +939,68 @@
 										bind:value={system}
 									/>
 								</div>
+							</div>
+
+							<div class="my-3">
+								<div class="flex w-full justify-between items-center">
+									<div class=" self-center text-xs font-medium">
+										{$i18n.t('Intelligence Level')}
+									</div>
+
+									<Switch bind:state={intelligenceConfig.enabled} />
+								</div>
+
+								{#if intelligenceConfig.enabled}
+									<div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+										<label class="block">
+											<div class="text-xs text-gray-500 mb-1">{$i18n.t('Parameter Name')}</div>
+											<input
+												class="text-sm w-full bg-transparent outline-hidden border border-gray-100 dark:border-gray-800 rounded-lg px-3 py-2"
+												placeholder="reasoning_effort"
+												bind:value={intelligenceConfig.param}
+											/>
+										</label>
+
+										<label class="block">
+											<div class="text-xs text-gray-500 mb-1">{$i18n.t('Default Tier')}</div>
+											<select
+												class="text-sm w-full bg-transparent outline-hidden border border-gray-100 dark:border-gray-800 rounded-lg px-3 py-2"
+												bind:value={intelligenceConfig.default}
+											>
+												<option value="fast" class="text-gray-900">{$i18n.t('Fast')}</option>
+												<option value="balanced" class="text-gray-900">{$i18n.t('Balanced')}</option>
+												<option value="advanced" class="text-gray-900">{$i18n.t('Advanced')}</option>
+											</select>
+										</label>
+
+										<label class="block">
+											<div class="text-xs text-gray-500 mb-1">{$i18n.t('Fast')}</div>
+											<input
+												class="text-sm w-full bg-transparent outline-hidden border border-gray-100 dark:border-gray-800 rounded-lg px-3 py-2"
+												placeholder="low"
+												bind:value={intelligenceConfig.options.fast}
+											/>
+										</label>
+
+										<label class="block">
+											<div class="text-xs text-gray-500 mb-1">{$i18n.t('Balanced')}</div>
+											<input
+												class="text-sm w-full bg-transparent outline-hidden border border-gray-100 dark:border-gray-800 rounded-lg px-3 py-2"
+												placeholder="medium"
+												bind:value={intelligenceConfig.options.balanced}
+											/>
+										</label>
+
+										<label class="block md:col-span-2">
+											<div class="text-xs text-gray-500 mb-1">{$i18n.t('Advanced')}</div>
+											<input
+												class="text-sm w-full bg-transparent outline-hidden border border-gray-100 dark:border-gray-800 rounded-lg px-3 py-2"
+												placeholder="high"
+												bind:value={intelligenceConfig.options.advanced}
+											/>
+										</label>
+									</div>
+								{/if}
 							</div>
 
 							<div class="flex w-full justify-between">
