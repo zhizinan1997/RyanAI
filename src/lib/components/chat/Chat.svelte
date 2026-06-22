@@ -144,10 +144,60 @@
 	let selectedModels = [''];
 	let atSelectedModel: Model | undefined;
 	let selectedModelIds = [];
+	let previousSelectedModels = [''];
 	$: if (atSelectedModel !== undefined) {
 		selectedModelIds = [atSelectedModel.id];
 	} else {
 		selectedModelIds = selectedModels;
+	}
+
+	$: if (!equal(selectedModels, previousSelectedModels)) {
+		if (atSelectedModel !== undefined) {
+			atSelectedModel = undefined;
+		}
+		previousSelectedModels = structuredClone(selectedModels);
+	}
+
+	const getAvailableModelIds = () =>
+		$models.filter((m) => !(m?.info?.meta?.hidden ?? false)).map((m) => m.id);
+
+	const getDefaultSelectedModels = () => {
+		const availableModels = getAvailableModelIds();
+		const defaultModels = $config?.default_models ? $config.default_models.split(',') : [];
+
+		let candidateModels = [];
+		if ($selectedFolder?.data?.model_ids) {
+			candidateModels = $selectedFolder.data.model_ids;
+		} else if ($settings?.models) {
+			candidateModels = $settings.models;
+		} else if (defaultModels.length > 0) {
+			candidateModels = defaultModels;
+		}
+
+		const validCandidates = candidateModels.filter((modelId) => availableModels.includes(modelId));
+		if (validCandidates.length > 0) {
+			return validCandidates;
+		}
+
+		return availableModels.length > 0 ? [availableModels[0]] : [''];
+	};
+
+	$: {
+		const hasValidSelectedModel =
+			selectedModels.filter((modelId) => modelId && $models.some((model) => model.id === modelId))
+				.length > 0;
+		const hasDefaultModelContext = Boolean($config || $settings || $selectedFolder);
+
+		if (
+			!chatIdProp &&
+			!$chatId &&
+			$config &&
+			hasDefaultModelContext &&
+			$models.length > 0 &&
+			!hasValidSelectedModel
+		) {
+			selectedModels = getDefaultSelectedModels();
+		}
 	}
 
 	let selectedToolIds = [];
@@ -1207,9 +1257,11 @@
 			}
 
 			// Unavailable models filtering
-			selectedModels = selectedModels.filter((modelId) =>
-				$models.map((m) => m.id).includes(modelId)
-			);
+			if ($models.length > 0) {
+				selectedModels = selectedModels.filter((modelId) =>
+					$models.map((m) => m.id).includes(modelId)
+				);
+			}
 		} else {
 			if ($selectedFolder?.data?.model_ids) {
 				// Set from folder model IDs
@@ -1231,7 +1283,9 @@
 			}
 
 			// Unavailable & hidden models filtering
-			selectedModels = selectedModels.filter((modelId) => availableModels.includes(modelId));
+			if (availableModels.length > 0) {
+				selectedModels = selectedModels.filter((modelId) => availableModels.includes(modelId));
+			}
 		}
 
 		// Ensure at least one model is selected
@@ -1248,7 +1302,7 @@
 					// Only fall back to first available model if default models didn't resolve
 					selectedModels = [availableModels?.at(0) ?? ''];
 				}
-			} else {
+			} else if ($models.length > 0) {
 				selectedModels = [''];
 			}
 		}
@@ -1378,9 +1432,11 @@
 			}
 		}
 
-		selectedModels = selectedModels.map((modelId) =>
-			$models.map((m) => m.id).includes(modelId) ? modelId : ''
-		);
+		if ($models.length > 0) {
+			selectedModels = selectedModels.map((modelId) =>
+				$models.map((m) => m.id).includes(modelId) ? modelId : ''
+			);
+		}
 
 		const chatInput = document.getElementById('chat-input');
 		setTimeout(() => chatInput?.focus(), 0);

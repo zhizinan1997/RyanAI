@@ -123,7 +123,17 @@
 	export let selectedModels: [''];
 
 	let selectedModelIds = [];
+	let previousSelectedModels = JSON.stringify(selectedModels);
 	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
+	$: {
+		const selectedModelsString = JSON.stringify(selectedModels);
+		if (selectedModelsString !== previousSelectedModels) {
+			if (atSelectedModel !== undefined) {
+				atSelectedModel = undefined;
+			}
+			previousSelectedModels = selectedModelsString;
+		}
+	}
 
 	export let history;
 	export let taskIds = null;
@@ -241,14 +251,12 @@
 		};
 	};
 
-	const getSelectedModel = (selectedModelIds: string[], atSelectedModel: any, models: any[]) => {
-		if (selectedModelIds.length !== 1) {
+	const getSelectedModel = (selectedModels: string[], models: any[]) => {
+		if (selectedModels.length !== 1 || !selectedModels[0]) {
 			return null;
 		}
 
-		return atSelectedModel?.id === selectedModelIds[0]
-			? atSelectedModel
-			: models.find((model) => model.id === selectedModelIds[0]);
+		return models.find((model) => model.id === selectedModels[0]);
 	};
 
 	const getEnabledIntelligenceConfig = (model: any) => {
@@ -298,9 +306,12 @@
 		};
 	};
 
-	$: selectedIntelligenceModel = getSelectedModel(selectedModelIds, atSelectedModel, $models);
+	$: selectedIntelligenceModel = getSelectedModel(selectedModels, $models);
 	$: intelligenceConfig = getEnabledIntelligenceConfig(selectedIntelligenceModel);
 	$: currentIntelligenceTier = getCurrentIntelligenceTier(intelligenceConfig, params);
+	$: if (!intelligenceConfig && showIntelligenceMenu) {
+		showIntelligenceMenu = false;
+	}
 	$: if (
 		intelligenceConfig &&
 		(params?.[intelligenceConfig.param] === undefined ||
