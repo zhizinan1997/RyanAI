@@ -38,7 +38,8 @@
 		showSearch,
 		showSidebar,
 		showControls,
-		mobile
+		mobile,
+		setWebuiLatestVersion
 	} from '$lib/stores';
 
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
@@ -378,6 +379,10 @@
 				latest: WEBUI_VERSION
 			};
 		});
+
+		if (version?.latest) {
+			setWebuiLatestVersion(version.latest);
+		}
 	};
 </script>
 

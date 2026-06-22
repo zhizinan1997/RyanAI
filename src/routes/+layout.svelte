@@ -17,6 +17,7 @@
 		WEBUI_NAME,
 		WEBUI_VERSION,
 		WEBUI_DEPLOYMENT_ID,
+		setWebuiLatestVersion,
 		mobile,
 		socket,
 		socketConnected,
@@ -51,7 +52,13 @@
 	import '../app.css';
 	import 'tippy.js/dist/tippy.css';
 
-	import { executeToolServer, getBackendConfig, getModels, getVersion } from '$lib/apis';
+	import {
+		executeToolServer,
+		getBackendConfig,
+		getGithubLatestReleaseVersion,
+		getModels,
+		getVersion
+	} from '$lib/apis';
 	import { getSessionUser, updateUserTimezone, userSignOut } from '$lib/apis/auths';
 	import { getAllTags, getChatList } from '$lib/apis/chats';
 	import { chatCompletion } from '$lib/apis/openai';
@@ -883,6 +890,16 @@
 
 	onMount(async () => {
 		window.addEventListener('message', windowMessageEventHandler);
+
+		getGithubLatestReleaseVersion()
+			.then((version) => {
+				if (version) {
+					setWebuiLatestVersion(version);
+				}
+			})
+			.catch((error) => {
+				console.error('Failed to fetch GitHub latest release version:', error);
+			});
 
 		let touchstartY = 0;
 

@@ -204,6 +204,7 @@
 	};
 
 	let showIntelligenceMenu = false;
+	let selectedIntelligenceModel: any = null;
 	let intelligenceConfig: any = null;
 	let currentIntelligenceTier: string | null = null;
 
@@ -240,18 +241,17 @@
 		};
 	};
 
-	const getSelectedModel = () => {
+	const getSelectedModel = (selectedModelIds: string[], atSelectedModel: any, models: any[]) => {
 		if (selectedModelIds.length !== 1) {
 			return null;
 		}
 
 		return atSelectedModel?.id === selectedModelIds[0]
 			? atSelectedModel
-			: $models.find((model) => model.id === selectedModelIds[0]);
+			: models.find((model) => model.id === selectedModelIds[0]);
 	};
 
-	const getEnabledIntelligenceConfig = () => {
-		const model: any = getSelectedModel();
+	const getEnabledIntelligenceConfig = (model: any) => {
 		const config = model?.info?.meta?.intelligence_config ?? model?.meta?.intelligence_config;
 
 		if (!config?.enabled) {
@@ -268,13 +268,13 @@
 		return $i18n.t('Custom');
 	};
 
-	const getCurrentIntelligenceTier = () => {
-		if (!intelligenceConfig) {
+	const getCurrentIntelligenceTier = (config: any, params: Record<string, any>) => {
+		if (!config) {
 			return null;
 		}
 
-		const value = params?.[intelligenceConfig.param];
-		const tier = intelligenceTiers.find((tier) => intelligenceConfig.options[tier] === value);
+		const value = params?.[config.param];
+		const tier = intelligenceTiers.find((tier) => config.options[tier] === value);
 
 		if (tier) {
 			return tier;
@@ -284,7 +284,7 @@
 			return 'custom';
 		}
 
-		return intelligenceConfig.default;
+		return config.default;
 	};
 
 	const setIntelligenceTier = (tier: string) => {
@@ -298,8 +298,9 @@
 		};
 	};
 
-	$: intelligenceConfig = getEnabledIntelligenceConfig();
-	$: currentIntelligenceTier = getCurrentIntelligenceTier();
+	$: selectedIntelligenceModel = getSelectedModel(selectedModelIds, atSelectedModel, $models);
+	$: intelligenceConfig = getEnabledIntelligenceConfig(selectedIntelligenceModel);
+	$: currentIntelligenceTier = getCurrentIntelligenceTier(intelligenceConfig, params);
 	$: if (
 		intelligenceConfig &&
 		(params?.[intelligenceConfig.param] === undefined ||

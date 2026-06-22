@@ -1569,6 +1569,34 @@ export const getVersion = async (token: string) => {
 	return res;
 };
 
+export const getGithubLatestReleaseVersion = async () => {
+	let error = null;
+
+	const res = await fetch('https://api.github.com/repos/zhizinan1997/RyanAI/releases/latest', {
+		method: 'GET',
+		headers: {
+			Accept: 'application/vnd.github+json'
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+
+			const data = await res.json();
+			return data?.tag_name?.replace(/^v/, '') ?? null;
+		})
+		.catch((err) => {
+			console.error(err);
+			error = err;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
 export const getVersionUpdates = async (token: string) => {
 	let error = null;
 

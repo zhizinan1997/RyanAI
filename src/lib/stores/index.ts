@@ -13,7 +13,30 @@ import emojiShortCodes from '$lib/emoji-shortcodes.json';
 export const WEBUI_NAME = writable(APP_NAME);
 
 export const WEBUI_VERSION = writable(null);
+export const WEBUI_LATEST_VERSION = writable<string | null>(null);
 export const WEBUI_DEPLOYMENT_ID = writable(null);
+
+const isVersionNewer = (next: string, current: string) => {
+	return (
+		current.localeCompare(next, undefined, {
+			numeric: true,
+			sensitivity: 'case',
+			caseFirst: 'upper'
+		}) < 0
+	);
+};
+
+export const setWebuiLatestVersion = (version?: string | null) => {
+	if (!version) return;
+
+	WEBUI_LATEST_VERSION.update((current) => {
+		if (!current || isVersionNewer(version, current)) {
+			return version;
+		}
+
+		return current;
+	});
+};
 
 export const config: Writable<Config | undefined> = writable(undefined);
 export const user: Writable<SessionUser | undefined> = writable(undefined);

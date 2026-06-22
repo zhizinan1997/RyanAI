@@ -17,7 +17,13 @@
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { WEBUI_BUILD_HASH, WEBUI_VERSION } from '$lib/constants';
-	import { config, notifications as _notifications, showChangelog } from '$lib/stores';
+	import {
+		WEBUI_LATEST_VERSION,
+		config,
+		notifications as _notifications,
+		setWebuiLatestVersion,
+		showChangelog
+	} from '$lib/stores';
 	import type { Notification } from '$lib/types';
 	import { compareVersion } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
@@ -36,6 +42,11 @@
 		current: '',
 		latest: ''
 	};
+
+	$: displayVersion = $WEBUI_LATEST_VERSION || version?.latest || WEBUI_VERSION;
+	$: versionTooltip = $WEBUI_LATEST_VERSION
+		? `GitHub latest: v${$WEBUI_LATEST_VERSION}\nBuilt version: v${WEBUI_VERSION}\n${WEBUI_BUILD_HASH}`
+		: WEBUI_BUILD_HASH;
 
 	let adminConfig = null;
 	let webhookUrl = '';
@@ -70,6 +81,10 @@
 		});
 
 		console.info(version);
+
+		if (version?.latest) {
+			setWebuiLatestVersion(version.latest);
+		}
 
 		updateAvailable = compareVersion(version.latest, version.current);
 		console.info(updateAvailable);
@@ -180,8 +195,8 @@
 						<div class="flex w-full justify-between items-center">
 							<div class="flex flex-col text-xs text-gray-700 dark:text-gray-200">
 								<div class="flex gap-1">
-									<Tooltip content={WEBUI_BUILD_HASH}>
-										v{WEBUI_VERSION}
+									<Tooltip content={versionTooltip}>
+										v{displayVersion}
 									</Tooltip>
 
 									{#if $config?.features?.enable_version_update_check}
