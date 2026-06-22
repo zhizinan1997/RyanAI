@@ -9,6 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from mcp.shared.auth import OAuthMetadata
 from open_webui.config import BannerModel, async_save_config, get_config, save_config
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
+from open_webui.models.notifications import (
+    NotificationForm,
+    NotificationListResponse,
+    NotificationModel,
+    NotificationUpdateForm,
+    Notifications,
+)
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import get_custom_headers
@@ -33,6 +40,28 @@ from pydantic import BaseModel, ConfigDict
 router = APIRouter()
 
 log = logging.getLogger(__name__)
+
+
+def notification_to_banner(notification: NotificationModel) -> BannerModel:
+    return BannerModel(
+        id=notification.id,
+        type=notification.type,
+        title=notification.title or '',
+        content=notification.content,
+        dismissible=notification.dismissible,
+        timestamp=notification.published_at or notification.updated_at or notification.created_at,
+    )
+
+
+async def seed_notifications_from_legacy_banners(request: Request) -> None:
+    await Notifications.ensure_seeded_from_banners(request.app.state.config.BANNERS)
+
+
+async def sync_legacy_banners(request: Request) -> list[BannerModel]:
+    active_notifications = await Notifications.get_active_notifications()
+    banners = [notification_to_banner(notification) for notification in active_notifications]
+    request.app.state.config.BANNERS = [banner.model_dump() for banner in banners]
+    return banners
 
 
 ############################
@@ -737,15 +766,56 @@ class SetBannersForm(BaseModel):
     banners: list[BannerModel]
 
 
+@router.get('/notifications', response_model=NotificationListResponse)
+async def get_notifications(
+    request: Request,
+    page: int = 1,
+    limit: int = 5,
+    include_inactive: bool = True,
+    user=Depends(get_verified_user),
+):
+    await seed_notifications_from_legacy_banners(request)
+    return await Notifications.get_notifications(page=page, limit=limit, include_inactive=include_inactive)
+
+
+@router.post('/notifications', response_model=NotificationModel)
+async def create_notification(
+    request: Request,
+    form_data: NotificationForm,
+    user=Depends(get_admin_user),
+):
+    await seed_notifications_from_legacy_banners(request)
+    notification = await Notifications.insert_new_notification(form_data)
+    await sync_legacy_banners(request)
+    return notification
+
+
+@router.patch('/notifications/{notification_id}', response_model=NotificationModel)
+async def update_notification(
+    request: Request,
+    notification_id: str,
+    form_data: NotificationUpdateForm,
+    user=Depends(get_admin_user),
+):
+    await seed_notifications_from_legacy_banners(request)
+    notification = await Notifications.update_notification_by_id(notification_id, form_data)
+    if notification is None:
+        raise HTTPException(status_code=404, detail='Notification not found')
+    await sync_legacy_banners(request)
+    return notification
+
+
 @router.post('/banners', response_model=list[BannerModel])
 async def set_banners(
     request: Request,
     form_data: SetBannersForm,
     user=Depends(get_admin_user),
 ):
-    data = form_data.model_dump()
-    request.app.state.config.BANNERS = data['banners']
-    return request.app.state.config.BANNERS
+    await seed_notifications_from_legacy_banners(request)
+    active_notifications = await Notifications.set_notifications_from_banners(form_data.banners)
+    banners = [notification_to_banner(notification) for notification in active_notifications]
+    request.app.state.config.BANNERS = [banner.model_dump() for banner in banners]
+    return banners
 
 
 @router.get('/banners', response_model=list[BannerModel])
@@ -753,4 +823,5 @@ async def get_banners(
     request: Request,
     user=Depends(get_verified_user),
 ):
-    return request.app.state.config.BANNERS
+    await seed_notifications_from_legacy_banners(request)
+    return await sync_legacy_banners(request)

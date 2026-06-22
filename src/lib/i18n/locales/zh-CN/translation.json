@@ -2532,5 +2532,14 @@
 	"Search by user id": "按用户 ID 搜索",
 	"Cards": "卡牌",
 	"Reward": "奖励积分",
-	"No records": "暂无记录"
+	"No records": "暂无记录",
+	"No notifications": "暂无通知",
+	"View details": "查看详情",
+	"Ignore reminder": "忽略提醒",
+	"Ignored": "已忽略",
+	"I have read": "我已阅读",
+	"Notification details": "通知详情",
+	"Published": "已发布",
+	"Unpublish": "下架",
+	"Archived": "历史"
 }

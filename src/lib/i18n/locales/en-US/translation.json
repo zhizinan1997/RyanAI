@@ -2540,5 +2540,14 @@
 	"Search by user id": "Search by user id",
 	"Cards": "Cards",
 	"Reward": "Reward",
-	"No records": "No records"
+	"No records": "No records",
+	"No notifications": "",
+	"View details": "",
+	"Ignore reminder": "",
+	"Ignored": "",
+	"I have read": "",
+	"Notification details": "",
+	"Published": "",
+	"Unpublish": "",
+	"Archived": ""
 }

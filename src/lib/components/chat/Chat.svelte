@@ -25,7 +25,7 @@
 		settings,
 		showSidebar,
 		WEBUI_NAME,
-		banners,
+		notifications,
 		user,
 		socket,
 		audioQueue,
@@ -99,7 +99,6 @@
 	import { getFunctions } from '$lib/apis/functions';
 	import { updateFolderById } from '$lib/apis/folders';
 
-	import Banner from '../common/Banner.svelte';
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Navbar from '$lib/components/chat/Navbar.svelte';
@@ -113,7 +112,7 @@
 	import Tooltip from '../common/Tooltip.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
 	import Image from '../common/Image.svelte';
-	import { getBanners } from '$lib/apis/configs';
+	import { getNotifications } from '$lib/apis/configs';
 
 	export let chatIdProp = '';
 
@@ -794,11 +793,12 @@
 				await tick();
 				initNewChat();
 
-				// Re-fetch banners on navigation to homepage so newly configured banners appear
+				// Re-fetch notifications on navigation to homepage so newly configured items appear
 				try {
-					banners.set(await getBanners(localStorage.token).catch(() => []));
+					const res = await getNotifications(localStorage.token, 1, 100, true);
+					notifications.set(res.items);
 				} catch (e) {
-					console.error('Failed to refresh banners:', e);
+					console.error('Failed to refresh notifications:', e);
 				}
 			}
 

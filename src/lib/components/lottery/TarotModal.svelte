@@ -28,19 +28,39 @@
 	let radius = 230;
 	const span = 360;
 
-	let cols: { code: string; reversed: boolean; lit: boolean; flipped: boolean; burst: boolean }[] = [];
+	let cols: { code: string; reversed: boolean; lit: boolean; flipped: boolean; burst: boolean }[] =
+		[];
 	let summary = '';
 	let reward = 0;
 	let rewardShown = 0;
 	let coins: { tx: number; ty: number; delay: number }[] = [];
 	let drawing = false;
 
-	const pile = Array.from({ length: 7 }, (_, i) => ({
-		ox: (i - 3) * 1.5,
-		oy: -i * 1.5,
-		orot: (i - 3) * 1.2,
-		d: i % 2 ? 1 : -1
-	}));
+	const pile = Array.from({ length: 9 }, (_, i) => {
+		const center = i - 4;
+		const dir = i % 2 ? 1 : -1;
+		const sweep = 46 + Math.abs(center) * 7;
+
+		return {
+			ox: center * 0.9,
+			oy: -Math.abs(center) * 0.5,
+			orot: center * 0.85,
+			oxMid: center * 0.25,
+			oyMid: -Math.abs(center) * 0.5 + 7 + Math.abs(center),
+			orotMid: center * 0.3,
+			oxSettle: center * -0.16,
+			oySettle: -Math.abs(center) * 0.5 + 4,
+			orotSettle: center * -0.14,
+			sx1: dir * sweep,
+			sx2: -dir * sweep * 0.58,
+			lift: 9 + Math.abs(center) * 1.4,
+			lift2: (9 + Math.abs(center) * 1.4) * 0.65,
+			r1: dir * (10 + Math.abs(center) * 1.4),
+			r2: -dir * (7 + Math.abs(center)),
+			delay: i * 18,
+			z: i + 1
+		};
+	});
 
 	// 背景星点/粒子
 	const stars = Array.from({ length: 110 }, () => ({
@@ -109,7 +129,7 @@
 		if (stage !== 'intro') return;
 		stage = 'shuffle';
 		prompt = '正在洗牌,交付于命运……';
-		after(() => spread(), 1500);
+		after(() => spread(), 1650);
 	};
 
 	const spread = async () => {
@@ -290,7 +310,7 @@
 							{#each pile as p}
 								<div
 									class="pc back"
-									style="--ox:{p.ox}px;--oy:{p.oy}px;--orot:{p.orot}deg;--d:{p.d}"
+									style="--ox:{p.ox}px;--oy:{p.oy}px;--orot:{p.orot}deg;--ox-mid:{p.oxMid}px;--oy-mid:{p.oyMid}px;--orot-mid:{p.orotMid}deg;--ox-settle:{p.oxSettle}px;--oy-settle:{p.oySettle}px;--orot-settle:{p.orotSettle}deg;--sx1:{p.sx1}px;--sx2:{p.sx2}px;--lift:{p.lift}px;--lift2:{p.lift2}px;--r1:{p.r1}deg;--r2:{p.r2}deg;--delay:{p.delay}ms;--z:{p.z}"
 								></div>
 							{/each}
 						</div>
@@ -351,7 +371,9 @@
 								<div class="rname">
 									{card(c.code)?.cn}<span>{card(c.code)?.en}</span>
 								</div>
-								<span class="rbadge {c.reversed ? 'rev' : 'up'}">{c.reversed ? '逆位' : '正位'}</span>
+								<span class="rbadge {c.reversed ? 'rev' : 'up'}"
+									>{c.reversed ? '逆位' : '正位'}</span
+								>
 								<div class="rkw">{c.reversed ? card(c.code)?.r : card(c.code)?.u}</div>
 								<div class="rtext">{c.reversed ? card(c.code)?.rm : card(c.code)?.um}</div>
 							</div>
@@ -398,11 +420,16 @@
 		--spd: 1;
 		--txt: #e8e0ff;
 		--txt2: #c9bcec;
-		--scene: radial-gradient(1200px 800px at 50% -10%, #3a1f6e 0%, transparent 55%),
+		--scene:
+			radial-gradient(1200px 800px at 50% -10%, #3a1f6e 0%, transparent 55%),
 			radial-gradient(900px 700px at 85% 110%, #2a0f4a 0%, transparent 50%),
 			radial-gradient(900px 700px at 10% 90%, #14203f 0%, transparent 50%),
 			linear-gradient(180deg, #160a2b 0%, #0a0518 100%);
-		--overlay: radial-gradient(1000px 700px at 50% 40%, rgba(40, 20, 80, 0.55), rgba(8, 4, 20, 0.9));
+		--overlay: radial-gradient(
+			1000px 700px at 50% 40%,
+			rgba(40, 20, 80, 0.55),
+			rgba(8, 4, 20, 0.9)
+		);
 		--panel-name: #fff;
 		--panel-text: #d7cdf0;
 		--panel-bd: rgba(212, 175, 55, 0.32);
@@ -421,17 +448,27 @@
 		overflow: hidden;
 		padding: clamp(8px, 2vh, 18px) 14px clamp(10px, 2vh, 20px);
 		color: var(--txt);
-		font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', -apple-system, sans-serif;
+		font-family:
+			'PingFang SC',
+			'Microsoft YaHei',
+			'Noto Sans SC',
+			-apple-system,
+			sans-serif;
 		animation: t-fade 0.4s ease;
 	}
 	.tarot-overlay.light {
 		--txt: #3a2c5e;
 		--txt2: #6b5a8e;
-		--scene: radial-gradient(1200px 800px at 50% -10%, #fff5e0 0%, transparent 55%),
+		--scene:
+			radial-gradient(1200px 800px at 50% -10%, #fff5e0 0%, transparent 55%),
 			radial-gradient(900px 700px at 85% 110%, #efe0ff 0%, transparent 50%),
 			radial-gradient(900px 700px at 10% 90%, #e2ecff 0%, transparent 55%),
 			linear-gradient(180deg, #fbf4e8 0%, #ece2f5 100%);
-		--overlay: radial-gradient(1000px 700px at 50% 40%, rgba(255, 250, 238, 0.85), rgba(236, 226, 245, 0.94));
+		--overlay: radial-gradient(
+			1000px 700px at 50% 40%,
+			rgba(255, 250, 238, 0.85),
+			rgba(236, 226, 245, 0.94)
+		);
 		--panel-name: #3a2c5e;
 		--panel-text: #5b4d7a;
 		--panel-bd: rgba(180, 140, 40, 0.38);
@@ -457,9 +494,13 @@
 	.nebula {
 		position: absolute;
 		inset: -20%;
-		background: radial-gradient(closest-side, rgba(120, 80, 200, 0.22), transparent 70%) 20% 30% / 55% 55% no-repeat,
-			radial-gradient(closest-side, rgba(60, 120, 200, 0.18), transparent 70%) 80% 70% / 50% 50% no-repeat,
-			radial-gradient(closest-side, rgba(212, 175, 55, 0.1), transparent 70%) 60% 20% / 40% 40% no-repeat;
+		background:
+			radial-gradient(closest-side, rgba(120, 80, 200, 0.22), transparent 70%) 20% 30% / 55% 55%
+				no-repeat,
+			radial-gradient(closest-side, rgba(60, 120, 200, 0.18), transparent 70%) 80% 70% / 50% 50%
+				no-repeat,
+			radial-gradient(closest-side, rgba(212, 175, 55, 0.1), transparent 70%) 60% 20% / 40% 40%
+				no-repeat;
 		filter: blur(8px);
 		animation: t-drift 40s ease-in-out infinite alternate;
 	}
@@ -480,7 +521,9 @@
 		margin-left: -55px;
 		border-radius: 50%;
 		background: radial-gradient(circle at 38% 35%, #fff7e0, #f3e6b0 45%, #cdbf86 70%, #9b8e5e 100%);
-		box-shadow: 0 0 60px 18px rgba(240, 225, 150, 0.32), inset -14px -10px 26px rgba(80, 70, 40, 0.45);
+		box-shadow:
+			0 0 60px 18px rgba(240, 225, 150, 0.32),
+			inset -14px -10px 26px rgba(80, 70, 40, 0.45);
 		opacity: 0.85;
 	}
 	.tarot-overlay.light .moon {
@@ -548,7 +591,9 @@
 		color: var(--gold-lt);
 		font-size: 22px;
 		line-height: 1;
-		transition: transform 0.2s, background 0.2s;
+		transition:
+			transform 0.2s,
+			background 0.2s;
 	}
 	.close:hover {
 		transform: rotate(90deg);
@@ -598,40 +643,57 @@
 
 	.deck {
 		position: relative;
-		width: var(--cw);
-		height: var(--ch);
+		width: calc(var(--cw) + 170px);
+		height: calc(var(--ch) + 86px);
 	}
 	.pile {
 		position: absolute;
-		inset: 0;
+		top: 0;
+		left: 50%;
+		width: var(--cw);
+		height: var(--ch);
+		transform: translateX(-50%);
+		filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.28));
 	}
 	.pc {
 		position: absolute;
 		inset: 0;
 		transform: translate(var(--ox), var(--oy)) rotate(var(--orot));
+		transform-origin: center 78%;
+		z-index: var(--z);
+		will-change: transform;
 	}
 	.pile.shuffling .pc {
-		animation: t-riffle calc(0.75s / var(--spd)) ease-in-out 2;
+		animation: t-riffle calc(1.35s / var(--spd)) cubic-bezier(0.34, 1.2, 0.64, 1) both;
+		animation-delay: var(--delay);
 	}
 	@keyframes t-riffle {
-		0%,
+		0% {
+			transform: translate(var(--ox), var(--oy)) rotate(var(--orot));
+		}
+		18% {
+			transform: translate(calc(var(--ox) + var(--sx1)), calc(var(--oy) - var(--lift)))
+				rotate(calc(var(--orot) + var(--r1))) scale(1.02);
+		}
+		36% {
+			transform: translate(var(--ox-mid), var(--oy-mid)) rotate(var(--orot-mid)) scale(0.98);
+		}
+		58% {
+			transform: translate(calc(var(--ox) + var(--sx2)), calc(var(--oy) - var(--lift2)))
+				rotate(calc(var(--orot) + var(--r2))) scale(1.01);
+		}
+		78% {
+			transform: translate(var(--ox-settle), var(--oy-settle)) rotate(var(--orot-settle))
+				scale(0.99);
+		}
 		100% {
 			transform: translate(var(--ox), var(--oy)) rotate(var(--orot));
-		}
-		25% {
-			transform: translateX(calc(var(--d) * 72px)) translateY(-12px) rotate(calc(var(--d) * 14deg));
-		}
-		50% {
-			transform: translate(var(--ox), var(--oy)) rotate(var(--orot));
-		}
-		75% {
-			transform: translateX(calc(var(--d) * -58px)) translateY(-8px) rotate(calc(var(--d) * -12deg));
 		}
 	}
 	.startbtn {
 		position: absolute;
 		left: 50%;
-		bottom: -86px;
+		top: calc(var(--ch) + 34px);
 		transform: translateX(-50%);
 		white-space: nowrap;
 		padding: 13px 34px;
@@ -643,8 +705,12 @@
 		font-weight: 700;
 		background: linear-gradient(180deg, var(--gold-br), var(--gold));
 		border: 0;
-		box-shadow: 0 6px 22px rgba(212, 175, 55, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.3) inset;
-		transition: transform 0.2s, box-shadow 0.2s;
+		box-shadow:
+			0 6px 22px rgba(212, 175, 55, 0.45),
+			0 0 0 1px rgba(255, 255, 255, 0.3) inset;
+		transition:
+			transform 0.2s,
+			box-shadow 0.2s;
 	}
 	.startbtn:hover {
 		transform: translateX(-50%) translateY(-3px);
@@ -658,10 +724,13 @@
 		position: relative;
 		overflow: hidden;
 		display: block;
-		background: radial-gradient(circle at 50% 50%, rgba(212, 175, 55, 0.16), transparent 62%),
+		background:
+			radial-gradient(circle at 50% 50%, rgba(212, 175, 55, 0.16), transparent 62%),
 			repeating-linear-gradient(45deg, var(--card-bg1) 0 7px, var(--card-bg2) 7px 14px);
 		border: 2px solid rgba(212, 175, 55, 0.72);
-		box-shadow: inset 0 0 0 3px rgba(212, 175, 55, 0.16), inset 0 0 18px rgba(0, 0, 0, 0.55),
+		box-shadow:
+			inset 0 0 0 3px rgba(212, 175, 55, 0.16),
+			inset 0 0 18px rgba(0, 0, 0, 0.55),
 			0 6px 16px rgba(0, 0, 0, 0.45);
 	}
 	.back::before {
@@ -679,6 +748,12 @@
 		background-repeat: no-repeat;
 		background-size: 64% 64%;
 		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23d4af37' stroke-width='1.3'%3E%3Ccircle cx='50' cy='50' r='34'/%3E%3Ccircle cx='50' cy='50' r='25'/%3E%3Cpath d='M50 7 L57 43 L93 50 L57 57 L50 93 L43 57 L7 50 L43 43 Z' fill='%23d4af37' fill-opacity='.22'/%3E%3Cpath d='M50 18 L54 46 L82 50 L54 54 L50 82 L46 54 L18 50 L46 46 Z' fill='%23d4af37' fill-opacity='.32'/%3E%3Ccircle cx='50' cy='50' r='7' fill='%23d4af37' fill-opacity='.6'/%3E%3C/g%3E%3C/svg%3E");
+	}
+	.pile .pc.back {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
 	}
 
 	.fan {
@@ -702,7 +777,9 @@
 		backface-visibility: hidden;
 		transform: rotate(calc(var(--rot) * 1deg)) translateY(0) scale(0.3);
 		opacity: 0;
-		transition: transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.45s;
+		transition:
+			transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1),
+			opacity 0.45s;
 	}
 	.fan.open .fan-card {
 		transform: rotate(calc(var(--rot) * 1deg)) translateY(calc(var(--R) * -1));
@@ -712,7 +789,9 @@
 		transition-delay: calc(var(--i) * 6ms);
 	}
 	.fan.ready .fan-card {
-		transition: transform 0.2s ease, opacity 0.3s;
+		transition:
+			transform 0.2s ease,
+			opacity 0.3s;
 		transition-delay: 0s;
 	}
 	.fan.open .fan-card:hover {
@@ -721,7 +800,9 @@
 		will-change: transform;
 	}
 	.fan.open .fan-card:hover :global(.back) {
-		box-shadow: inset 0 0 0 3px rgba(255, 233, 168, 0.55), 0 14px 30px rgba(0, 0, 0, 0.6),
+		box-shadow:
+			inset 0 0 0 3px rgba(255, 233, 168, 0.55),
+			0 14px 30px rgba(0, 0, 0, 0.6),
 			0 0 28px rgba(212, 175, 55, 0.8);
 	}
 	.fan.open .fan-card.sel {
@@ -729,7 +810,10 @@
 		z-index: 1400;
 	}
 	.fan.open .fan-card.sel :global(.back) {
-		box-shadow: inset 0 0 0 3px var(--gold-br), 0 0 32px rgba(255, 233, 168, 0.9), 0 14px 32px rgba(0, 0, 0, 0.6);
+		box-shadow:
+			inset 0 0 0 3px var(--gold-br),
+			0 0 32px rgba(255, 233, 168, 0.9),
+			0 14px 32px rgba(0, 0, 0, 0.6);
 	}
 	.fan-card .num {
 		position: absolute;
@@ -819,7 +903,9 @@
 		transform: rotateY(180deg);
 		overflow: hidden;
 		border: 2px solid rgba(212, 175, 55, 0.75);
-		box-shadow: 0 0 26px rgba(212, 175, 55, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
+		box-shadow:
+			0 0 26px rgba(212, 175, 55, 0.4),
+			0 10px 28px rgba(0, 0, 0, 0.45);
 		background: var(--face-bg);
 	}
 	.face.rear img {
