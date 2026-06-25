@@ -93,20 +93,19 @@
 	sideOffset={6}
 	contentClass="w-[min(360px,calc(100vw-2rem))] rounded-xl border border-gray-100 dark:border-gray-850 bg-white dark:bg-gray-900 shadow-xl p-2"
 	onOpenChange={(state) => {
-		if (state && !summary) {
+		if (state) {
 			loadUsageSummary();
 		}
 	}}
 >
 	<Tooltip content={$i18n.t('Usage')}>
 		<button
-			class="relative flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+			class="relative flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-100 bg-white/80 px-2.5 py-2 text-gray-700 shadow-xs transition hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-200 dark:hover:bg-gray-850"
 			aria-label={$i18n.t('Usage')}
 			type="button"
 		>
-			<div class="m-auto self-center">
-				<ChartBar className="size-5" strokeWidth="1.5" />
-			</div>
+			<ChartBar className="size-4.5 shrink-0" strokeWidth="1.5" />
+			<span class="text-xs font-medium leading-none">{$i18n.t('Usage')}</span>
 		</button>
 	</Tooltip>
 

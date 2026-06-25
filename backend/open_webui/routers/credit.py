@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from open_webui.config import EZFP_CALLBACK_HOST, ALIPAY_APP_ID
 from open_webui.env import (
@@ -21,6 +22,8 @@ from open_webui.env import (
     REDIS_SENTINEL_PORT,
     REDIS_CLUSTER,
 )
+from open_webui.models.chat_messages import ChatMessages, get_usage, _normalize_timestamp
+from open_webui.models.chats import Chats
 from open_webui.models.credits import (
     Credits,
     TradeTicketModel,
@@ -30,7 +33,6 @@ from open_webui.models.credits import (
     RedemptionCodes,
     RedemptionCodeModel,
 )
-from open_webui.models.chat_messages import ChatMessages
 from open_webui.models.models import ModelForm, Models, ModelPriceForm
 from open_webui.models.users import UserModel, Users
 from open_webui.utils.auth import get_verified_user, get_admin_user
@@ -259,10 +261,123 @@ def _usage_period_ranges(timezone: Optional[str]) -> dict[str, tuple[int, int]]:
 def _credit_used_for_period(user_id: str, start_time: int, end_time: int) -> float:
     credit_used = Decimal('0')
     for log_item in CreditLogs.get_log_by_time(start_time, end_time, [user_id]):
-        total_price = log_item.detail.usage.total_price
+        usage = _usage_from_credit_log_detail(log_item.detail)
+        total_price = _decimal_usage_value(usage, 'total_price', 'total_cost')
         if total_price is not None:
-            credit_used += Decimal(total_price)
+            credit_used += total_price
     return float(credit_used)
+
+
+def _usage_from_credit_log_detail(detail) -> dict:
+    if not detail:
+        return {}
+
+    if isinstance(detail, dict):
+        usage = detail.get('usage') or {}
+    else:
+        usage = getattr(detail, 'usage', None) or {}
+
+    if hasattr(usage, 'model_dump'):
+        return usage.model_dump()
+    return usage if isinstance(usage, dict) else {}
+
+
+def _int_usage_value(usage: dict, *keys: str) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if value is not None:
+            return int(value)
+    return 0
+
+
+def _decimal_usage_value(usage: dict, *keys: str) -> Optional[Decimal]:
+    for key in keys:
+        value = usage.get(key)
+        if value is not None:
+            return Decimal(str(value))
+    return None
+
+
+def _usage_summary_from_credit_logs(user_id: str, start_time: int, end_time: int) -> dict[str, int | float]:
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+    credit_used = Decimal('0')
+
+    for log_item in CreditLogs.get_log_by_time(start_time, end_time, [user_id]):
+        usage = _usage_from_credit_log_detail(log_item.detail)
+        if not usage:
+            continue
+
+        message_input = _int_usage_value(usage, 'input_tokens', 'prompt_tokens')
+        message_output = _int_usage_value(usage, 'output_tokens', 'completion_tokens')
+        message_total = _int_usage_value(usage, 'total_tokens') or message_input + message_output
+
+        input_tokens += message_input
+        output_tokens += message_output
+        total_tokens += message_total
+
+        total_price = _decimal_usage_value(usage, 'total_price', 'total_cost')
+        if total_price is not None:
+            credit_used += total_price
+
+    return {
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens,
+        'total_tokens': total_tokens,
+        'credit_used': float(credit_used),
+    }
+
+
+async def _legacy_usage_summary_by_user(
+    user_id: str,
+    start_time: int,
+    end_time: int,
+    db: Optional[AsyncSession] = None,
+) -> dict[str, int | float]:
+    chats = await Chats.get_chats_by_user_id(user_id=user_id, skip=0, limit=None, db=db)
+
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+    conversation_count = 0
+    credit_used = Decimal('0')
+
+    for chat in chats.items:
+        history_messages = (chat.chat or {}).get('history', {}).get('messages', {}) or {}
+        for message in history_messages.values():
+            if message.get('role') != 'assistant':
+                continue
+
+            timestamp = message.get('timestamp') or message.get('created_at') or 0
+            if not timestamp:
+                continue
+
+            normalized_timestamp = int(_normalize_timestamp(int(timestamp)))
+            if normalized_timestamp < start_time or normalized_timestamp >= end_time:
+                continue
+
+            conversation_count += 1
+
+            usage = get_usage(message) or {}
+            message_input = int(usage.get('input_tokens') or usage.get('prompt_tokens') or 0)
+            message_output = int(usage.get('output_tokens') or usage.get('completion_tokens') or 0)
+
+            input_tokens += message_input
+            output_tokens += message_output
+            total_tokens += int(usage.get('total_tokens') or (message_input + message_output))
+
+            total_price = usage.get('total_price') if usage.get('total_price') is not None else usage.get('total_cost')
+            if total_price is not None:
+                credit_used += Decimal(str(total_price))
+
+    return {
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens,
+        'total_tokens': total_tokens,
+        'conversation_count': conversation_count,
+        'credit_used': float(credit_used),
+    }
 
 
 @router.get('/my/usage-summary', response_model=MyUsageSummaryResponse)
@@ -272,6 +387,30 @@ async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
 
     for period_key, (start_time, end_time) in _usage_period_ranges(user.timezone).items():
         token_usage = await ChatMessages.get_usage_summary_by_user(user.id, start_time, end_time)
+        log_usage = _usage_summary_from_credit_logs(user.id, start_time, end_time)
+
+        if token_usage['total_tokens'] == 0 or token_usage['conversation_count'] == 0:
+            legacy_usage = await _legacy_usage_summary_by_user(user.id, start_time, end_time)
+            if token_usage['total_tokens'] == 0 and legacy_usage['total_tokens'] > 0:
+                token_usage.update(
+                    {
+                        'input_tokens': legacy_usage['input_tokens'],
+                        'output_tokens': legacy_usage['output_tokens'],
+                        'total_tokens': legacy_usage['total_tokens'],
+                    }
+                )
+            if token_usage['conversation_count'] == 0 and legacy_usage['conversation_count'] > 0:
+                token_usage['conversation_count'] = legacy_usage['conversation_count']
+
+        if token_usage['total_tokens'] == 0 and log_usage['total_tokens'] > 0:
+            token_usage.update(
+                {
+                    'input_tokens': log_usage['input_tokens'],
+                    'output_tokens': log_usage['output_tokens'],
+                    'total_tokens': log_usage['total_tokens'],
+                }
+            )
+
         periods[period_key] = MyUsagePeriod(
             start_time=start_time,
             end_time=end_time,
@@ -279,7 +418,7 @@ async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
             output_tokens=token_usage['output_tokens'],
             total_tokens=token_usage['total_tokens'],
             conversation_count=token_usage['conversation_count'],
-            credit_used=_credit_used_for_period(user.id, start_time, end_time),
+            credit_used=log_usage['credit_used'],
         )
 
     return MyUsageSummaryResponse(credit=float(credit.credit or 0), periods=periods)

@@ -15,9 +15,11 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    and_,
     cast,
     delete,
     func,
+    or_,
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -558,8 +560,16 @@ class ChatMessageTable:
             ).filter(
                 ChatMessage.role == 'assistant',
                 ChatMessage.user_id == user_id,
-                ChatMessage.created_at >= start_date,
-                ChatMessage.created_at < end_date,
+                or_(
+                    and_(
+                        ChatMessage.created_at >= start_date,
+                        ChatMessage.created_at < end_date,
+                    ),
+                    and_(
+                        ChatMessage.created_at >= start_date * 1000,
+                        ChatMessage.created_at < end_date * 1000,
+                    ),
+                ),
             )
 
             result = await db.execute(stmt)
