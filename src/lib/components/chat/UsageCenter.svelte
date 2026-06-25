@@ -6,7 +6,6 @@
 	import { getMyUsageSummary } from '$lib/apis/credit';
 
 	import ChartBar from '$lib/components/icons/ChartBar.svelte';
-	import Refresh from '$lib/components/icons/Refresh.svelte';
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -110,31 +109,16 @@
 	</Tooltip>
 
 	<div slot="content" class="flex flex-col gap-2">
-		<div class="flex items-center justify-between gap-3 px-2 py-1">
-			<div>
-				<div class="text-xs font-semibold text-gray-900 dark:text-gray-100">
-					{$i18n.t('Usage')}
-				</div>
-				<div class="mt-0.5 text-[11px] text-gray-500">
-					{$i18n.t('Credit')}: {formatCredit(summary?.credit)}
-				</div>
+		<div class="px-2 py-1">
+			<div class="flex items-center gap-2 text-xs font-semibold text-gray-900 dark:text-gray-100">
+				{$i18n.t('Usage')}
+				{#if loading}
+					<Spinner className="size-3 text-gray-400" />
+				{/if}
 			</div>
-
-			<Tooltip content={$i18n.t('Refresh')}>
-				<button
-					type="button"
-					class="flex size-8 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-850 disabled:cursor-not-allowed disabled:opacity-50"
-					disabled={loading}
-					aria-label={$i18n.t('Refresh')}
-					on:click={loadUsageSummary}
-				>
-					{#if loading}
-						<Spinner className="size-4" />
-					{:else}
-						<Refresh className="size-4" strokeWidth="1.5" />
-					{/if}
-				</button>
-			</Tooltip>
+			<div class="mt-0.5 text-[11px] text-gray-500">
+				{$i18n.t('Credit')}: {formatCredit(summary?.credit)}
+			</div>
 		</div>
 
 		<div class="mx-2 grid grid-cols-3 rounded-lg bg-gray-50 p-1 text-xs dark:bg-gray-850">

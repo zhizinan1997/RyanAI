@@ -222,6 +222,22 @@
 
 	$: usageDetails = getUsageDetails(message.usage);
 
+	let usageDetailMaxHeight = '';
+	let usageDetailResizeHandler: (() => void) | null = null;
+
+	const calcUsageDetailMaxHeight = (popper?: HTMLElement) => {
+		if (!popper) return;
+		const rect = popper.getBoundingClientRect();
+		const available = window.innerHeight - rect.top - 12;
+		usageDetailMaxHeight = `max-height: ${Math.min(352, Math.max(100, available))}px`;
+	};
+
+	onDestroy(() => {
+		if (usageDetailResizeHandler) {
+			window.removeEventListener('resize', usageDetailResizeHandler);
+		}
+	});
+
 	export let siblings;
 
 	export let setInputText: Function = () => {};
@@ -1236,6 +1252,18 @@
 											interactive: true,
 											appendTo: () => document.body,
 											maxWidth: 'min(320px, calc(100vw - 24px))',
+											onCreate(instance) {
+												calcUsageDetailMaxHeight(instance.popper);
+												usageDetailResizeHandler = () =>
+													calcUsageDetailMaxHeight(instance.popper);
+												window.addEventListener('resize', usageDetailResizeHandler);
+											},
+											onShow(instance) {
+												calcUsageDetailMaxHeight(instance.popper);
+											},
+											onUpdate(instance) {
+												calcUsageDetailMaxHeight(instance.popper);
+											},
 											popperOptions: {
 												strategy: 'fixed',
 												modifiers: [
@@ -1248,6 +1276,7 @@
 													{
 														name: 'preventOverflow',
 														options: {
+															altAxis: true,
 															padding: 12,
 															boundary: 'viewport'
 														}
@@ -1260,7 +1289,8 @@
 										<div
 											slot="tooltip"
 											id="usage-detail-{message.id}"
-											class="max-h-[min(22rem,calc(100vh-1.5rem))] w-80 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 text-gray-900 shadow-lg shadow-gray-900/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:shadow-black/30"
+											style={usageDetailMaxHeight}
+											class="w-80 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 text-gray-900 shadow-lg shadow-gray-900/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:shadow-black/30"
 										>
 											<div class="mb-2 flex items-center justify-between gap-3">
 												<div>

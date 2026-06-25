@@ -1447,6 +1447,9 @@ async def get_sources_from_items(
     return sources
 
 
+HF_CONNECTION_TIMEOUT = float(os.getenv('HF_CONNECTION_TIMEOUT', '3'))
+
+
 def get_model_path(model: str, update_model: bool = False):
     # Construct huggingface_hub kwargs with local_files_only to return the snapshot path
     cache_dir = os.getenv('SENTENCE_TRANSFORMERS_HOME')
@@ -1456,9 +1459,23 @@ def get_model_path(model: str, update_model: bool = False):
     if OFFLINE_MODE:
         local_files_only = True
 
+    # If network check is requested, try local cache first to avoid blocking on unreachable HF Hub
+    if not local_files_only:
+        try:
+            local_path = snapshot_download(
+                repo_id=model if '/' in model else 'sentence-transformers/' + model,
+                cache_dir=cache_dir,
+                local_files_only=True,
+            )
+            log.debug(f'Using cached model path: {local_path}')
+            return local_path
+        except Exception:
+            pass
+
     snapshot_kwargs = {
         'cache_dir': cache_dir,
         'local_files_only': local_files_only,
+        'timeout': HF_CONNECTION_TIMEOUT,
     }
 
     log.debug(f'model: {model}')
