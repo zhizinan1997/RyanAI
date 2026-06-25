@@ -7,6 +7,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Optional
 from urllib.parse import quote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
@@ -21,6 +22,7 @@ from open_webui.env import (
     REDIS_CLUSTER,
 )
 from open_webui.models.credits import (
+    Credits,
     TradeTicketModel,
     TradeTickets,
     CreditLogSimpleModel,
@@ -28,6 +30,7 @@ from open_webui.models.credits import (
     RedemptionCodes,
     RedemptionCodeModel,
 )
+from open_webui.models.chat_messages import ChatMessages
 from open_webui.models.models import ModelForm, Models, ModelPriceForm
 from open_webui.models.users import UserModel, Users
 from open_webui.utils.auth import get_verified_user, get_admin_user
@@ -205,6 +208,81 @@ class StatisticRequest(BaseModel):
     start_time: int
     end_time: int
     query: Optional[str] = None
+
+
+class MyUsagePeriod(BaseModel):
+    start_time: int
+    end_time: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    conversation_count: int = 0
+    credit_used: float = 0
+
+
+class MyUsageSummaryResponse(BaseModel):
+    credit: float = 0
+    periods: dict[str, MyUsagePeriod]
+
+
+def _get_usage_timezone(timezone: Optional[str]) -> ZoneInfo:
+    try:
+        return ZoneInfo(timezone or 'Asia/Shanghai')
+    except ZoneInfoNotFoundError:
+        return ZoneInfo('Asia/Shanghai')
+
+
+def _to_epoch(dt: datetime.datetime) -> int:
+    return int(dt.astimezone(datetime.timezone.utc).timestamp())
+
+
+def _usage_period_ranges(timezone: Optional[str]) -> dict[str, tuple[int, int]]:
+    tz = _get_usage_timezone(timezone)
+    now = datetime.datetime.now(tz)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = day_start - datetime.timedelta(days=day_start.weekday())
+    month_start = day_start.replace(day=1)
+
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+
+    ranges = {
+        'day': (day_start, day_start + datetime.timedelta(days=1)),
+        'week': (week_start, week_start + datetime.timedelta(days=7)),
+        'month': (month_start, next_month_start),
+    }
+    return {key: (_to_epoch(start), _to_epoch(end)) for key, (start, end) in ranges.items()}
+
+
+def _credit_used_for_period(user_id: str, start_time: int, end_time: int) -> float:
+    credit_used = Decimal('0')
+    for log_item in CreditLogs.get_log_by_time(start_time, end_time, [user_id]):
+        total_price = log_item.detail.usage.total_price
+        if total_price is not None:
+            credit_used += Decimal(total_price)
+    return float(credit_used)
+
+
+@router.get('/my/usage-summary', response_model=MyUsageSummaryResponse)
+async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
+    credit = Credits.init_credit_by_user_id(user.id)
+    periods: dict[str, MyUsagePeriod] = {}
+
+    for period_key, (start_time, end_time) in _usage_period_ranges(user.timezone).items():
+        token_usage = await ChatMessages.get_usage_summary_by_user(user.id, start_time, end_time)
+        periods[period_key] = MyUsagePeriod(
+            start_time=start_time,
+            end_time=end_time,
+            input_tokens=token_usage['input_tokens'],
+            output_tokens=token_usage['output_tokens'],
+            total_tokens=token_usage['total_tokens'],
+            conversation_count=token_usage['conversation_count'],
+            credit_used=_credit_used_for_period(user.id, start_time, end_time),
+        )
+
+    return MyUsageSummaryResponse(credit=float(credit.credit or 0), periods=periods)
 
 
 @router.post('/statistics')
