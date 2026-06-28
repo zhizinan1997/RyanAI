@@ -1,11 +1,17 @@
 <script lang="ts">
-	import { getContext, onMount } from 'svelte';
+	import { getContext, onDestroy, onMount } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
+	import { toast } from 'svelte-sonner';
 
+	import { user } from '$lib/stores';
+	import { getSessionUser } from '$lib/apis/auths';
 	import { getMyUsageSummary } from '$lib/apis/credit';
+	import { checkinLottery, getLotteryConfig } from '$lib/apis/lottery';
 
+	import Calendar from '$lib/components/icons/Calendar.svelte';
 	import ChartBar from '$lib/components/icons/ChartBar.svelte';
+	import CheckCircle from '$lib/components/icons/CheckCircle.svelte';
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -40,6 +46,9 @@
 	let error = '';
 	let summary: UsageSummary | null = null;
 	let selectedPeriod: UsagePeriodKey = 'day';
+	let checkinEnabled = false;
+	let checkedInToday = true;
+	let checkinLoading = false;
 
 	const numberFormatter = new Intl.NumberFormat(undefined, {
 		maximumFractionDigits: 0
@@ -68,6 +77,54 @@
 		loading = false;
 	};
 
+	const loadCheckinConfig = async () => {
+		if (!localStorage.token) {
+			checkinEnabled = false;
+			checkedInToday = true;
+			return;
+		}
+
+		const cfg = await getLotteryConfig(localStorage.token).catch(() => null);
+		if (cfg) {
+			checkinEnabled = !!cfg.checkin_enabled;
+			checkedInToday = !!cfg.checked_in_today;
+		} else {
+			checkinEnabled = false;
+			checkedInToday = true;
+		}
+	};
+
+	const checkin = async () => {
+		if (checkinLoading || checkedInToday) return;
+
+		checkinLoading = true;
+		const res = await checkinLottery(localStorage.token).catch((err) => {
+			toast.error(`${err}`);
+			return null;
+		});
+		checkinLoading = false;
+
+		if (!res) {
+			await loadCheckinConfig();
+			return;
+		}
+
+		checkedInToday = true;
+		toast.success($i18n.t('Check-in successful, +{{reward}} credit', { reward: res.reward ?? 0 }));
+		await loadUsageSummary();
+
+		const sessionUser = await getSessionUser(localStorage.token).catch(() => null);
+		if (sessionUser) {
+			await user.set(sessionUser);
+		}
+	};
+
+	const onVisibilityChange = () => {
+		if (document.visibilityState === 'visible') {
+			loadCheckinConfig();
+		}
+	};
+
 	const formatNumber = (value?: number | null) => numberFormatter.format(value ?? 0);
 	const formatCredit = (value?: number | null) => creditFormatter.format(value ?? 0);
 
@@ -77,11 +134,15 @@
 		currentPeriod.total_tokens === 0 &&
 		currentPeriod.conversation_count === 0 &&
 		currentPeriod.credit_used === 0;
+	$: showCheckinBadge = checkinEnabled && !checkedInToday;
 
 	onMount(() => {
-		if (show) {
-			loadUsageSummary();
-		}
+		loadCheckinConfig();
+		document.addEventListener('visibilitychange', onVisibilityChange);
+	});
+
+	onDestroy(() => {
+		document.removeEventListener('visibilitychange', onVisibilityChange);
 	});
 </script>
 
@@ -94,6 +155,7 @@
 	onOpenChange={(state) => {
 		if (state) {
 			loadUsageSummary();
+			loadCheckinConfig();
 		}
 	}}
 >
@@ -105,6 +167,13 @@
 		>
 			<ChartBar className="size-4.5 shrink-0" strokeWidth="1.5" />
 			<span class="text-xs font-medium leading-none">{$i18n.t('Usage')}</span>
+			{#if showCheckinBadge}
+				<div
+					class="absolute right-1 top-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center font-medium"
+				>
+					1
+				</div>
+			{/if}
 		</button>
 	</Tooltip>
 
@@ -120,6 +189,40 @@
 				{$i18n.t('Credit')}: {formatCredit(summary?.credit)}
 			</div>
 		</div>
+
+		{#if checkinEnabled}
+			<div class="mx-2 rounded-lg border border-gray-100 p-2 dark:border-gray-850">
+				<div class="flex items-center justify-between gap-2">
+					<div class="min-w-0">
+						<div class="text-xs font-medium text-gray-900 dark:text-gray-100">
+							{$i18n.t('Daily Check-in')}
+						</div>
+						<div class="mt-0.5 text-[11px] text-gray-500">
+							{checkedInToday
+								? $i18n.t('Checked in today')
+								: $i18n.t('Get a weighted random credit reward')}
+						</div>
+					</div>
+					<button
+						type="button"
+						class="shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition {checkedInToday
+							? 'bg-gray-100 text-gray-500 dark:bg-gray-850 dark:text-gray-400'
+							: 'bg-black text-white hover:bg-gray-900 dark:bg-white dark:text-black dark:hover:bg-gray-100'} disabled:opacity-60"
+						disabled={checkinLoading || checkedInToday}
+						on:click={checkin}
+					>
+						{#if checkinLoading}
+							<Spinner className="size-3" />
+						{:else if checkedInToday}
+							<CheckCircle className="size-3.5" strokeWidth="1.8" />
+						{:else}
+							<Calendar className="size-3.5" strokeWidth="1.8" />
+						{/if}
+						{checkedInToday ? $i18n.t('Checked in today') : $i18n.t('Check in')}
+					</button>
+				</div>
+			</div>
+		{/if}
 
 		<div class="mx-2 grid grid-cols-3 rounded-lg bg-gray-50 p-1 text-xs dark:bg-gray-850">
 			{#each periodOptions as option}

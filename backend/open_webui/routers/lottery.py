@@ -81,6 +81,33 @@ def _weighted_pick(rewards) -> Decimal:
     return rewards[0][0]
 
 
+def _create_draw_record(
+    request: Request,
+    user_id: str,
+    today: str,
+    cards: list,
+    desc: str,
+    duplicate_detail: str,
+) -> tuple[list, Decimal]:
+    reward = _weighted_pick(_parse_rewards(request))
+
+    saved = LotteryDraws.insert_draw(
+        LotteryDrawModel(user_id=user_id, draw_date=today, reward=reward, cards=cards)
+    )
+    if saved is None:
+        raise HTTPException(status_code=400, detail=duplicate_detail)
+
+    Credits.add_credit_by_user_id(
+        AddCreditForm(
+            user_id=user_id,
+            amount=reward,
+            detail=SetCreditFormDetail(desc=desc, api_params={'cards': cards}),
+        )
+    )
+
+    return cards, reward
+
+
 ####################
 # User endpoints
 ####################
@@ -88,14 +115,24 @@ def _weighted_pick(rewards) -> Decimal:
 
 @router.get('/config')
 async def get_lottery_config(request: Request, user=Depends(get_verified_user)):
-    enabled = bool(getattr(request.app.state.config, 'ENABLE_TAROT_LOTTERY', False))
-    drawn = LotteryDraws.has_drawn(user.id, _today(request)) if enabled else False
-    return {'enabled': enabled, 'drawn_today': drawn}
+    tarot_config_enabled = bool(getattr(request.app.state.config, 'ENABLE_TAROT_LOTTERY', False))
+    checkin_config_enabled = bool(getattr(request.app.state.config, 'ENABLE_DAILY_CHECKIN', False))
+    enabled = tarot_config_enabled and not checkin_config_enabled
+    checkin_enabled = checkin_config_enabled and not tarot_config_enabled
+    drawn = LotteryDraws.has_drawn(user.id, _today(request)) if enabled or checkin_enabled else False
+    return {
+        'enabled': enabled,
+        'drawn_today': drawn,
+        'checkin_enabled': checkin_enabled,
+        'checked_in_today': drawn,
+    }
 
 
 @router.post('/draw')
 async def draw(request: Request, user=Depends(get_verified_user)):
     if not getattr(request.app.state.config, 'ENABLE_TAROT_LOTTERY', False):
+        raise HTTPException(status_code=400, detail='Lottery is not enabled')
+    if getattr(request.app.state.config, 'ENABLE_DAILY_CHECKIN', False):
         raise HTTPException(status_code=400, detail='Lottery is not enabled')
 
     today = _today(request)
@@ -119,25 +156,42 @@ async def draw(request: Request, user=Depends(get_verified_user)):
     # server-authoritative draw: pick 3 distinct cards + orientation + weighted reward
     codes = random.sample(TAROT_CODES, 3)
     cards = [{'code': c, 'reversed': random.random() < 0.42} for c in codes]
-    reward = _weighted_pick(_parse_rewards(request))
-
-    saved = LotteryDraws.insert_draw(
-        LotteryDrawModel(user_id=user.id, draw_date=today, reward=reward, cards=cards)
-    )
-    if saved is None:
-        # unique (user_id, draw_date) violation => already drawn this day
-        raise HTTPException(status_code=400, detail='Already drawn today')
-
-    # award credit (also writes a credit_log entry)
-    Credits.add_credit_by_user_id(
-        AddCreditForm(
-            user_id=user.id,
-            amount=reward,
-            detail=SetCreditFormDetail(desc='tarot lottery reward', api_params={'cards': cards}),
-        )
+    cards, reward = _create_draw_record(
+        request, user.id, today, cards, 'tarot lottery reward', 'Already drawn today'
     )
 
     return {'cards': cards, 'reward': float(reward)}
+
+
+@router.post('/checkin')
+async def checkin(request: Request, user=Depends(get_verified_user)):
+    if not getattr(request.app.state.config, 'ENABLE_DAILY_CHECKIN', False):
+        raise HTTPException(status_code=400, detail='Check-in is not enabled')
+    if getattr(request.app.state.config, 'ENABLE_TAROT_LOTTERY', False):
+        raise HTTPException(status_code=400, detail='Check-in is not enabled')
+
+    today = _today(request)
+    if LotteryDraws.has_drawn(user.id, today):
+        raise HTTPException(status_code=400, detail='Already checked in today')
+
+    try:
+        redis = get_redis_connection(
+            redis_url=REDIS_URL,
+            redis_sentinels=get_sentinels_from_env(REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT),
+            redis_cluster=REDIS_CLUSTER,
+        )
+        if redis and not redis.set(f'lottery_checkin:{user.id}:{today}', '1', nx=True, ex=30):
+            raise HTTPException(status_code=400, detail='Too many requests')
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    _, reward = _create_draw_record(
+        request, user.id, today, [], 'daily check-in reward', 'Already checked in today'
+    )
+
+    return {'reward': float(reward), 'checked_in_today': True}
 
 
 @router.get('/history')
@@ -148,6 +202,7 @@ async def my_history(request: Request, user=Depends(get_verified_user)):
             'draw_date': d.draw_date,
             'reward': float(d.reward),
             'cards': d.cards,
+            'type': 'checkin' if not d.cards else 'tarot',
             'created_at': d.created_at,
         }
         for d in draws
@@ -161,6 +216,7 @@ async def my_history(request: Request, user=Depends(get_verified_user)):
 
 class LotteryAdminConfigForm(BaseModel):
     ENABLE_TAROT_LOTTERY: bool = False
+    ENABLE_DAILY_CHECKIN: bool = False
     TAROT_REWARD_CONFIG: str = ''
     LOTTERY_TIMEZONE: str = 'Asia/Shanghai'
     ENABLE_DAILY_CREDIT_RESET: bool = False
@@ -171,6 +227,7 @@ def _admin_config(request: Request) -> dict:
     c = request.app.state.config
     return {
         'ENABLE_TAROT_LOTTERY': bool(getattr(c, 'ENABLE_TAROT_LOTTERY', False)),
+        'ENABLE_DAILY_CHECKIN': bool(getattr(c, 'ENABLE_DAILY_CHECKIN', False)),
         'TAROT_REWARD_CONFIG': getattr(c, 'TAROT_REWARD_CONFIG', ''),
         'LOTTERY_TIMEZONE': getattr(c, 'LOTTERY_TIMEZONE', 'Asia/Shanghai'),
         'ENABLE_DAILY_CREDIT_RESET': bool(getattr(c, 'ENABLE_DAILY_CREDIT_RESET', False)),
@@ -187,6 +244,9 @@ async def get_admin_lottery_config(request: Request, user=Depends(get_admin_user
 async def set_admin_lottery_config(
     request: Request, form: LotteryAdminConfigForm, user=Depends(get_admin_user)
 ):
+    if form.ENABLE_TAROT_LOTTERY and form.ENABLE_DAILY_CHECKIN:
+        raise HTTPException(status_code=400, detail='Tarot lottery and daily check-in cannot both be enabled')
+
     # validate reward config JSON
     try:
         data = json.loads(form.TAROT_REWARD_CONFIG or '[]')
@@ -212,6 +272,7 @@ async def set_admin_lottery_config(
 
     c = request.app.state.config
     c.ENABLE_TAROT_LOTTERY = form.ENABLE_TAROT_LOTTERY
+    c.ENABLE_DAILY_CHECKIN = form.ENABLE_DAILY_CHECKIN
     c.TAROT_REWARD_CONFIG = form.TAROT_REWARD_CONFIG
     c.LOTTERY_TIMEZONE = form.LOTTERY_TIMEZONE
     c.ENABLE_DAILY_CREDIT_RESET = form.ENABLE_DAILY_CREDIT_RESET
@@ -250,6 +311,7 @@ async def list_lottery_draws(
             'draw_date': d.draw_date,
             'reward': float(d.reward),
             'cards': d.cards,
+            'type': 'checkin' if not d.cards else 'tarot',
             'created_at': d.created_at,
         }
         for d in draws

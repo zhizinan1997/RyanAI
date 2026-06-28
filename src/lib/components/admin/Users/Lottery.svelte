@@ -1,5 +1,7 @@
-<script>
+<script lang="ts">
 	import { getContext, onMount } from 'svelte';
+	import type { Writable } from 'svelte/store';
+	import type { i18n as i18nType } from 'i18next';
 	import { toast } from 'svelte-sonner';
 
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -13,21 +15,37 @@
 	} from '$lib/apis/lottery';
 	import { TAROT_BY_CODE } from '$lib/components/lottery/tarotCards';
 
-	const i18n = getContext('i18n');
+	const i18n: Writable<i18nType> = getContext('i18n');
+
+	type RewardTier = {
+		amount: number;
+		weight: number;
+	};
+
+	type LotteryDraw = {
+		name?: string;
+		email?: string;
+		draw_date?: string;
+		reward?: number;
+		created_at?: number;
+		type?: 'tarot' | 'checkin';
+		cards?: Array<{ code: string; reversed?: boolean }>;
+	};
 
 	let loaded = false;
 	let saving = false;
 
 	let config = {
 		ENABLE_TAROT_LOTTERY: false,
+		ENABLE_DAILY_CHECKIN: false,
 		LOTTERY_TIMEZONE: 'Asia/Shanghai',
 		ENABLE_DAILY_CREDIT_RESET: false,
 		DAILY_RESET_CREDIT: '3'
 	};
-	let tiers = [{ amount: 3, weight: 45 }];
+	let tiers: RewardTier[] = [{ amount: 3, weight: 45 }];
 
 	// 历史
-	let draws = [];
+	let draws: LotteryDraw[] = [];
 	let total = 0;
 	let page = 1;
 	let keyword = '';
@@ -42,6 +60,7 @@
 		if (c) {
 			config = {
 				ENABLE_TAROT_LOTTERY: !!c.ENABLE_TAROT_LOTTERY,
+				ENABLE_DAILY_CHECKIN: !!c.ENABLE_DAILY_CHECKIN,
 				LOTTERY_TIMEZONE: c.LOTTERY_TIMEZONE || 'Asia/Shanghai',
 				ENABLE_DAILY_CREDIT_RESET: !!c.ENABLE_DAILY_CREDIT_RESET,
 				DAILY_RESET_CREDIT: `${c.DAILY_RESET_CREDIT ?? '3'}`
@@ -68,7 +87,7 @@
 	const addTier = () => {
 		tiers = [...tiers, { amount: 1, weight: 1 }];
 	};
-	const removeTier = (i) => {
+	const removeTier = (i: number) => {
 		tiers = tiers.filter((_, idx) => idx !== i);
 	};
 
@@ -83,6 +102,7 @@
 		saving = true;
 		const res = await setLotteryAdminConfig(localStorage.token, {
 			ENABLE_TAROT_LOTTERY: config.ENABLE_TAROT_LOTTERY,
+			ENABLE_DAILY_CHECKIN: config.ENABLE_DAILY_CHECKIN,
 			TAROT_REWARD_CONFIG: JSON.stringify(clean),
 			LOTTERY_TIMEZONE: config.LOTTERY_TIMEZONE,
 			ENABLE_DAILY_CREDIT_RESET: config.ENABLE_DAILY_CREDIT_RESET,
@@ -95,11 +115,13 @@
 		if (res) toast.success($i18n.t('Saved'));
 	};
 
-	const cardNames = (cards) =>
-		(cards || [])
-			.map((c) => (TAROT_BY_CODE[c.code]?.cn ?? c.code) + (c.reversed ? `(${$i18n.t('Reversed')})` : ''))
+	const cardNames = (draw: LotteryDraw) =>
+		draw?.type === 'checkin' || !(draw?.cards || []).length
+			? $i18n.t('Daily Check-in')
+			: (draw.cards || [])
+			.map((c: { code: string; reversed?: boolean }) => (TAROT_BY_CODE[c.code]?.cn ?? c.code) + (c.reversed ? `(${$i18n.t('Reversed')})` : ''))
 			.join(' · ');
-	const fmtTime = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '');
+	const fmtTime = (ts?: number) => (ts ? new Date(ts * 1000).toLocaleString() : '');
 
 	$: if (loaded) {
 		page;
@@ -123,8 +145,28 @@
 			<div class="mb-2 text-lg font-medium">{$i18n.t('Tarot Lottery')}</div>
 
 			<div class="flex justify-between items-center py-1">
+				<div>
+					<div class="text-sm font-medium">{$i18n.t('Enable Daily Check-in')}</div>
+					<div class="text-xs text-gray-400">
+						{$i18n.t('Daily check-in and tarot lottery cannot both be enabled.')}
+					</div>
+				</div>
+				<Switch
+					bind:state={config.ENABLE_DAILY_CHECKIN}
+					on:change={() => {
+						if (config.ENABLE_DAILY_CHECKIN) config.ENABLE_TAROT_LOTTERY = false;
+					}}
+				/>
+			</div>
+
+			<div class="flex justify-between items-center py-1">
 				<div class="text-sm font-medium">{$i18n.t('Enable Tarot Lottery')}</div>
-				<Switch bind:state={config.ENABLE_TAROT_LOTTERY} />
+				<Switch
+					bind:state={config.ENABLE_TAROT_LOTTERY}
+					on:change={() => {
+						if (config.ENABLE_TAROT_LOTTERY) config.ENABLE_DAILY_CHECKIN = false;
+					}}
+				/>
 			</div>
 
 			<div class="mt-3">
@@ -139,7 +181,9 @@
 					</button>
 				</div>
 				<div class="text-xs text-gray-400 mb-2">
-					{$i18n.t('Each draw awards one tier by weighted random. Probability = weight / total weight.')}
+					{$i18n.t(
+						'Each draw or check-in awards one tier by weighted random. Probability = weight / total weight.'
+					)}
 				</div>
 
 				<div class="flex text-xs text-gray-400 px-1 mb-1">
@@ -268,7 +312,7 @@
 									{#if d.email}<div class="text-xs text-gray-400">{d.email}</div>{/if}
 								</td>
 								<td class="py-2 pr-3 whitespace-nowrap">{d.draw_date}</td>
-								<td class="py-2 pr-3">{cardNames(d.cards)}</td>
+								<td class="py-2 pr-3">{cardNames(d)}</td>
 								<td class="py-2 pr-3 font-medium text-amber-600 dark:text-amber-400">+{d.reward}</td>
 								<td class="py-2 pr-3 whitespace-nowrap text-xs text-gray-400">{fmtTime(d.created_at)}</td>
 							</tr>

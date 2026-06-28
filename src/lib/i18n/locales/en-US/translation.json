@@ -2556,5 +2556,13 @@
 	"Notification details": "",
 	"Published": "",
 	"Unpublish": "",
-	"Archived": ""
+	"Archived": "",
+	"Enable Daily Check-in": "Enable Daily Check-in",
+	"Daily check-in and tarot lottery cannot both be enabled.": "Daily check-in and tarot lottery cannot both be enabled.",
+	"Each draw or check-in awards one tier by weighted random. Probability = weight / total weight.": "Each draw or check-in awards one tier by weighted random. Probability = weight / total weight.",
+	"Daily Check-in": "Daily Check-in",
+	"Checked in today": "Checked in today",
+	"Get a weighted random credit reward": "Get a weighted random credit reward",
+	"Check in": "Check in",
+	"Check-in successful, +{{reward}} credit": "Check-in successful, +{{reward}} credit"
 }

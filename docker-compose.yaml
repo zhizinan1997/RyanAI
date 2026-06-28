@@ -12,6 +12,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        USE_SLIM: "true"
     image: ghcr.io/zhizinan1997/ryanai:${WEBUI_DOCKER_TAG-main}
     container_name: ryanai
     volumes:
@@ -22,6 +24,12 @@ services:
       - ${OPEN_WEBUI_PORT-3000}:8080
     environment:
       - 'OLLAMA_BASE_URL=http://ollama:11434'
+      - 'RYANAI_DISABLE_LOCAL_EMBEDDING_MODELS=true'
+      - 'RAG_EMBEDDING_ENGINE=${RAG_EMBEDDING_ENGINE-openai}'
+      - 'RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL-text-embedding-3-small}'
+      - 'RAG_EMBEDDING_MODEL_AUTO_UPDATE=false'
+      - 'RAG_OPENAI_API_BASE_URL=${RAG_OPENAI_API_BASE_URL-}'
+      - 'RAG_OPENAI_API_KEY=${RAG_OPENAI_API_KEY-}'
       - 'WEBUI_SECRET_KEY='
     extra_hosts:
       - host.docker.internal:host-gateway

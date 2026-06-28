@@ -699,7 +699,7 @@ if VECTOR_DB == 'chroma':
     else:
         CHROMA_HTTP_HEADERS = None
     CHROMA_HTTP_SSL = os.getenv('CHROMA_HTTP_SSL', 'false').lower() == 'true'
-# this uses the model defined in the Dockerfile ENV variable. If you dont use docker or docker based deployments such as k8s, the default embedding model will be used (sentence-transformers/all-MiniLM-L6-v2)
+# Embeddings default to an external OpenAI-compatible API; local HF embedding models are disabled by default.
 
 
 # MariaDB Vector (mariadb-vector)
@@ -1337,7 +1337,7 @@ RAG_ALLOWED_FILE_EXTENSIONS = ConfigVar(
 RAG_EMBEDDING_ENGINE = ConfigVar(
     'RAG_EMBEDDING_ENGINE',
     'rag.embedding_engine',
-    os.getenv('RAG_EMBEDDING_ENGINE', ''),
+    os.getenv('RAG_EMBEDDING_ENGINE', 'openai'),
 )
 
 PDF_EXTRACT_IMAGES = ConfigVar(
@@ -1355,15 +1355,26 @@ PDF_LOADER_MODE = ConfigVar(
 RAG_EMBEDDING_MODEL = ConfigVar(
     'RAG_EMBEDDING_MODEL',
     'rag.embedding_model',
-    os.getenv('RAG_EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2'),
+    os.getenv('RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
 )
 log.info(f'Embedding model set: {RAG_EMBEDDING_MODEL.value}')
 
 RAG_EMBEDDING_MODEL_AUTO_UPDATE = (
-    not OFFLINE_MODE and os.getenv('RAG_EMBEDDING_MODEL_AUTO_UPDATE', 'True').lower() == 'true'
+    not OFFLINE_MODE and os.getenv('RAG_EMBEDDING_MODEL_AUTO_UPDATE', 'False').lower() == 'true'
 )
 
 RAG_EMBEDDING_MODEL_TRUST_REMOTE_CODE = os.getenv('RAG_EMBEDDING_MODEL_TRUST_REMOTE_CODE', 'True').lower() == 'true'
+
+DISABLE_LOCAL_EMBEDDING_MODELS = os.getenv('RYANAI_DISABLE_LOCAL_EMBEDDING_MODELS', 'true').lower() == 'true'
+
+if DISABLE_LOCAL_EMBEDDING_MODELS and RAG_EMBEDDING_ENGINE.value == '':
+    log.info(
+        'Local embedding models are disabled; forcing RAG_EMBEDDING_ENGINE to openai '
+        'to avoid Hugging Face model downloads.'
+    )
+    RAG_EMBEDDING_ENGINE.value = 'openai'
+    if not RAG_EMBEDDING_MODEL.value or RAG_EMBEDDING_MODEL.value.startswith('sentence-transformers/'):
+        RAG_EMBEDDING_MODEL.value = os.getenv('RAG_EMBEDDING_MODEL', 'text-embedding-3-small')
 
 RAG_EMBEDDING_BATCH_SIZE = ConfigVar(
     'RAG_EMBEDDING_BATCH_SIZE',
@@ -4201,6 +4212,12 @@ ENABLE_TAROT_LOTTERY = ConfigVar(
     'ENABLE_TAROT_LOTTERY',
     'lottery.enable',
     os.getenv('ENABLE_TAROT_LOTTERY', 'False').lower() == 'true',
+)
+
+ENABLE_DAILY_CHECKIN = ConfigVar(
+    'ENABLE_DAILY_CHECKIN',
+    'lottery.checkin.enable',
+    os.getenv('ENABLE_DAILY_CHECKIN', 'False').lower() == 'true',
 )
 
 TAROT_REWARD_CONFIG = ConfigVar(

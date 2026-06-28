@@ -42,6 +42,27 @@ export const drawTarot = async (token: string) => {
 	return res;
 };
 
+export const checkinLottery = async (token: string) => {
+	let error = null;
+	const res = await fetch(`${WEBUI_API_BASE_URL}/lottery/checkin`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err.detail ?? err;
+			return null;
+		});
+	if (error) throw error;
+	return res;
+};
+
 export const getLotteryHistory = async (token: string) => {
 	let error = null;
 	const res = await fetch(`${WEBUI_API_BASE_URL}/lottery/history`, {

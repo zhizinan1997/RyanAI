@@ -2548,5 +2548,13 @@
 	"Notification details": "通知详情",
 	"Published": "已发布",
 	"Unpublish": "下架",
-	"Archived": "历史"
+	"Archived": "历史",
+	"Enable Daily Check-in": "启用签到功能",
+	"Daily check-in and tarot lottery cannot both be enabled.": "签到功能和塔罗抽奖只能启用一个。",
+	"Each draw or check-in awards one tier by weighted random. Probability = weight / total weight.": "每次抽奖或签到按权重随机命中一个档位。概率 = 权重 / 总权重。",
+	"Daily Check-in": "每日签到",
+	"Checked in today": "今日已签到",
+	"Get a weighted random credit reward": "领取按权重随机发放的积分奖励",
+	"Check in": "签到",
+	"Check-in successful, +{{reward}} credit": "签到成功，+{{reward}} 积分"
 }

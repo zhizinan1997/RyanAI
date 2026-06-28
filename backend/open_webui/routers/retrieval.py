@@ -35,6 +35,7 @@ from langchain_text_splitters import (
 )
 from open_webui.config import (
     DEFAULT_LOCALE,
+    DISABLE_LOCAL_EMBEDDING_MODELS,
     ENV,
     RAG_EMBEDDING_CONTENT_PREFIX,
     RAG_EMBEDDING_MODEL_AUTO_UPDATE,
@@ -329,6 +330,16 @@ async def update_embedding_config(request: Request, form_data: EmbeddingModelUpd
     try:
         request.app.state.config.RAG_EMBEDDING_ENGINE = form_data.RAG_EMBEDDING_ENGINE
         request.app.state.config.RAG_EMBEDDING_MODEL = form_data.RAG_EMBEDDING_MODEL.strip()
+        if DISABLE_LOCAL_EMBEDDING_MODELS and request.app.state.config.RAG_EMBEDDING_ENGINE == '':
+            request.app.state.config.RAG_EMBEDDING_ENGINE = 'openai'
+            if (
+                not request.app.state.config.RAG_EMBEDDING_MODEL
+                or request.app.state.config.RAG_EMBEDDING_MODEL.startswith('sentence-transformers/')
+            ):
+                request.app.state.config.RAG_EMBEDDING_MODEL = os.getenv(
+                    'RAG_EMBEDDING_MODEL',
+                    'text-embedding-3-small',
+                )
         request.app.state.config.RAG_EMBEDDING_BATCH_SIZE = form_data.RAG_EMBEDDING_BATCH_SIZE
         request.app.state.config.ENABLE_ASYNC_EMBEDDING = form_data.ENABLE_ASYNC_EMBEDDING
         request.app.state.config.RAG_EMBEDDING_CONCURRENT_REQUESTS = form_data.RAG_EMBEDDING_CONCURRENT_REQUESTS

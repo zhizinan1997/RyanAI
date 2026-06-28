@@ -50,12 +50,15 @@ router = APIRouter()
 
 import os
 
-EMBEDDING_MODEL_NAME = os.environ.get('AUXILIARY_EMBEDDING_MODEL', 'TaylorAI/bge-micro-v2')
+EMBEDDING_MODEL_NAME = os.environ.get('AUXILIARY_EMBEDDING_MODEL', '')
+DISABLE_LOCAL_EMBEDDING_MODELS = os.getenv('RYANAI_DISABLE_LOCAL_EMBEDDING_MODELS', 'true').lower() == 'true'
 _embedding_model = None
 
 
 def _get_embedding_model():
     global _embedding_model
+    if DISABLE_LOCAL_EMBEDDING_MODELS or not EMBEDDING_MODEL_NAME:
+        return None
     if _embedding_model is None:
         try:
             from sentence_transformers import SentenceTransformer
