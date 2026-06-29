@@ -222,9 +222,106 @@ class MyUsagePeriod(BaseModel):
     credit_used: float = 0
 
 
+class UserLeaderboardEntry(BaseModel):
+    rank: int
+    display_name: str
+    conversation_count: int = 0
+    total_tokens: int = 0
+    is_current_user: bool = False
+
+
+class UserLeaderboardPeriod(BaseModel):
+    top: list[UserLeaderboardEntry] = Field(default_factory=list)
+    current_user: Optional[UserLeaderboardEntry] = None
+
+
+class ModelLeaderboardEntry(BaseModel):
+    rank: int
+    model_name: str
+    logo_url: str = '/favicon.png'
+    call_count: int = 0
+
+
 class MyUsageSummaryResponse(BaseModel):
     credit: float = 0
     periods: dict[str, MyUsagePeriod]
+    user_leaderboards: dict[str, UserLeaderboardPeriod]
+    model_leaderboards: dict[str, list[ModelLeaderboardEntry]]
+
+
+def _mask_display_name(name: Optional[str]) -> str:
+    chars = list((name or '').strip())
+    if not chars:
+        return '*'
+    if len(chars) == 1:
+        return '*'
+    if len(chars) == 2:
+        return f'{chars[0]}*'
+    return f'{chars[0]}{"*" * (len(chars) - 2)}{chars[-1]}'
+
+
+def _model_logo_url(model_id: str) -> str:
+    return f'/api/v1/models/model/profile/image?id={quote(model_id, safe="")}'
+
+
+async def _build_user_leaderboard(
+    current_user_id: str,
+    usage_by_user: dict[str, dict[str, int]],
+) -> UserLeaderboardPeriod:
+    user_ids = list(usage_by_user.keys())
+    users = await Users.get_users_by_user_ids(user_ids) if user_ids else []
+    user_map = {user.id: user for user in users}
+
+    sorted_user_ids = sorted(
+        user_ids,
+        key=lambda uid: (
+            -int(usage_by_user[uid].get('total_tokens') or 0),
+            -int(usage_by_user[uid].get('conversation_count') or 0),
+            (user_map.get(uid).name if user_map.get(uid) else uid).lower(),
+            uid,
+        ),
+    )
+
+    entries = []
+    for rank, user_id in enumerate(sorted_user_ids, start=1):
+        usage = usage_by_user[user_id]
+        user = user_map.get(user_id)
+        entries.append(
+            UserLeaderboardEntry(
+                rank=rank,
+                display_name=_mask_display_name(user.name if user else user_id),
+                conversation_count=int(usage.get('conversation_count') or 0),
+                total_tokens=int(usage.get('total_tokens') or 0),
+                is_current_user=user_id == current_user_id,
+            )
+        )
+
+    current_user_entry = next((entry for entry in entries if entry.is_current_user), None)
+    return UserLeaderboardPeriod(top=entries[:10], current_user=current_user_entry)
+
+
+async def _build_model_leaderboard(call_counts_by_model: dict[str, int]) -> list[ModelLeaderboardEntry]:
+    sorted_model_ids = sorted(
+        call_counts_by_model.keys(),
+        key=lambda model_id: (-int(call_counts_by_model[model_id] or 0), model_id),
+    )[:5]
+
+    models = await Models.get_models_by_ids(sorted_model_ids) if sorted_model_ids else []
+    model_map = {model.id: model for model in models}
+
+    entries = []
+    for rank, model_id in enumerate(sorted_model_ids, start=1):
+        model = model_map.get(model_id)
+        entries.append(
+            ModelLeaderboardEntry(
+                rank=rank,
+                model_name=model.name if model else model_id,
+                logo_url=_model_logo_url(model_id),
+                call_count=int(call_counts_by_model[model_id] or 0),
+            )
+        )
+
+    return entries
 
 
 def _get_usage_timezone(timezone: Optional[str]) -> ZoneInfo:
@@ -384,6 +481,8 @@ async def _legacy_usage_summary_by_user(
 async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
     credit = Credits.init_credit_by_user_id(user.id)
     periods: dict[str, MyUsagePeriod] = {}
+    user_leaderboards: dict[str, UserLeaderboardPeriod] = {}
+    model_leaderboards: dict[str, list[ModelLeaderboardEntry]] = {}
 
     for period_key, (start_time, end_time) in _usage_period_ranges(user.timezone).items():
         token_usage = await ChatMessages.get_usage_summary_by_user(user.id, start_time, end_time)
@@ -421,7 +520,18 @@ async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
             credit_used=log_usage['credit_used'],
         )
 
-    return MyUsageSummaryResponse(credit=float(credit.credit or 0), periods=periods)
+        usage_by_user = await ChatMessages.get_usage_leaderboard_by_user(start_time, end_time)
+        user_leaderboards[period_key] = await _build_user_leaderboard(user.id, usage_by_user)
+
+        model_call_counts = await ChatMessages.get_model_call_count_leaderboard(start_time, end_time)
+        model_leaderboards[period_key] = await _build_model_leaderboard(model_call_counts)
+
+    return MyUsageSummaryResponse(
+        credit=float(credit.credit or 0),
+        periods=periods,
+        user_leaderboards=user_leaderboards,
+        model_leaderboards=model_leaderboards,
+    )
 
 
 @router.post('/statistics')

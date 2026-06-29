@@ -72,6 +72,19 @@ def _token_columns(dialect: str):
     )
 
 
+def _created_at_period_filter(start_date: int, end_date: int):
+    return or_(
+        and_(
+            ChatMessage.created_at >= start_date,
+            ChatMessage.created_at < end_date,
+        ),
+        and_(
+            ChatMessage.created_at >= start_date * 1000,
+            ChatMessage.created_at < end_date * 1000,
+        ),
+    )
+
+
 ####################
 # ChatMessage DB Schema
 ####################
@@ -560,16 +573,7 @@ class ChatMessageTable:
             ).filter(
                 ChatMessage.role == 'assistant',
                 ChatMessage.user_id == user_id,
-                or_(
-                    and_(
-                        ChatMessage.created_at >= start_date,
-                        ChatMessage.created_at < end_date,
-                    ),
-                    and_(
-                        ChatMessage.created_at >= start_date * 1000,
-                        ChatMessage.created_at < end_date * 1000,
-                    ),
-                ),
+                _created_at_period_filter(start_date, end_date),
             )
 
             result = await db.execute(stmt)
@@ -584,6 +588,66 @@ class ChatMessageTable:
                 'total_tokens': input_total + output_total,
                 'conversation_count': int(row.conversation_count or 0),
             }
+
+    async def get_usage_leaderboard_by_user(
+        self,
+        start_date: int,
+        end_date: int,
+        db: Optional[AsyncSession] = None,
+    ) -> dict[str, dict[str, int]]:
+        async with get_async_db_context(db) as db:
+            bind = await db.connection()
+            dialect = bind.dialect.name
+
+            input_tokens, output_tokens = _token_columns(dialect)
+
+            stmt = select(
+                ChatMessage.user_id,
+                func.coalesce(func.sum(input_tokens), 0).label('input_tokens'),
+                func.coalesce(func.sum(output_tokens), 0).label('output_tokens'),
+                func.count(ChatMessage.id).label('conversation_count'),
+            ).filter(
+                ChatMessage.role == 'assistant',
+                ChatMessage.user_id.isnot(None),
+                _created_at_period_filter(start_date, end_date),
+            )
+
+            stmt = stmt.group_by(ChatMessage.user_id)
+            result = await db.execute(stmt)
+
+            leaderboard = {}
+            for row in result.all():
+                input_total = int(row.input_tokens or 0)
+                output_total = int(row.output_tokens or 0)
+                total_tokens = input_total + output_total
+                conversation_count = int(row.conversation_count or 0)
+                if total_tokens <= 0 and conversation_count <= 0:
+                    continue
+                leaderboard[row.user_id] = {
+                    'input_tokens': input_total,
+                    'output_tokens': output_total,
+                    'total_tokens': total_tokens,
+                    'conversation_count': conversation_count,
+                }
+
+            return leaderboard
+
+    async def get_model_call_count_leaderboard(
+        self,
+        start_date: int,
+        end_date: int,
+        db: Optional[AsyncSession] = None,
+    ) -> dict[str, int]:
+        async with get_async_db_context(db) as db:
+            stmt = select(ChatMessage.model_id, func.count(ChatMessage.id).label('call_count')).filter(
+                ChatMessage.role == 'assistant',
+                ChatMessage.model_id.isnot(None),
+                _created_at_period_filter(start_date, end_date),
+            )
+
+            stmt = stmt.group_by(ChatMessage.model_id)
+            result = await db.execute(stmt)
+            return {row.model_id: int(row.call_count or 0) for row in result.all() if row.model_id}
 
     async def get_message_count_by_user(
         self,

@@ -2564,5 +2564,12 @@
 	"Checked in today": "Checked in today",
 	"Get a weighted random credit reward": "Get a weighted random credit reward",
 	"Check in": "Check in",
-	"Check-in successful, +{{reward}} credit": "Check-in successful, +{{reward}} credit"
+	"Check-in successful, +{{reward}} credit": "Check-in successful, +{{reward}} credit",
+	"User leaderboard": "User leaderboard",
+	"No leaderboard yet": "No leaderboard yet",
+	"Me": "Me",
+	"Model calls": "Model calls",
+	"No model calls yet": "No model calls yet",
+	"Calls": "Calls",
+	"Top {{count}}": "Top {{count}}"
 }

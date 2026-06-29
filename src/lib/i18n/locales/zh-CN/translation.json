@@ -2556,5 +2556,12 @@
 	"Checked in today": "今日已签到",
 	"Get a weighted random credit reward": "领取按权重随机发放的积分奖励",
 	"Check in": "签到",
-	"Check-in successful, +{{reward}} credit": "签到成功，+{{reward}} 积分"
+	"Check-in successful, +{{reward}} credit": "签到成功，+{{reward}} 积分",
+	"User leaderboard": "用户排行榜",
+	"No leaderboard yet": "暂无排行榜",
+	"Me": "我",
+	"Model calls": "模型调用榜",
+	"No model calls yet": "暂无模型调用",
+	"Calls": "调用次数",
+	"Top {{count}}": "前 {{count}} 名"
 }
