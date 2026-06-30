@@ -150,12 +150,12 @@
 >
 	<Tooltip content={$i18n.t('Notifications')}>
 		<button
-			class="relative flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+			class="relative flex size-9 cursor-pointer items-center justify-center rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 			aria-label={$i18n.t('Notifications')}
 			type="button"
 		>
 			<div class=" m-auto self-center">
-				<AppNotification className=" size-5" strokeWidth="1.5" />
+				<AppNotification className=" size-5.5" strokeWidth="1.8" />
 			</div>
 			{#if unreadCount > 0}
 				<div
@@ -258,7 +258,9 @@
 			</div>
 
 			<div class="mt-3 max-h-[50vh] overflow-y-auto text-sm text-gray-700 dark:text-gray-200">
-				{@html DOMPurify.sanitize(marked.parse((selectedNotification.content ?? '').replace(/\n/g, '<br>')))}
+				{@html DOMPurify.sanitize(
+					marked.parse((selectedNotification.content ?? '').replace(/\n/g, '<br>'))
+				)}
 			</div>
 
 			<div class="mt-5 flex justify-end">

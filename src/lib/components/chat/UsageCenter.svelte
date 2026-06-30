@@ -197,12 +197,12 @@
 >
 	<Tooltip content={$i18n.t('Usage')}>
 		<button
-			class="relative flex cursor-pointer px-2 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+			class="relative flex size-9 cursor-pointer items-center justify-center rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 transition"
 			aria-label={$i18n.t('Usage')}
 			type="button"
 		>
 			<div class="m-auto self-center">
-				<Gauge className="size-5" strokeWidth="1.6" />
+				<Gauge className="size-5.5" strokeWidth="1.8" />
 			</div>
 			{#if showCheckinBadge}
 				<div
