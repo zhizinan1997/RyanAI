@@ -19,8 +19,14 @@ from open_webui.config import (
     CREDIT_NO_CREDIT_MSG,
     USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE,
 )
+from open_webui.models.config import Config
 from open_webui.models.credits import Credits
 from open_webui.models.models import Models, ModelModel
+
+
+def credit_config(key: str, default):
+    value = Config.get_sync(key, default)
+    return default if value is None else value
 
 
 def get_model_price(
@@ -51,10 +57,18 @@ def get_model_price(
     - request price
     - minimum credit
     """
+    default_embedding_price = credit_config(
+        'credit.calculate.default_embedding_price', USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE
+    )
+    default_token_price = credit_config('credit.calculate.default_token_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE)
+    default_request_price = credit_config(
+        'credit.calculate.default_request_price', USAGE_CALCULATE_DEFAULT_REQUEST_PRICE
+    )
+
     # embedding
     if is_embedding:
         return (
-            Decimal(USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE.value),
+            Decimal(default_embedding_price),
             Decimal(0),
             Decimal(0),
             Decimal(0),
@@ -68,15 +82,15 @@ def get_model_price(
     # no model provide
     if not model or not isinstance(model, ModelModel):
         return (
-            Decimal(USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value),
-            Decimal(USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value),
+            Decimal(default_token_price),
+            Decimal(default_token_price),
             Decimal(0),
             Decimal(0),
             Decimal(0),
             Decimal(0),
             Decimal(0),
             Decimal(0),
-            Decimal(USAGE_CALCULATE_DEFAULT_REQUEST_PRICE.value),
+            Decimal(default_request_price),
             Decimal(0),
     )
     # base model
@@ -87,15 +101,15 @@ def get_model_price(
     # model price
     model_price = model.price or {}
     return (
-        Decimal(model_price.get('prompt_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('completion_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('prompt_long_ctx_tokens', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('prompt_long_ctx_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('completion_long_ctx_tokens', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('completion_long_ctx_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('prompt_cache_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('prompt_long_ctx_cache_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE.value)),
-        Decimal(model_price.get('request_price', USAGE_CALCULATE_DEFAULT_REQUEST_PRICE.value)),
+        Decimal(model_price.get('prompt_price', default_token_price)),
+        Decimal(model_price.get('completion_price', default_token_price)),
+        Decimal(model_price.get('prompt_long_ctx_tokens', default_token_price)),
+        Decimal(model_price.get('prompt_long_ctx_price', default_token_price)),
+        Decimal(model_price.get('completion_long_ctx_tokens', default_token_price)),
+        Decimal(model_price.get('completion_long_ctx_price', default_token_price)),
+        Decimal(model_price.get('prompt_cache_price', default_token_price)),
+        Decimal(model_price.get('prompt_long_ctx_cache_price', default_token_price)),
+        Decimal(model_price.get('request_price', default_request_price)),
         Decimal(model_price.get('minimum_credit', 0)),
     )
 
@@ -107,13 +121,49 @@ def get_feature_price(features: Union[set, list]) -> Decimal:
     for feature in features:
         match feature:
             case 'image_generation':
-                price += Decimal(USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE.value) / 1000 / 1000
+                price += (
+                    Decimal(
+                        credit_config(
+                            'credit.calculate.feature.image_gen_price',
+                            USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE,
+                        )
+                    )
+                    / 1000
+                    / 1000
+                )
             case 'code_interpreter':
-                price += Decimal(USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE.value) / 1000 / 1000
+                price += (
+                    Decimal(
+                        credit_config(
+                            'credit.calculate.feature.code_execute_price',
+                            USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE,
+                        )
+                    )
+                    / 1000
+                    / 1000
+                )
             case 'web_search':
-                price += Decimal(USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE.value) / 1000 / 1000
+                price += (
+                    Decimal(
+                        credit_config(
+                            'credit.calculate.feature.web_search_price',
+                            USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE,
+                        )
+                    )
+                    / 1000
+                    / 1000
+                )
             case 'direct_tool_servers':
-                price += Decimal(USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE.value) / 1000 / 1000
+                price += (
+                    Decimal(
+                        credit_config(
+                            'credit.calculate.feature.tool_server_price',
+                            USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE,
+                        )
+                    )
+                    / 1000
+                    / 1000
+                )
     return price
 
 
@@ -161,6 +211,7 @@ def check_credit_by_user_id(user_id: str, form_data: dict, is_embedding: bool = 
     credit = Credits.init_credit_by_user_id(user_id=user_id)
     # check for credit
     if credit is None or credit.credit <= 0 or credit.credit < minimum_credit:
+        no_credit_msg = credit_config('credit.no_credit_msg', CREDIT_NO_CREDIT_MSG)
         if isinstance(metadata, dict) and metadata:
             chat_id = metadata.get('chat_id')
             message_id = metadata.get('message_id') or metadata.get('id')
@@ -170,9 +221,9 @@ def check_credit_by_user_id(user_id: str, form_data: dict, is_embedding: bool = 
                 Chats.upsert_message_to_chat_by_id_and_message_id(
                     chat_id,
                     message_id,
-                    {'error': {'content': CREDIT_NO_CREDIT_MSG.value}},
+                    {'error': {'content': no_credit_msg}},
                 )
-        raise HTTPException(status_code=403, detail=CREDIT_NO_CREDIT_MSG.value)
+        raise HTTPException(status_code=403, detail=no_credit_msg)
 
 
 class ImageURL(BaseModel):

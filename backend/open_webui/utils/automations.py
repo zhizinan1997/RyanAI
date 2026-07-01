@@ -18,18 +18,26 @@ import logging
 import os
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from dateutil.rrule import rrulestr
 from fastapi import Request
+from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.constants import ERROR_MESSAGES
+from open_webui.env import REDIS_KEY_PREFIX
+from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_db
 from open_webui.models.automations import AutomationModel, AutomationRuns, Automations
 from open_webui.models.chats import ChatForm, Chats
+from open_webui.models.config import Config
+from open_webui.models.credits import Credits
 from open_webui.models.users import Users
+from open_webui.utils.auth import create_token
+from open_webui.utils.misc import parse_duration
 from open_webui.utils.task import prompt_template
 from starlette.datastructures import Headers
 
@@ -158,62 +166,12 @@ async def automation_worker_loop(app) -> None:
     await scheduler_worker_loop(app)
 
 
-async def _check_daily_credit_reset(app) -> None:
-    """Reset ALL users' credit to a fixed value at 00:00 of the configured timezone.
-
-    Idempotent per day via a stored date marker (LOTTERY_DAILY_RESET_MARK) plus a
-    best-effort Redis lock for multi-instance deployments.
-    """
-    from decimal import Decimal
-
-    from open_webui.models.credits import Credits
-
-    cfg = app.state.config
-    tz_name = getattr(cfg, 'LOTTERY_TIMEZONE', 'Asia/Shanghai') or 'Asia/Shanghai'
-    zi = _resolve_tz(tz_name) or ZoneInfo('UTC')
-    today = datetime.now(zi).strftime('%Y-%m-%d')
-
-    if (getattr(cfg, 'LOTTERY_DAILY_RESET_MARK', '') or '') == today:
-        return
-
-    # multi-instance guard: only one instance performs the reset
-    try:
-        from open_webui.env import (
-            REDIS_CLUSTER,
-            REDIS_SENTINEL_HOSTS,
-            REDIS_SENTINEL_PORT,
-            REDIS_URL,
-        )
-        from open_webui.utils.redis import get_redis_connection, get_sentinels_from_env
-
-        redis = get_redis_connection(
-            redis_url=REDIS_URL,
-            redis_sentinels=get_sentinels_from_env(REDIS_SENTINEL_HOSTS, REDIS_SENTINEL_PORT),
-            redis_cluster=REDIS_CLUSTER,
-        )
-        if redis and not redis.set(f'daily_credit_reset:{today}', '1', nx=True, ex=3600):
-            cfg.LOTTERY_DAILY_RESET_MARK = today  # another instance is handling it
-            return
-    except Exception:
-        pass
-
-    try:
-        value = Decimal(str(getattr(cfg, 'DAILY_RESET_CREDIT', '3') or '3'))
-    except Exception:
-        value = Decimal('3')
-
-    affected = Credits.reset_all_credits(value)
-    cfg.LOTTERY_DAILY_RESET_MARK = today
-    log.info(f'Daily credit reset: {affected} users -> {value} ({today} {tz_name})')
-
-
 async def scheduler_worker_loop(app) -> None:
     """Unified background scheduler for all time-based work.
 
     Handles:
       1. Automation execution  (ENABLE_AUTOMATIONS)
       2. Calendar event alerts (ENABLE_CALENDAR)
-      3. Daily credit reset    (ENABLE_DAILY_CREDIT_RESET)
 
     Runs on every instance. Poll interval is configurable via
     SCHEDULER_POLL_INTERVAL env var (default: 10 seconds).
@@ -222,7 +180,7 @@ async def scheduler_worker_loop(app) -> None:
     while True:
         try:
             # ── Automations ──
-            if getattr(app.state.config, 'ENABLE_AUTOMATIONS', False):
+            if await Config.get('automations.enable'):
                 try:
                     async with get_async_db() as db:
                         batch = await Automations.claim_due(int(time.time_ns()), limit=10, db=db)
@@ -234,14 +192,13 @@ async def scheduler_worker_loop(app) -> None:
                     log.exception('Scheduler: automation error')
 
             # ── Calendar Alerts ──
-            if getattr(app.state.config, 'ENABLE_CALENDAR', False):
+            if await Config.get('calendar.enable'):
                 try:
                     await _check_calendar_alerts(app)
                 except Exception:
                     log.exception('Scheduler: calendar alert error')
 
-            # ── Daily Credit Reset (北京时间 0 点全员积分清零) ──
-            if getattr(app.state.config, 'ENABLE_DAILY_CREDIT_RESET', False):
+            if await Config.get('lottery.daily_reset.enable', False):
                 try:
                     await _check_daily_credit_reset(app)
                 except Exception:
@@ -259,11 +216,18 @@ async def scheduler_worker_loop(app) -> None:
 ####################
 
 
-def _build_request(app) -> Request:
+def _build_request(
+    app,
+    token: Optional[str] = None,
+) -> Request:
     """Build a minimal ASGI Request for chat_completion.
 
     Mirrors the mock-request pattern used in main.py lifespan
     (model pre-fetch, tool server init) for consistency.
+
+    When token is provided, attach it as
+    request.state.token so session-auth tool servers and terminals can
+    authenticate headless scheduled runs as the automation owner.
     """
     scope = {
         'type': 'http',
@@ -279,7 +243,7 @@ def _build_request(app) -> Request:
     }
     request = Request(scope)
     # Ensure request.state is initialized with required attributes
-    request.state.token = None
+    request.state.token = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token) if token else None
     request.state.enable_api_keys = False
     return request
 
@@ -296,7 +260,7 @@ def _resolve_model_tool_ids(app, model_id: str) -> list[str]:
     return list(tool_ids) if tool_ids else []
 
 
-def _resolve_model_features(app, model_id: str) -> dict:
+async def _resolve_model_features(app, model_id: str) -> dict:
     """Read model default features from model config.
 
     The frontend does this in Chat.svelte (model.info.meta.defaultFeatureIds
@@ -313,14 +277,13 @@ def _resolve_model_features(app, model_id: str) -> dict:
         return {}
 
     capabilities = meta.get('capabilities', {})
-    config = app.state.config
     features = {}
 
     # code_interpreter is excluded: it requires the frontend event emitter
     # and does not work in headless backend execution.
     feature_checks = {
-        'web_search': getattr(config, 'ENABLE_WEB_SEARCH', False),
-        'image_generation': getattr(config, 'ENABLE_IMAGE_GENERATION', False),
+        'web_search': await Config.get('web.search.enable'),
+        'image_generation': await Config.get('image_generation.enable'),
     }
 
     for feature_id in default_feature_ids:
@@ -353,7 +316,7 @@ def _resolve_model_terminal_id(app, model_id: str) -> Optional[str]:
 async def _set_terminal_cwd(app, server_id: str, user, cwd: str, chat_id: str) -> None:
     """Set the working directory on a terminal server via the proxy.
 
-    Routes through the ryanai terminal proxy endpoint so that
+    Routes through the open-webui terminal proxy endpoint so that
     auth headers, orchestrator policy routing, and X-User-Id are
     handled correctly — same path the frontend uses.
     """
@@ -414,6 +377,30 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         user = await Users.get_user_by_id(automation.user_id)
         if not user:
             await _record_run(automation.id, 'error', error='User not found')
+            await publish_event(
+                app,
+                EVENTS.AUTOMATION_RUN_FAILED,
+                subject_id=automation.id,
+                data={'name': automation.name, 'error': 'User not found'},
+            )
+            return
+
+        # Re-gate the rehydrated owner: a demoted/deactivated or de-permissioned owner must not run.
+        from open_webui.utils.access_control import has_permission
+
+        if user.role not in ('user', 'admin') or (
+            user.role != 'admin'
+            and not await has_permission(user.id, 'features.automations', await Config.get('user.permissions'))
+        ):
+            error = 'Owner no longer permitted to run automations'
+            await _record_run(automation.id, 'error', error=error)
+            await publish_event(
+                app,
+                EVENTS.AUTOMATION_RUN_FAILED,
+                actor=user,
+                subject_id=automation.id,
+                data={'name': automation.name, 'error': error},
+            )
             return
 
         prompt = await prompt_template(automation.data['prompt'], user)
@@ -465,7 +452,15 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         )
 
         if not chat:
-            await _record_run(automation.id, 'error', error='Failed to create chat')
+            error = 'Failed to create chat'
+            await _record_run(automation.id, 'error', error=error)
+            await publish_event(
+                app,
+                EVENTS.AUTOMATION_RUN_FAILED,
+                actor=user,
+                subject_id=automation.id,
+                data={'name': automation.name, 'error': error},
+            )
             return
 
         # Notify frontend to refresh chat list
@@ -483,7 +478,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
 
         # Resolve model defaults (frontend does this, backend doesn't)
         tool_ids = _resolve_model_tool_ids(app, model_id)
-        features = _resolve_model_features(app, model_id)
+        features = await _resolve_model_features(app, model_id)
         filter_ids = _resolve_model_filter_ids(app, model_id)
 
         # Resolve terminal from model config
@@ -517,7 +512,15 @@ async def execute_automation(app, automation: AutomationModel) -> None:
 
         # Call the full chat completion pipeline (same as POST /api/chat/completions).
         # The handler reference is stored on app.state to avoid circular imports.
-        request = _build_request(app)
+        try:
+            expires_delta = parse_duration(str(await Config.get('automations.auth_token_expires_in', '1h')))
+        except ValueError:
+            expires_delta = None
+        token = create_token(
+            data={'id': user.id, 'typ': 'automation'},
+            expires_delta=expires_delta or timedelta(hours=1),
+        )
+        request = _build_request(app, token=token)
         await app.state.CHAT_COMPLETION_HANDLER(request, form_data, user=user)
 
         # Notify user
@@ -535,15 +538,64 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         )
 
         await _record_run(automation.id, 'success', chat_id=chat.id)
+        await publish_event(
+            app,
+            EVENTS.AUTOMATION_RUN_COMPLETED,
+            actor=user,
+            subject_id=automation.id,
+            data={'name': automation.name, 'chat_id': chat.id},
+        )
 
     except Exception as e:
         log.exception(f'Automation {automation.id} failed')
-        await _record_run(automation.id, 'error', error=str(e)[:4000])
+        error = str(e)[:4000]
+        await _record_run(automation.id, 'error', error=error)
+        await publish_event(
+            app,
+            EVENTS.AUTOMATION_RUN_FAILED,
+            subject_id=automation.id,
+            data={'name': automation.name, 'error': error},
+        )
 
 
 ####################
 # Internals
 ####################
+
+
+async def _check_daily_credit_reset(app) -> None:
+    config = await Config.get_many(
+        'lottery.timezone',
+        'lottery.daily_reset.credit',
+        'lottery.daily_reset.mark',
+    )
+
+    tz = _resolve_tz(config.get('lottery.timezone') or 'Asia/Shanghai')
+    today = (datetime.now(tz) if tz else datetime.now()).strftime('%Y-%m-%d')
+    if config.get('lottery.daily_reset.mark') == today:
+        return
+
+    redis = getattr(getattr(app, 'state', None), 'redis', None)
+    lock_key = f'{REDIS_KEY_PREFIX}:lottery:daily_credit_reset:{today}'
+    if redis is not None:
+        try:
+            if not await redis.set(lock_key, '1', ex=3600, nx=True):
+                return
+        except Exception:
+            log.warning('Daily credit reset: Redis lock unavailable; falling back to DB mark check')
+
+    if await Config.get('lottery.daily_reset.mark', '') == today:
+        return
+
+    try:
+        credit = Decimal(str(config.get('lottery.daily_reset.credit', '3')))
+    except Exception:
+        log.warning('Daily credit reset: invalid credit value %r', config.get('lottery.daily_reset.credit'))
+        return
+
+    affected = await asyncio.to_thread(Credits.reset_all_credits, credit)
+    await Config.upsert({'lottery.daily_reset.mark': today})
+    log.info('Daily credit reset complete: set %s credit for %s user(s)', credit, affected)
 
 
 async def _check_calendar_alerts(app) -> None:
@@ -607,8 +659,8 @@ async def _check_calendar_alerts(app) -> None:
 
         # Send webhook notification if user has one configured
         try:
-            webui_name = getattr(app.state, 'WEBUI_NAME', 'RyanAI')
-            enable_user_webhooks = getattr(app.state.config, 'ENABLE_USER_WEBHOOKS', False)
+            webui_name = getattr(app.state, 'WEBUI_NAME', 'Open WebUI')
+            enable_user_webhooks = await Config.get('ui.enable_user_webhooks')
 
             if enable_user_webhooks:
                 user = await Users.get_user_by_id(event.user_id)

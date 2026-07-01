@@ -31,6 +31,7 @@ from open_webui.utils.credit.utils import (
     get_model_price,
     get_feature_price,
     calculate_image_token,
+    credit_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,7 +149,10 @@ class CreditDeduct:
         is_embedding: bool = False,
     ) -> None:
         self.is_error = False
-        self.empty_no_cost = not is_embedding and CREDIT_NO_CHARGE_EMPTY_RESPONSE.value
+        self.empty_no_cost = not is_embedding and credit_config(
+            'credit.no_charge_empty_response',
+            CREDIT_NO_CHARGE_EMPTY_RESPONSE,
+        )
         self.remote_id = ''
         self.user = user
         self.model_id = model_id
@@ -298,7 +302,10 @@ class CreditDeduct:
             total_price = self.request_price + self.feature_price + self.custom_price
         else:
             total_price = self.prompt_price + self.completion_price + self.feature_price + self.custom_price
-        return max(total_price, Decimal(USAGE_CALCULATE_MINIMUM_COST.value))
+        return max(
+            total_price,
+            Decimal(credit_config('credit.calculate.minimum_cost', USAGE_CALCULATE_MINIMUM_COST)),
+        )
 
     def add_usage_to_resp(self, response: dict) -> dict:
         if not isinstance(response, dict):
@@ -346,7 +353,7 @@ class CreditDeduct:
         if not isinstance(body, dict):
             return custom_fees
         # Check config not empty
-        custom_config_str = USAGE_CUSTOM_PRICE_CONFIG.value
+        custom_config_str = credit_config('credit.calculate.custom_price_config', USAGE_CUSTOM_PRICE_CONFIG)
         if not custom_config_str or custom_config_str == '[]':
             return custom_fees
         # Parse the custom config string
@@ -449,8 +456,14 @@ class CreditDeduct:
             model_id=self.model_id,
             messages=messages,
             response=response,
-            model_prefix_to_remove=USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE.value,
-            default_model_for_encoding=USAGE_DEFAULT_ENCODING_MODEL.value,
+            model_prefix_to_remove=credit_config(
+                'credit.calculate.model_prefix_to_remove',
+                USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE,
+            ),
+            default_model_for_encoding=credit_config(
+                'credit.calculate.encoding.default_model',
+                USAGE_DEFAULT_ENCODING_MODEL,
+            ),
         )
 
         # use official usage

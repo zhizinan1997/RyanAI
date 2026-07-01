@@ -23,10 +23,14 @@ from open_webui.config import (
     ALIPAY_PRODUCT_CODE,
 )
 from open_webui.env import GLOBAL_LOG_LEVEL
-from open_webui.utils.credit.utils import check_amount
+from open_webui.utils.credit.utils import check_amount, credit_config
 
 logger = logging.getLogger(__name__)
 logger.setLevel(GLOBAL_LOG_LEVEL)
+
+
+def _cfg(key: str, default: str) -> str:
+    return str(credit_config(key, default) or '')
 
 
 class AlipayClient:
@@ -36,10 +40,13 @@ class AlipayClient:
 
     def __init__(self):
         self._client_config = AlipayClientConfig()
-        self._client_config.server_url = ALIPAY_SERVER_URL.value
-        self._client_config.app_id = ALIPAY_APP_ID.value
-        self._client_config.app_private_key = ALIPAY_APP_PRIVATE_KEY.value
-        self._client_config.alipay_public_key = ALIPAY_ALIPAY_PUBLIC_KEY.value
+        self._client_config.server_url = _cfg('credit.alipay.server_url', ALIPAY_SERVER_URL)
+        self._client_config.app_id = _cfg('credit.alipay.app_id', ALIPAY_APP_ID)
+        self._client_config.app_private_key = _cfg('credit.alipay.app_private_key', ALIPAY_APP_PRIVATE_KEY)
+        self._client_config.alipay_public_key = _cfg(
+            'credit.alipay.alipay_public_key',
+            ALIPAY_ALIPAY_PUBLIC_KEY,
+        )
         self._client = DefaultAlipayClient(self._client_config, logger)
 
     def verify(self, payload: dict) -> bool:
@@ -61,20 +68,22 @@ class AlipayClient:
 
     async def create_trade(self, out_trade_no: str, amount: float) -> dict:
         # check for amount
-        if not check_amount(amount, ALIPAY_AMOUNT_CONTROL.value):
+        amount_control = _cfg('credit.alipay.amount_control', ALIPAY_AMOUNT_CONTROL)
+        if not check_amount(amount, amount_control):
             return {
                 'code': -1,
-                'msg': f'amount invalid, allows {" ".join(ALIPAY_AMOUNT_CONTROL.value.split(","))}',
+                'msg': f'amount invalid, allows {" ".join(amount_control.split(","))}',
             }
         # build request
         request_model = AlipayTradePrecreateModel()
         request_model.out_trade_no = out_trade_no
         request_model.total_amount = f'{amount:.2f}'
         request_model.subject = f'{WEBUI_NAME} Credit'
-        if ALIPAY_PRODUCT_CODE.value:
-            request_model.product_code = ALIPAY_PRODUCT_CODE.value
+        product_code = _cfg('credit.alipay.product_code', ALIPAY_PRODUCT_CODE)
+        if product_code:
+            request_model.product_code = product_code
         request = AlipayTradePrecreateRequest(biz_model=request_model)
-        request.notify_url = f'{ALIPAY_CALLBACK_HOST.value.rstrip("/")}/api/v1/credit/callback/alipay'
+        request.notify_url = f'{_cfg("credit.alipay.callback_host", ALIPAY_CALLBACK_HOST).rstrip("/")}/api/v1/credit/callback/alipay'
         # do request
         try:
             response_content = self._client.execute(request)

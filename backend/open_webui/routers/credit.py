@@ -14,7 +14,12 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_webui.config import EZFP_CALLBACK_HOST, ALIPAY_APP_ID
+from open_webui.config import (
+    ALIPAY_APP_ID,
+    CREDIT_EXCHANGE_RATIO,
+    EZFP_CALLBACK_HOST,
+    EZFP_PAY_PRIORITY,
+)
 from open_webui.env import (
     GLOBAL_LOG_LEVEL,
     REDIS_URL,
@@ -33,6 +38,7 @@ from open_webui.models.credits import (
     RedemptionCodes,
     RedemptionCodeModel,
 )
+from open_webui.models.config import Config
 from open_webui.models.models import ModelForm, Models, ModelPriceForm
 from open_webui.models.users import UserModel, Users
 from open_webui.utils.auth import get_verified_user, get_admin_user
@@ -51,9 +57,10 @@ PAGE_ITEM_COUNT = 30
 
 @router.get('/config')
 async def get_config(request: Request):
+    config = await Config.get_many('credit.exchange.ratio', 'credit.ezfp.pay_priority')
     return {
-        'CREDIT_EXCHANGE_RATIO': request.app.state.config.CREDIT_EXCHANGE_RATIO,
-        'EZFP_PAY_PRIORITY': request.app.state.config.EZFP_PAY_PRIORITY,
+        'CREDIT_EXCHANGE_RATIO': config.get('credit.exchange.ratio', CREDIT_EXCHANGE_RATIO),
+        'EZFP_PAY_PRIORITY': config.get('credit.ezfp.pay_priority', EZFP_PAY_PRIORITY),
     }
 
 
@@ -113,7 +120,7 @@ async def create_ticket(
     request: Request, form_data: dict, user: UserModel = Depends(get_verified_user)
 ) -> TradeTicketModel:
     out_trade_no = f'{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}_{uuid.uuid4().hex}'
-    if form_data['pay_type'] == 'alipay' and ALIPAY_APP_ID.value:
+    if form_data['pay_type'] == 'alipay' and await Config.get('credit.alipay.app_id', ALIPAY_APP_ID):
         detail = await AlipayClient().create_trade(out_trade_no=out_trade_no, amount=form_data['amount'])
     else:
         detail = await ezfp_client.create_trade(
@@ -154,7 +161,7 @@ async def ticket_callback(request: Request) -> str:
 
 @router.get('/callback/redirect', response_class=RedirectResponse)
 async def ticket_callback_redirect() -> RedirectResponse:
-    return RedirectResponse(url=EZFP_CALLBACK_HOST.value, status_code=302)
+    return RedirectResponse(url=await Config.get('credit.ezfp.callback_host', EZFP_CALLBACK_HOST), status_code=302)
 
 
 @router.post('/callback/alipay', response_class=PlainTextResponse)

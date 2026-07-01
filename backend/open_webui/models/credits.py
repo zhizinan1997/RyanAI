@@ -172,10 +172,11 @@ class RedemptionCodeModel(BaseModel):
 
 class CreditsTable:
     def insert_new_credit(self, user_id: str) -> Optional[CreditModel]:
-        from open_webui.config import CREDIT_DEFAULT_CREDIT
+        from open_webui.models.config import Config
 
         try:
-            credit_model = CreditModel(user_id=user_id, credit=Decimal(CREDIT_DEFAULT_CREDIT.value))
+            default_credit = Config.get_sync('credit.default_credit', '0')
+            credit_model = CreditModel(user_id=user_id, credit=Decimal(str(default_credit)))
             with get_db() as db:
                 result = Credit(**credit_model.model_dump())
                 db.add(result)
@@ -305,7 +306,7 @@ class TradeTicketTable:
             return []
 
     def update_credit_by_id(self, id: str, detail: dict) -> None:
-        from open_webui.config import CREDIT_EXCHANGE_RATIO
+        from open_webui.models.config import Config
 
         try:
             with get_db() as db:
@@ -315,7 +316,7 @@ class TradeTicketTable:
                 Credits.add_credit_by_user_id(
                     AddCreditForm(
                         user_id=ticket.user_id,
-                        amount=ticket.amount * Decimal(CREDIT_EXCHANGE_RATIO.value),
+                        amount=ticket.amount * Decimal(str(Config.get_sync('credit.exchange.ratio', '1'))),
                         detail=SetCreditFormDetail(desc='payment success'),
                     )
                 )

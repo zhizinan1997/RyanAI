@@ -14,6 +14,7 @@
 	import { getNotifications } from '$lib/apis/configs';
 	import { getTerminalServers } from '$lib/apis/terminal';
 	import { getUserSettings } from '$lib/apis/users';
+	import { setTextScale } from '$lib/utils/text-scale';
 
 	import { WEBUI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
 	import { compareVersion } from '$lib/utils';
@@ -90,7 +91,7 @@
 		}
 	};
 
-	const setUserSettings = async (cb: () => Promise<void>) => {
+	const setUserSettings = async (cb?: () => Promise<void>) => {
 		let userSettings = await getUserSettings(localStorage.token).catch((error) => {
 			console.error(error);
 			return null;
@@ -108,6 +109,8 @@
 		if (userSettings?.ui) {
 			settings.set(userSettings.ui);
 		}
+
+		setTextScale($settings?.textScale ?? 1);
 
 		if (cb) {
 			await cb();
@@ -210,13 +213,14 @@
 			checkLocalDBChats(),
 			setNotifications().catch((e) => console.error('Failed to load notifications:', e)),
 			setTools().catch((e) => console.error('Failed to load tools:', e)),
-			setUserSettings(async () => {
-				await Promise.all([
-					setModels().catch((e) => console.error('Failed to load models:', e)),
-					setToolServers().catch((e) => console.error('Failed to load tool servers:', e))
-				]);
-			}).catch((e) => console.error('Failed to load user settings:', e))
+			setUserSettings().catch((e) => console.error('Failed to load user settings:', e))
 		]);
+
+		// Load models and tool servers in the background — don't block page render.
+		// These contact external services (Ollama, OpenAI, tool servers, terminal
+		// servers) that may be slow or unreachable.
+		setModels().catch((e) => console.error('Failed to load models:', e));
+		setToolServers().catch((e) => console.error('Failed to load tool servers:', e));
 
 		// Helper function to check if the pressed keys match the shortcut definition
 		const isShortcutMatch = (event: KeyboardEvent, shortcut): boolean => {
