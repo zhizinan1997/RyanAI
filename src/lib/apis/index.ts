@@ -1792,6 +1792,33 @@ export const deleteEventWebhook = async (token: string, id: string) => {
 	return res;
 };
 
+const DEFAULT_EVENT_WEBHOOK_ID = 'default';
+
+export const getWebhookUrl = async (token: string): Promise<string> => {
+	const webhooks = await getEventWebhooks(token);
+	return webhooks.find((webhook) => webhook.id === DEFAULT_EVENT_WEBHOOK_ID)?.url ?? '';
+};
+
+export const updateWebhookUrl = async (token: string, url: string): Promise<string> => {
+	const webhooks = await getEventWebhooks(token).catch(() => []);
+	const existing = webhooks.find((webhook) => webhook.id === DEFAULT_EVENT_WEBHOOK_ID);
+	const webhook = {
+		...(existing ?? {}),
+		id: DEFAULT_EVENT_WEBHOOK_ID,
+		name: existing?.name ?? 'Default webhook',
+		url,
+		enabled: existing?.enabled ?? true,
+		events: existing?.events?.length ? existing.events : ['*'],
+		targets: existing?.targets ?? null
+	};
+
+	const result = existing
+		? await updateEventWebhook(token, DEFAULT_EVENT_WEBHOOK_ID, webhook)
+		: await createEventWebhook(token, webhook);
+
+	return result?.url ?? '';
+};
+
 export interface ModelConfig {
 	id: string;
 	name: string;
