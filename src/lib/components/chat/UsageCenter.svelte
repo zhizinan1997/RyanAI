@@ -1,24 +1,4 @@
-<script lang="ts">
-	import { getContext, onDestroy, onMount } from 'svelte';
-	import type { Writable } from 'svelte/store';
-	import type { i18n as i18nType } from 'i18next';
-	import { toast } from 'svelte-sonner';
-
-	import { user } from '$lib/stores';
-	import { getSessionUser } from '$lib/apis/auths';
-	import { getMyUsageSummary } from '$lib/apis/credit';
-	import { checkinLottery, getLotteryConfig } from '$lib/apis/lottery';
-	import { WEBUI_BASE_URL } from '$lib/constants';
-
-	import Calendar from '$lib/components/icons/Calendar.svelte';
-	import CheckCircle from '$lib/components/icons/CheckCircle.svelte';
-	import Gauge from '$lib/components/icons/Gauge.svelte';
-	import Dropdown from '$lib/components/common/Dropdown.svelte';
-	import Spinner from '$lib/components/common/Spinner.svelte';
-	import Tooltip from '$lib/components/common/Tooltip.svelte';
-
-	const i18n: Writable<i18nType> = getContext('i18n');
-
+<script context="module" lang="ts">
 	type UsagePeriodKey = 'day' | 'week' | 'month';
 
 	type UsagePeriod = {
@@ -58,6 +38,42 @@
 		model_leaderboards?: Record<UsagePeriodKey, ModelLeaderboardEntry[]>;
 	};
 
+	type UsageSummaryLoadOptions = {
+		force?: boolean;
+		showSpinner?: boolean;
+	};
+
+	const USAGE_SUMMARY_CACHE_TTL = 60 * 1000;
+	const USAGE_SUMMARY_PREFETCH_DELAY = 600;
+
+	let cachedUsageSummary: UsageSummary | null = null;
+	let cachedUsageSummaryAt = 0;
+	let cachedUsageSummaryToken = '';
+	let usageSummaryRequest: Promise<UsageSummary | null> | null = null;
+	let usageSummaryRequestToken = '';
+</script>
+
+<script lang="ts">
+	import { getContext, onDestroy, onMount } from 'svelte';
+	import type { Writable } from 'svelte/store';
+	import type { i18n as i18nType } from 'i18next';
+	import { toast } from 'svelte-sonner';
+
+	import { user } from '$lib/stores';
+	import { getSessionUser } from '$lib/apis/auths';
+	import { getMyUsageSummary } from '$lib/apis/credit';
+	import { checkinLottery, getLotteryConfig } from '$lib/apis/lottery';
+	import { WEBUI_BASE_URL } from '$lib/constants';
+
+	import Calendar from '$lib/components/icons/Calendar.svelte';
+	import CheckCircle from '$lib/components/icons/CheckCircle.svelte';
+	import Gauge from '$lib/components/icons/Gauge.svelte';
+	import Dropdown from '$lib/components/common/Dropdown.svelte';
+	import Spinner from '$lib/components/common/Spinner.svelte';
+	import Tooltip from '$lib/components/common/Tooltip.svelte';
+
+	const i18n: Writable<i18nType> = getContext('i18n');
+
 	const periodOptions: Array<{ key: UsagePeriodKey; label: string }> = [
 		{ key: 'day', label: 'Today' },
 		{ key: 'week', label: 'This week' },
@@ -72,6 +88,7 @@
 	let checkinEnabled = false;
 	let checkedInToday = true;
 	let checkinLoading = false;
+	let usagePrefetchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	const numberFormatter = new Intl.NumberFormat(undefined, {
 		maximumFractionDigits: 0
@@ -81,23 +98,80 @@
 		maximumFractionDigits: 6
 	});
 
-	const loadUsageSummary = async () => {
-		if (!localStorage.token) return;
+	const hasFreshUsageSummary = (token: string) =>
+		!!cachedUsageSummary &&
+		cachedUsageSummaryToken === token &&
+		Date.now() - cachedUsageSummaryAt < USAGE_SUMMARY_CACHE_TTL;
 
-		loading = true;
-		error = '';
-
-		const res = await getMyUsageSummary(localStorage.token).catch((err) => {
-			console.error('Failed to load usage summary:', err);
-			error = `${err}`;
+	const loadUsageSummary = async ({
+		force = false,
+		showSpinner = true
+	}: UsageSummaryLoadOptions = {}) => {
+		const token = localStorage.token;
+		if (!token) {
+			summary = null;
 			return null;
-		});
-
-		if (res) {
-			summary = res;
 		}
 
-		loading = false;
+		if (!force && hasFreshUsageSummary(token)) {
+			summary = cachedUsageSummary;
+			error = '';
+			return summary;
+		}
+
+		if (usageSummaryRequest && usageSummaryRequestToken === token) {
+			if (showSpinner && !summary) {
+				loading = true;
+			}
+			const res = await usageSummaryRequest;
+			if (res) {
+				summary = res;
+				error = '';
+			}
+			loading = false;
+			return res;
+		}
+
+		if (showSpinner) {
+			loading = true;
+		}
+		if (!summary) {
+			error = '';
+		}
+
+		const requestToken = token;
+		usageSummaryRequestToken = requestToken;
+		const request = getMyUsageSummary(requestToken)
+			.then((res) => {
+				if (!res) {
+					return null;
+				}
+				cachedUsageSummary = res;
+				cachedUsageSummaryAt = Date.now();
+				cachedUsageSummaryToken = requestToken;
+				if (localStorage.token === requestToken) {
+					summary = res;
+					error = '';
+				}
+				return res;
+			})
+			.catch((err) => {
+				console.error('Failed to load usage summary:', err);
+				if (!summary && localStorage.token === requestToken) {
+					error = `${err}`;
+				}
+				return null;
+			})
+			.finally(() => {
+				if (usageSummaryRequest === request) {
+					usageSummaryRequest = null;
+					usageSummaryRequestToken = '';
+				}
+				loading = false;
+			});
+
+		usageSummaryRequest = request;
+		return usageSummaryRequest;
 	};
 
 	const loadCheckinConfig = async () => {
@@ -134,7 +208,7 @@
 
 		checkedInToday = true;
 		toast.success($i18n.t('Check-in successful, +{{reward}} credit', { reward: res.reward ?? 0 }));
-		await loadUsageSummary();
+		await loadUsageSummary({ force: true });
 
 		const sessionUser = await getSessionUser(localStorage.token).catch(() => null);
 		if (sessionUser) {
@@ -156,6 +230,12 @@
 		logoUrl?.startsWith('/api/') || logoUrl?.startsWith('/static/')
 			? `${WEBUI_BASE_URL}${logoUrl}`
 			: logoUrl || '/favicon.png';
+	const fallbackModelLogo = (event: Event) => {
+		const img = event.currentTarget as HTMLImageElement | null;
+		if (img) {
+			img.src = '/favicon.png';
+		}
+	};
 
 	$: currentPeriod = summary?.periods?.[selectedPeriod] ?? null;
 	$: currentUserLeaderboard = summary?.user_leaderboards?.[selectedPeriod] ?? null;
@@ -174,10 +254,16 @@
 
 	onMount(() => {
 		loadCheckinConfig();
+		usagePrefetchTimeout = setTimeout(() => {
+			loadUsageSummary({ showSpinner: false });
+		}, USAGE_SUMMARY_PREFETCH_DELAY);
 		document.addEventListener('visibilitychange', onVisibilityChange);
 	});
 
 	onDestroy(() => {
+		if (usagePrefetchTimeout) {
+			clearTimeout(usagePrefetchTimeout);
+		}
 		document.removeEventListener('visibilitychange', onVisibilityChange);
 	});
 </script>
@@ -187,10 +273,10 @@
 	align="end"
 	side="bottom"
 	sideOffset={6}
-	contentClass="w-[min(440px,calc(100vw-2rem))] rounded-xl border border-gray-100 dark:border-gray-850 bg-white dark:bg-gray-900 shadow-xl p-2"
+	contentClass="w-[min(440px,calc(100vw-2rem))] max-h-[var(--dropdown-available-height)] overflow-y-auto overscroll-contain scrollbar-hidden rounded-xl border border-gray-100 dark:border-gray-850 bg-white dark:bg-gray-900 shadow-xl p-2"
 	onOpenChange={(state) => {
 		if (state) {
-			loadUsageSummary();
+			loadUsageSummary({ showSpinner: !summary });
 			loadCheckinConfig();
 		}
 	}}
@@ -380,7 +466,7 @@
 						{/each}
 
 						{#if showCurrentUserLeaderboardEntry && currentUserLeaderboardEntry}
-							<div class="my-1 border-t border-gray-100 dark:border-gray-850" />
+							<div class="my-1 border-t border-gray-100 dark:border-gray-850"></div>
 							<div
 								class="grid grid-cols-[2.5rem_minmax(0,1fr)_4.25rem_5rem] gap-2 rounded-md bg-gray-100 px-1.5 py-1.5 text-xs text-gray-900 dark:bg-gray-800 dark:text-gray-50"
 							>
@@ -440,9 +526,7 @@
 										alt={entry.model_name}
 										class="size-5 shrink-0 rounded-full object-cover"
 										loading="lazy"
-										on:error={(e) => {
-											e.currentTarget.src = '/favicon.png';
-										}}
+										on:error={fallbackModelLogo}
 									/>
 									<span class="truncate">{entry.model_name}</span>
 								</div>

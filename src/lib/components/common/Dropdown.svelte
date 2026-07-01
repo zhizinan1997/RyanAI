@@ -64,6 +64,7 @@
 	function positionContent() {
 		if (!triggerEl || !contentEl) return;
 		const rect = triggerEl.getBoundingClientRect();
+		const viewportPadding = 16;
 
 		contentEl.style.position = 'fixed';
 		contentEl.style.zIndex = '9999';
@@ -71,6 +72,8 @@
 		const contentHeight = contentEl.offsetHeight || 0;
 		const spaceBelow = window.innerHeight - rect.bottom - sideOffset;
 		const spaceAbove = rect.top - sideOffset;
+		const availableBelow = Math.max(80, spaceBelow - viewportPadding);
+		const availableAbove = Math.max(80, spaceAbove - viewportPadding);
 
 		// Auto-flip: prefer the requested side, but flip if not enough space
 		let openAbove = side === 'top';
@@ -79,6 +82,11 @@
 		} else if (side === 'top' && spaceAbove < contentHeight && spaceBelow > spaceAbove) {
 			openAbove = false;
 		}
+
+		contentEl.style.setProperty(
+			'--dropdown-available-height',
+			`${openAbove ? availableAbove : availableBelow}px`
+		);
 
 		if (openAbove) {
 			contentEl.style.bottom = `${window.innerHeight - rect.top + sideOffset}px`;
