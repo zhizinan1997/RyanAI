@@ -25,6 +25,8 @@ Brotli==1.2.0
 brotlicffi==1.2.0.1
 httpx[socks,http2,zstd,cli,brotli]==0.28.1
 starsessions[redis]==2.2.1
+jsonpath-ng==1.7.0
+alipay-sdk-python==3.7.1160
 
 sqlalchemy==2.0.50
 aiosqlite==0.22.1

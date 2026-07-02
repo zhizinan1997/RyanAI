@@ -11,6 +11,13 @@ from open_webui.config import BannerModel
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
+from open_webui.models.notifications import (
+    NotificationForm,
+    NotificationListResponse,
+    NotificationModel,
+    Notifications,
+    NotificationUpdateForm,
+)
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import get_custom_headers
@@ -892,3 +899,63 @@ async def get_banners(
     user=Depends(get_verified_user),
 ):
     return await Config.get('ui.banners')
+
+
+############################
+# Notifications
+############################
+
+
+@router.get('/notifications', response_model=NotificationListResponse)
+async def get_notifications(
+    request: Request,
+    page: int = 1,
+    limit: int = 5,
+    include_inactive: bool = True,
+    user=Depends(get_verified_user),
+):
+    return await Notifications.get_notifications(
+        page=page,
+        limit=limit,
+        include_inactive=include_inactive and user.role == 'admin',
+    )
+
+
+@router.post('/notifications', response_model=NotificationModel)
+async def create_notification(
+    request: Request,
+    form_data: NotificationForm,
+    user=Depends(get_admin_user),
+):
+    notification = await Notifications.insert_new_notification(form_data)
+    await publish_event(
+        request,
+        EVENTS.CONFIG_NOTIFICATIONS_UPDATED,
+        actor=user,
+        subject_id=notification.id,
+        subject_type='notification',
+        data={'action': 'created', 'active': notification.active},
+    )
+    return notification
+
+
+@router.patch('/notifications/{id}', response_model=NotificationModel)
+async def update_notification(
+    request: Request,
+    id: str,
+    form_data: NotificationUpdateForm,
+    user=Depends(get_admin_user),
+):
+    notification = await Notifications.update_notification_by_id(id, form_data)
+    if notification is None:
+        raise HTTPException(status_code=404, detail='Notification not found')
+
+    await publish_event(
+        request,
+        EVENTS.CONFIG_NOTIFICATIONS_UPDATED,
+        actor=user,
+        subject_id=notification.id,
+        subject_type='notification',
+        data={'action': 'updated', 'active': notification.active},
+    )
+    return notification

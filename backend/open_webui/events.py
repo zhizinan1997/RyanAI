@@ -91,6 +91,11 @@ class EventDefinitions(BaseModel):
     CONFIG_BANNERS_UPDATED: EventDefinition = EventDefinition(
         name='config.banners.updated', description='Banner configuration was updated.', message='Config Banners updated'
     )
+    CONFIG_NOTIFICATIONS_UPDATED: EventDefinition = EventDefinition(
+        name='config.notifications.updated',
+        description='Notification configuration was updated.',
+        message='Config Notifications updated',
+    )
     CONFIG_SUGGESTIONS_UPDATED: EventDefinition = EventDefinition(
         name='config.suggestions.updated',
         description='Suggestion configuration was updated.',
