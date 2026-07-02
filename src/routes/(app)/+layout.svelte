@@ -213,13 +213,12 @@
 			checkLocalDBChats(),
 			setNotifications().catch((e) => console.error('Failed to load notifications:', e)),
 			setTools().catch((e) => console.error('Failed to load tools:', e)),
-			setUserSettings().catch((e) => console.error('Failed to load user settings:', e))
+			setUserSettings(async () => {
+				await setModels().catch((e) => console.error('Failed to load models:', e));
+			}).catch((e) => console.error('Failed to load user settings:', e))
 		]);
 
-		// Load models and tool servers in the background — don't block page render.
-		// These contact external services (Ollama, OpenAI, tool servers, terminal
-		// servers) that may be slow or unreachable.
-		setModels().catch((e) => console.error('Failed to load models:', e));
+		// Tool servers can be slow or unreachable; they are not needed to initialize chat.
 		setToolServers().catch((e) => console.error('Failed to load tool servers:', e));
 
 		// Helper function to check if the pressed keys match the shortcut definition
