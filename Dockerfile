@@ -150,7 +150,7 @@ ENV UV_LINK_MODE=copy \
 
 # Keep non-CUDA images on CPU wheels; default PyPI can pull multi-GB CUDA runtime deps on amd64.
 RUN set -e; \
-    pip3 install --no-cache-dir uv; \
+    pip3 install --no-cache-dir --index-url https://pypi.org/simple uv; \
     if [ "$USE_CUDA" = "true" ]; then \
     # Do not preload Hugging Face models; RyanAI deployments use external embedding APIs.
     # fix: pin torch<=2.9.1 - torch 2.10.0 aarch64 wheels cause SIGILL on ARM devices (RPi 4 Cortex-A72) #21349
