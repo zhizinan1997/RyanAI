@@ -148,6 +148,7 @@ ENV UV_LINK_MODE=copy \
     PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 
+# Keep non-CUDA images on CPU wheels; default PyPI can pull multi-GB CUDA runtime deps on amd64.
 RUN set -e; \
     pip3 install --no-cache-dir uv; \
     if [ "$USE_CUDA" = "true" ]; then \
@@ -158,7 +159,7 @@ RUN set -e; \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
     python -c "import nltk; nltk.download('punkt_tab')"; \
     else \
-    pip3 install 'torch<=2.9.1' torchvision torchaudio --no-cache-dir; \
+    pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
     if [ "$USE_SLIM" != "true" ]; then \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
