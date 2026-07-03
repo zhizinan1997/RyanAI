@@ -538,7 +538,10 @@
 	const chatEventHandler = async (event, cb) => {
 		console.log(event);
 
-		if (event.chat_id === $chatId) {
+		const isCurrentChatEvent =
+			event.chat_id === $chatId || (event.message_id && history.messages[event.message_id]);
+
+		if (isCurrentChatEvent) {
 			await tick();
 			let message = history.messages[event.message_id];
 
@@ -588,6 +591,8 @@
 					message.error = data.error;
 				} else if (type === 'chat:message:follow_ups') {
 					message.followUps = data.follow_ups;
+					message.done = true;
+					taskIds = null;
 
 					if (autoScroll) {
 						scrollToBottom('smooth');
@@ -1612,11 +1617,16 @@
 	const chatCompletedHandler = async (_chatId, modelId, responseMessageId, messages) => {
 		// Backend handles outlet filters and persistence inline.
 		// Just refresh the sidebar chat list.
-		if ($chatId == _chatId && !$temporaryChatEnabled) {
-			currentChatPage.set(1);
-			await chats.set(await getChatList(localStorage.token, $currentChatPage));
+		try {
+			if ($chatId == _chatId && !$temporaryChatEnabled) {
+				currentChatPage.set(1);
+				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+			}
+		} catch (error) {
+			console.error('chatCompletedHandler', error);
+		} finally {
+			taskIds = null;
 		}
-		taskIds = null;
 	};
 
 	const chatActionHandler = async (_chatId, actionId, modelId, responseMessageId, event = null) => {
@@ -1919,6 +1929,7 @@
 
 		if (done) {
 			message.done = true;
+			taskIds = null;
 
 			if ($settings.responseAutoCopy) {
 				copyToClipboard(message.content);
@@ -2587,10 +2598,13 @@
 			} else {
 				// Backend returns task_ids (multi-model) or task_id (single model)
 				const newTaskIds = res.task_ids ?? (res.task_id ? [res.task_id] : []);
-				if (taskIds) {
-					taskIds.push(...newTaskIds);
-				} else {
-					taskIds = newTaskIds;
+				if (newTaskIds.length > 0) {
+					const currentResponseMessage = history.messages[responseMessageId];
+					if (currentResponseMessage?.done === true) {
+						taskIds = null;
+					} else {
+						taskIds = taskIds ? [...taskIds, ...newTaskIds] : newTaskIds;
+					}
 				}
 
 				// Backend returns chat_id for new chats — set store + URL.

@@ -15,6 +15,7 @@
 
 	import { deleteModel, getOllamaVersion, pullModel } from '$lib/apis/ollama';
 	import { unloadModel } from '$lib/apis';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import {
 		user,
@@ -38,6 +39,16 @@
 
 	import ModelItem from './ModelItem.svelte';
 
+	type SelectorItem = {
+		label: string;
+		value: string;
+		// Model objects can include provider-specific UI metadata.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		model: any;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		[key: string]: any;
+	};
+
 	const i18n = getContext('i18n');
 	const dispatch = createEventDispatcher();
 
@@ -50,13 +61,7 @@
 	export let selectionOnly = false;
 	export let includeHidden = false;
 
-	export let items: {
-		label: string;
-		value: string;
-		model: Model;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		[key: string]: any;
-	}[] = [];
+	export let items: SelectorItem[] = [];
 
 	export let className = 'w-[32rem]';
 	export let triggerClassName = 'text-lg';
@@ -126,8 +131,8 @@
 
 	let tags = [];
 
-	let selectedModel = '';
-	$: selectedModel = items.find((item) => item.value === value) ?? '';
+	let selectedModel: SelectorItem | undefined;
+	$: selectedModel = items.find((item) => item.value === value);
 
 	let searchValue = '';
 
@@ -534,11 +539,22 @@
 				);
 			}}
 		>
-			{#if selectedModel}
-				{selectedModel.label}
-			{:else}
-				{placeholder}
-			{/if}
+			<span class="flex min-w-0 items-center gap-2">
+				{#if selectedModel}
+					<img
+						src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${selectedModel.model.id}&lang=${$i18n.language}`}
+						alt={$i18n.t('{{modelName}} profile image', { modelName: selectedModel.label })}
+						class="size-5 shrink-0 rounded-full"
+						draggable="false"
+						on:error={(e) => {
+							(e.currentTarget as HTMLImageElement).src = '/favicon.png';
+						}}
+					/>
+					<span class="truncate">{selectedModel.label}</span>
+				{:else}
+					<span class="truncate">{placeholder}</span>
+				{/if}
+			</span>
 			<ChevronDown className=" self-center ml-2 size-3" strokeWidth="2.5" />
 		</div>
 	</button>

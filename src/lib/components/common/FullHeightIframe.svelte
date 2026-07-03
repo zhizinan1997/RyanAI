@@ -10,7 +10,7 @@
 
 	export let iframeClassName = 'w-full rounded-2xl';
 
-	export let args = null;
+	export let args: string | null = null;
 
 	export let allowScripts = true;
 	export let allowForms = false;
@@ -23,7 +23,7 @@
 		'strict-origin-when-cross-origin';
 	export let allowFullscreen = true;
 
-	export let payload = null; // payload to send into the iframe on request
+	export let payload: unknown = null; // payload to send into the iframe on request
 
 	let iframe: HTMLIFrameElement | null = null;
 	let iframeSrc: string | null = null;
@@ -201,9 +201,9 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 		width="100%"
 		frameborder="0"
 		{sandbox}
-		{allowFullscreen}
+		allowfullscreen={allowFullscreen}
 		on:load={onLoad}
-	/>
+	></iframe>
 {:else if iframeSrc}
 	<iframe
 		bind:this={iframe}
@@ -215,7 +215,7 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 		frameborder="0"
 		{sandbox}
 		referrerpolicy={referrerPolicy}
-		{allowFullscreen}
+		allowfullscreen={allowFullscreen}
 		on:load={onLoad}
-	/>
+	></iframe>
 {/if}

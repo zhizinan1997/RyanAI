@@ -155,7 +155,7 @@
 			type="button"
 		>
 			<div class=" m-auto self-center">
-				<AppNotification className=" size-5.5" strokeWidth="1.8" />
+				<AppNotification className="size-5" strokeWidth="1.45" />
 			</div>
 			{#if unreadCount > 0}
 				<div

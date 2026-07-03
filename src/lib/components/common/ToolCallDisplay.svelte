@@ -3,7 +3,9 @@
 	import { v4 as uuidv4 } from 'uuid';
 
 	import { getContext } from 'svelte';
-	const i18n = getContext('i18n');
+	import type { Writable } from 'svelte/store';
+	import type { i18n as I18nType } from 'i18next';
+	const i18n = getContext<Writable<I18nType>>('i18n');
 
 	import { slide } from 'svelte/transition';
 	import { quintOut } from 'svelte/easing';
@@ -35,6 +37,43 @@
 	export let className = '';
 
 	const RESULT_PREVIEW_LIMIT = 10000;
+	const TOOL_NAME_LABELS: Record<string, string> = {
+		add_memory: 'Add Memory',
+		update_memory: 'Update Memory',
+		replace_memory_content: 'Replace Memory Content',
+		delete_memory: 'Delete Memory',
+		list_memories: 'List Memories',
+		search_memories: 'Search Memories',
+		list_memory_paths: 'List Memory Paths',
+		read_memory_path: 'Read Memory Path'
+	};
+	const TOOL_FIELD_LABELS: Record<string, string> = {
+		action: 'Action',
+		content: 'Content',
+		count: 'Count',
+		created_at: 'Created At',
+		error: 'Error',
+		id: 'ID',
+		include_children: 'Include Children',
+		memory_id: 'Memory ID',
+		message: 'Message',
+		operations: 'Operations',
+		path: 'Path',
+		query: 'Query',
+		status: 'Status',
+		type: 'Type',
+		updated_at: 'Updated At'
+	};
+	const TOOL_VALUE_LABELS: Record<string, string> = {
+		add: 'Add',
+		all: 'All',
+		context: 'Context',
+		move: 'Move',
+		remove: 'Remove',
+		replace: 'Replace',
+		success: 'Success',
+		user: 'User'
+	};
 	let expandedResult = false;
 
 	$: if (!open) expandedResult = false;
@@ -84,6 +123,54 @@
 		}
 	}
 
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === 'object' && value !== null && !Array.isArray(value);
+	}
+
+	function getToolFieldLabel(key: string) {
+		return $i18n.t(TOOL_FIELD_LABELS[key] ?? key);
+	}
+
+	function localizeToolValue(value: unknown): unknown {
+		if (Array.isArray(value)) {
+			return value.map((item) => localizeToolValue(item));
+		}
+
+		if (isRecord(value)) {
+			return Object.fromEntries(
+				Object.entries(value).map(([key, nestedValue]) => [
+					getToolFieldLabel(key),
+					localizeToolValue(nestedValue)
+				])
+			);
+		}
+
+		if (typeof value === 'string') {
+			const valueLabel = TOOL_VALUE_LABELS[value];
+			return valueLabel ? $i18n.t(valueLabel) : value;
+		}
+
+		if (typeof value === 'boolean') {
+			return $i18n.t(value ? 'Yes' : 'No');
+		}
+
+		return value;
+	}
+
+	function formatToolValue(value: unknown) {
+		const localizedValue = localizeToolValue(value);
+
+		if (isRecord(localizedValue) || Array.isArray(localizedValue)) {
+			return JSON.stringify(localizedValue);
+		}
+
+		if (localizedValue === null || localizedValue === undefined) {
+			return '';
+		}
+
+		return String(localizedValue);
+	}
+
 	export let resultContent: string = '';
 
 	$: result = resultContent || decode(attributes?.result ?? '');
@@ -96,6 +183,7 @@
 
 	$: parsedArgs = parseArguments(args);
 	$: parsedResult = parseJSONString(result);
+	$: toolDisplayName = $i18n.t(TOOL_NAME_LABELS[attributes?.name ?? ''] ?? attributes?.name ?? '');
 </script>
 
 <div {id} class={className}>
@@ -103,7 +191,7 @@
 		<!-- Embed Mode: Show iframes without collapsible behavior -->
 		<div class="py-1 w-full cursor-pointer">
 			<div class="w-full text-xs text-gray-500">
-				{attributes.name}
+				{toolDisplayName}
 			</div>
 			{#each embeds as embed, idx}
 				<div class="my-2" id={`${componentId}-tool-call-embed-${idx}`}>
@@ -150,21 +238,21 @@
 				<!-- Label -->
 				<div class="flex-1 line-clamp-1">
 					<!-- Short label (below md) -->
-					<span class="@md:hidden text-black dark:text-white">{attributes.name}</span>
+					<span class="@md:hidden text-black dark:text-white">{toolDisplayName}</span>
 					<!-- Full label (md and above) -->
 					<span class="hidden @md:inline font-normal">
 						{#if isDone}
 							<Markdown
 								id={`${componentId}-tool-call-title`}
 								content={$i18n.t('View Result from **{{NAME}}**', {
-									NAME: attributes.name
+									NAME: toolDisplayName
 								})}
 							/>
 						{:else}
 							<Markdown
 								id={`${componentId}-tool-call-executing`}
 								content={$i18n.t('Executing **{{NAME}}**...', {
-									NAME: attributes.name
+									NAME: toolDisplayName
 								})}
 							/>
 						{/if}
@@ -199,10 +287,10 @@
 									{#each Object.entries(parsedArgs) as [key, value]}
 										<div class="flex gap-2 text-xs py-0.5">
 											<span class="font-medium text-gray-600 dark:text-gray-400 shrink-0"
-												>{key}</span
+												>{getToolFieldLabel(key)}</span
 											>
 											<span class="text-gray-800 dark:text-gray-200 break-all"
-												>{typeof value === 'object' ? JSON.stringify(value) : value}</span
+												>{formatToolValue(value)}</span
 											>
 										</div>
 									{/each}
@@ -230,7 +318,7 @@
 								{#if typeof parsedResult === 'object' && parsedResult !== null}
 									<pre
 										class="text-xs text-gray-600 dark:text-gray-300 whitespace-pre font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-2.5 overflow-x-auto">{JSON.stringify(
-											parsedResult,
+											localizeToolValue(parsedResult),
 											null,
 											2
 										)}</pre>

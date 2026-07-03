@@ -288,7 +288,7 @@
 			type="button"
 		>
 			<div class="m-auto self-center">
-				<Gauge className="size-5.5" strokeWidth="1.8" />
+				<Gauge className="size-5" strokeWidth="1.45" />
 			</div>
 			{#if showCheckinBadge}
 				<div
