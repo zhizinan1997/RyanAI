@@ -1493,9 +1493,9 @@
 
 						<div
 							id="message-input-container"
-							class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border {$temporaryChatEnabled
-								? 'border-dashed border-gray-100 dark:border-gray-800 hover:border-gray-200 focus-within:border-gray-200 hover:dark:border-gray-700 focus-within:dark:border-gray-700'
-								: ' border-gray-100/30 dark:border-gray-850/30 hover:border-gray-200 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800'}  transition px-1 bg-white/5 dark:bg-gray-500/5 backdrop-blur-sm dark:text-gray-100"
+							class="flex-1 flex flex-col relative w-full rounded-[2rem] border {$temporaryChatEnabled
+								? 'border-dashed border-gray-200 dark:border-gray-800 hover:border-gray-300 focus-within:border-gray-300 hover:dark:border-gray-700 focus-within:dark:border-gray-700'
+								: 'border-gray-200/80 dark:border-gray-800 hover:border-gray-300 focus-within:border-gray-300 hover:dark:border-gray-700 focus-within:dark:border-gray-700'} transition bg-white dark:bg-gray-900 dark:text-gray-100 shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
 							dir={$settings?.chatDirection ?? 'auto'}
 						>
 							{#if atSelectedModel !== undefined}
@@ -1620,14 +1620,9 @@
 								</div>
 							{/if}
 
-							<div class="px-2.5">
+							<div class="pl-12 pr-28 sm:pr-36">
 								<div
-									class="scrollbar-hidden rtl:text-right ltr:text-left bg-transparent dark:text-gray-100 outline-hidden w-full pb-1 px-1 resize-none h-fit max-h-96 overflow-auto {files.length ===
-									0
-										? atSelectedModel !== undefined
-											? 'pt-1.5'
-											: 'pt-2.5'
-										: ''}"
+									class="scrollbar-none rtl:text-right ltr:text-left bg-transparent dark:text-gray-100 outline-hidden w-full py-3 px-1 resize-none h-fit min-h-11 max-h-72 overflow-auto"
 									id="chat-input-container"
 								>
 									{#if prompt.split('\n').length > 2}
@@ -1816,8 +1811,11 @@
 								</div>
 							</div>
 
-							<div class=" flex justify-between mt-0.5 mb-2.5 mx-0.5 max-w-full" dir="ltr">
-								<div class="ml-1 self-end flex items-center flex-1 min-w-0">
+							<div
+								class="absolute inset-x-2 bottom-3 flex justify-between max-w-full pointer-events-none"
+								dir="ltr"
+							>
+								<div class="self-end flex items-center min-w-0 pointer-events-auto">
 									<InputMenu
 										bind:files
 										selectedModels={selectedModelIds}
@@ -1869,24 +1867,139 @@
 											const chatInput = document.getElementById('chat-input');
 											chatInput?.focus();
 										}}
-									>
-										<button
-											type="button"
-											id="input-menu-button"
-											class="bg-transparent hover:bg-gray-100 text-gray-700 dark:text-white dark:hover:bg-gray-800 rounded-full size-8 flex justify-center items-center outline-hidden focus:outline-hidden shrink-0"
-											aria-label={$i18n.t('More')}
 										>
-											<PlusAlt className="size-5.5" />
-										</button>
-									</InputMenu>
+											<button
+												type="button"
+												id="input-menu-button"
+												class="bg-transparent hover:bg-gray-100 text-gray-800 dark:text-white dark:hover:bg-gray-800 rounded-full size-9 flex justify-center items-center outline-hidden focus:outline-hidden shrink-0"
+												aria-label={$i18n.t('More')}
+											>
+												<PlusAlt className="size-5.5" />
+											</button>
 
-									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
-										<div
-											class="flex self-center w-[1px] h-4 mx-1 bg-gray-200/50 dark:bg-gray-800/50 shrink-0"
-										/>
-									{/if}
+											<svelte:fragment slot="extension-items">
+												{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
+													<div class="my-1 border-t border-gray-100 dark:border-gray-800" />
 
-									<div class="flex flex-1 items-center min-w-0 overflow-x-auto scrollbar-none">
+													<IntegrationsMenu
+														selectedModels={selectedModelIds}
+														{toggleFilters}
+														{showWebSearchButton}
+														{showImageGenerationButton}
+														{showCodeInterpreterButton}
+														bind:selectedToolIds
+														bind:selectedSkillIds
+														bind:selectedFilterIds
+														bind:webSearchEnabled
+														bind:imageGenerationEnabled
+														bind:codeInterpreterEnabled
+														{onWebSearchToggle}
+														closeOnOutsideClick={integrationsMenuCloseOnOutsideClick}
+														onShowValves={(e) => {
+															const { type, id } = e;
+															selectedValvesType = type;
+															selectedValvesItemId = id;
+															showValvesModal = true;
+															integrationsMenuCloseOnOutsideClick = false;
+														}}
+														onClose={async () => {
+															await tick();
+
+															const chatInput = document.getElementById('chat-input');
+															chatInput?.focus();
+														}}
+													>
+														<button
+															type="button"
+															id="integration-menu-button"
+															class="flex w-full gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl"
+														>
+															<Component className="size-4.5" strokeWidth="1.5" />
+
+															<div class="flex items-center w-full justify-between">
+																<div class="line-clamp-1">{$i18n.t('Integrations')}</div>
+																<div class="text-gray-500">
+																	<ChevronDown className="-rotate-90 size-3.5" strokeWidth="2" />
+																</div>
+															</div>
+														</button>
+													</IntegrationsMenu>
+												{/if}
+
+												{#if selectedModelIds.length === 1 && $models.find((m) => m.id === selectedModelIds[0])?.has_user_valves}
+													<button
+														type="button"
+														id="model-valves-button"
+														class="flex w-full gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl"
+														on:click={() => {
+															selectedValvesType = 'function';
+															selectedValvesItemId = selectedModelIds[0]?.split('.')[0];
+															showValvesModal = true;
+														}}
+													>
+														<Knobs className="size-4" strokeWidth="1.5" />
+														<div class="line-clamp-1">{$i18n.t('Valves')}</div>
+													</button>
+												{/if}
+
+												{#if !history?.currentId || history.messages[history.currentId]?.done == true}
+													{@const hasDirectToolServerAccess =
+														$_user?.role === 'admin' ||
+														($_user?.permissions?.features?.direct_tool_servers ?? true)}
+													{#if terminalCapableModels.length > 0 && (($terminalServers ?? []).some((t) => t.id) || (hasDirectToolServerAccess && (($terminalServers ?? []).some((t) => !t.id) || ($settings?.terminalServers ?? []).some((s) => s.url))))}
+														<TerminalMenu bind:show={showTerminalMenu} let:selected let:selectedLabel>
+															<button
+																type="button"
+																class="flex w-full gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl"
+															>
+																<Terminal className="size-3.5" strokeWidth="1.75" />
+
+																<div class="flex items-center w-full justify-between min-w-0">
+																	<div class="line-clamp-1">
+																		{$i18n.t('Terminal')}
+																		{#if selected}
+																			<span class="ml-1 text-gray-500">{selectedLabel}</span>
+																		{/if}
+																	</div>
+																	<div class="text-gray-500">
+																		<ChevronDown className="-rotate-90 size-3.5" strokeWidth="2" />
+																	</div>
+																</div>
+															</button>
+														</TerminalMenu>
+													{/if}
+												{/if}
+
+												{#if prompt !== '' && !history?.currentId && !$selectedTerminalId && ($config?.features?.enable_notes ?? false) && ($_user?.role === 'admin' || ($_user?.permissions?.features?.notes ?? true))}
+													<button
+														id="create-note-button"
+														class="flex w-full gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl"
+														type="button"
+														disabled={prompt === '' && files.length === 0}
+														on:click={() => {
+															createNote();
+														}}
+													>
+														<Note className="size-4.5 translate-y-[0.5px]" />
+														<div class="line-clamp-1">{$i18n.t('Create note')}</div>
+													</button>
+												{/if}
+
+												{#each pendingOAuthTools as pendingTool (pendingTool.id)}
+													<button
+														on:click|preventDefault={() => {
+															initiateOAuthRedirect(pendingTool);
+														}}
+														type="button"
+														class="flex w-full gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer rounded-xl text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-400/10"
+													>
+														<Wrench className="size-3.5" strokeWidth="1.75" />
+														<span class="truncate">{$i18n.t('Connect')} {pendingTool.name}</span>
+													</button>
+												{/each}
+											</svelte:fragment>
+										</InputMenu>
+									<div class="hidden">
 										{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
 											<IntegrationsMenu
 												selectedModels={selectedModelIds}
@@ -2134,7 +2247,7 @@
 									</div>
 								</div>
 
-								<div class="self-end flex space-x-1 mr-1 shrink-0 gap-[0.5px]">
+									<div class="self-end flex space-x-1 shrink-0 gap-[0.5px] pointer-events-auto">
 									{#if isActive && prompt === '' && files.length === 0}
 										<div class=" flex items-center">
 											<Tooltip content={$i18n.t('Stop')}>
@@ -2200,33 +2313,8 @@
 											</Dropdown>
 										{/if}
 
-										{#if prompt !== '' && !history?.currentId && !$selectedTerminalId && ($config?.features?.enable_notes ?? false) && ($_user?.role === 'admin' || ($_user?.permissions?.features?.notes ?? true))}
-											<!-- {$i18n.t('Create Note')}  -->
-											<Tooltip content={$i18n.t('Create note')} className=" flex items-center">
-												<button
-													id="create-note-button"
-													class=" text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition rounded-full p-1.5 -mr-1 self-center"
-													type="button"
-													disabled={prompt === '' && files.length === 0}
-													on:click={() => {
-														createNote();
-													}}
-												>
-													<Note className="size-4.5 translate-y-[0.5px]" />
-												</button>
-											</Tooltip>
-										{/if}
-
-										{#if !history?.currentId || history.messages[history.currentId]?.done == true}
-											<!-- Terminal Server Selector -->
-											{@const hasDirectToolServerAccess =
-												$_user?.role === 'admin' ||
-												($_user?.permissions?.features?.direct_tool_servers ?? true)}
-											{#if terminalCapableModels.length > 0 && (($terminalServers ?? []).some((t) => t.id) || (hasDirectToolServerAccess && (($terminalServers ?? []).some((t) => !t.id) || ($settings?.terminalServers ?? []).some((s) => s.url))))}
-												<TerminalMenu bind:show={showTerminalMenu} />
-											{/if}
-
-											{#if $_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true)}
+											{#if !history?.currentId || history.messages[history.currentId]?.done == true}
+												{#if $_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true)}
 												<!-- {$i18n.t('Record voice')} -->
 												<Tooltip content={$i18n.t('Dictate')}>
 													<button

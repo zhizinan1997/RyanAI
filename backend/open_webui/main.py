@@ -1862,6 +1862,8 @@ async def get_app_config(request: Request):
         'ui.enable_signup',
         'ui.signup_verify.enabled',
         'ui.enable_login_form',
+        'auth.cf_turnstile.enabled',
+        'auth.cf_turnstile.site_key',
         'auth.enable_api_keys',
         'ui.enable_password_change_form',
         'direct.enable',
@@ -1927,6 +1929,11 @@ async def get_app_config(request: Request):
             'enable_signup': config.get('ui.enable_signup'),
             'enable_signup_verify': config.get('ui.signup_verify.enabled'),
             'enable_login_form': config.get('ui.enable_login_form'),
+            'cf_turnstile': {
+                'enabled': bool(config.get('auth.cf_turnstile.enabled'))
+                and bool(config.get('auth.cf_turnstile.site_key')),
+                'site_key': config.get('auth.cf_turnstile.site_key') or '',
+            },
             'enable_websocket': ENABLE_WEBSOCKET_SUPPORT,
             # --- Authenticated: only consumed by logged-in frontend ---
             **(

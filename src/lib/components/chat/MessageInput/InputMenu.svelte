@@ -479,6 +479,8 @@
 							</button>
 						{/if}
 					{/if}
+
+					<slot name="extension-items" />
 				</div>
 			{:else if tab === 'knowledge'}
 				<div in:fly={{ x: 20, duration: 150 }}>

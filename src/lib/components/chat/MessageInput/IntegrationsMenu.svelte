@@ -130,6 +130,10 @@
 
 <Dropdown
 	bind:show
+	side="right"
+	align="end"
+	sideOffset={6}
+	alignOffset={6}
 	onOpenChange={(state) => {
 		if (state === false) {
 			onClose();

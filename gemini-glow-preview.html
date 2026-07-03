@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Glow Preview</title>
+		<style>
+			:root {
+				--glow-opacity: 0.42;
+				--glow-width: 760px;
+				--glow-height: 390px;
+				--glow-blur: 22px;
+				--glow-y: 53%;
+				color-scheme: light;
+				--page-bg-1: rgba(255, 255, 255, 0.96);
+				--page-bg-2: rgba(250, 252, 255, 0.98);
+				--page-fg: #2d2f33;
+				--rail-bg: rgba(255, 255, 255, 0.78);
+				--rail-border: rgba(31, 41, 55, 0.05);
+				--input-bg: rgba(255, 255, 255, 0.94);
+				--input-fg: #3c4043;
+				--input-placeholder: #7b8088;
+				--input-shadow:
+					0 12px 36px rgba(60, 64, 67, 0.12), 0 2px 8px rgba(60, 64, 67, 0.12),
+					inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+				--panel-bg: rgba(255, 255, 255, 0.78);
+				--panel-border: rgba(255, 255, 255, 0.72);
+				--panel-shadow: 0 12px 30px rgba(60, 64, 67, 0.12);
+				--muted: #5f6368;
+				--glow-blue-core: rgba(112, 188, 255, 0.92);
+				--glow-blue-mid: rgba(165, 216, 255, 0.66);
+				--glow-blue-edge: rgba(211, 239, 255, 0.34);
+				--glow-pink: rgba(255, 160, 214, 0.18);
+				--glow-indigo: rgba(119, 155, 255, 0.18);
+				font-family:
+					Inter,
+					'Google Sans',
+					'SF Pro Display',
+					-apple-system,
+					BlinkMacSystemFont,
+					'Segoe UI',
+					sans-serif;
+			}
+
+			:root[data-theme='dark'] {
+				color-scheme: dark;
+				--glow-opacity: 0.34;
+				--page-bg-1: rgba(13, 15, 18, 0.98);
+				--page-bg-2: rgba(20, 23, 30, 0.98);
+				--page-fg: #eef2f7;
+				--rail-bg: rgba(15, 17, 21, 0.72);
+				--rail-border: rgba(255, 255, 255, 0.06);
+				--input-bg: rgba(31, 34, 40, 0.9);
+				--input-fg: #eef2f7;
+				--input-placeholder: #a5adba;
+				--input-shadow:
+					0 16px 42px rgba(0, 0, 0, 0.28), 0 2px 10px rgba(0, 0, 0, 0.2),
+					inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+				--panel-bg: rgba(29, 32, 38, 0.78);
+				--panel-border: rgba(255, 255, 255, 0.1);
+				--panel-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+				--muted: #b7bec9;
+				--glow-blue-core: rgba(87, 171, 255, 0.76);
+				--glow-blue-mid: rgba(88, 143, 255, 0.48);
+				--glow-blue-edge: rgba(70, 104, 190, 0.22);
+				--glow-pink: rgba(255, 119, 211, 0.16);
+				--glow-indigo: rgba(101, 124, 255, 0.18);
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				min-height: 100vh;
+				background: linear-gradient(180deg, var(--page-bg-1), var(--page-bg-2)), var(--page-bg-2);
+				color: var(--page-fg);
+				overflow: hidden;
+			}
+
+			.app {
+				min-height: 100vh;
+				display: grid;
+				grid-template-columns: 56px 1fr;
+			}
+
+			.rail {
+				position: relative;
+				z-index: 5;
+				border-right: 1px solid var(--rail-border);
+				background: var(--rail-bg);
+				backdrop-filter: blur(16px);
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				padding: 18px 0;
+				gap: 18px;
+			}
+
+			.logo {
+				width: 20px;
+				height: 20px;
+				border-radius: 50%;
+				background:
+					linear-gradient(135deg, #ea4335 0 24%, transparent 24%),
+					linear-gradient(225deg, #4285f4 0 31%, transparent 31%),
+					linear-gradient(315deg, #34a853 0 32%, transparent 32%),
+					linear-gradient(45deg, #fbbc04 0 31%, transparent 31%);
+				filter: drop-shadow(0 2px 4px rgba(66, 133, 244, 0.18));
+			}
+
+			.icon-button {
+				width: 28px;
+				height: 28px;
+				border: 0;
+				border-radius: 999px;
+				background: transparent;
+				color: var(--muted);
+				display: grid;
+				place-items: center;
+				cursor: default;
+			}
+
+			.icon-button.active {
+				background: color-mix(in srgb, var(--input-bg) 78%, transparent);
+				color: var(--page-fg);
+			}
+
+			.avatar {
+				margin-top: auto;
+				width: 28px;
+				height: 28px;
+				border-radius: 50%;
+				background:
+					radial-gradient(circle at 36% 32%, #f8d7bf, transparent 34%),
+					linear-gradient(135deg, #30456f, #9cb6cf);
+				box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+			}
+
+			.canvas {
+				position: relative;
+				min-width: 0;
+				min-height: 100vh;
+				display: grid;
+				place-items: center;
+				isolation: isolate;
+			}
+
+			.glow-field {
+				position: absolute;
+				left: 50%;
+				top: var(--glow-y);
+				width: min(var(--glow-width), 84vw);
+				height: var(--glow-height);
+				transform: translate(-50%, -50%);
+				pointer-events: none;
+				z-index: 0;
+				filter: blur(var(--glow-blur));
+				opacity: var(--glow-opacity);
+			}
+
+			.glow-field::before,
+			.glow-field::after {
+				content: '';
+				position: absolute;
+				inset: 0;
+				border-radius: 999px;
+			}
+
+			.glow-field::before {
+				background: radial-gradient(
+					ellipse at 50% 50%,
+					var(--glow-blue-core) 0%,
+					var(--glow-blue-mid) 34%,
+					var(--glow-blue-edge) 56%,
+					rgba(255, 255, 255, 0) 78%
+				);
+			}
+
+			.glow-field::after {
+				inset: -18% -14%;
+				background:
+					radial-gradient(ellipse at 36% 40%, var(--glow-pink), transparent 46%),
+					radial-gradient(ellipse at 68% 48%, var(--glow-indigo), transparent 52%);
+				mix-blend-mode: multiply;
+			}
+
+			:root[data-theme='dark'] .glow-field::after {
+				mix-blend-mode: screen;
+			}
+
+			.stage {
+				position: relative;
+				z-index: 2;
+				width: min(720px, calc(100vw - 112px));
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				transform: translateY(-10px);
+			}
+
+			.greeting {
+				margin: 0 0 30px;
+				font-size: clamp(26px, 3vw, 36px);
+				font-weight: 450;
+				letter-spacing: 0;
+				color: var(--page-fg);
+			}
+
+			.input-shell {
+				width: min(660px, 100%);
+				min-height: 66px;
+				border-radius: 999px;
+				background: var(--input-bg);
+				box-shadow: var(--input-shadow);
+				display: grid;
+				grid-template-columns: 44px 1fr auto auto;
+				align-items: center;
+				gap: 8px;
+				padding: 8px 16px;
+			}
+
+			.prompt {
+				border: 0;
+				outline: 0;
+				background: transparent;
+				color: var(--input-fg);
+				font-size: 16px;
+				line-height: 24px;
+				width: 100%;
+			}
+
+			.prompt::placeholder {
+				color: var(--input-placeholder);
+			}
+
+			.model-chip {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				color: var(--input-fg);
+				font-size: 14px;
+				font-weight: 500;
+				white-space: nowrap;
+				padding-inline: 8px;
+			}
+
+			.mic {
+				width: 36px;
+				height: 36px;
+				border-radius: 999px;
+				border: 0;
+				background: var(--page-fg);
+				color: var(--page-bg-2);
+				display: grid;
+				place-items: center;
+			}
+
+			.controls {
+				position: absolute;
+				right: 28px;
+				bottom: 24px;
+				z-index: 6;
+				width: 260px;
+				border-radius: 18px;
+				padding: 16px;
+				background: var(--panel-bg);
+				box-shadow: var(--panel-shadow);
+				backdrop-filter: blur(18px);
+				border: 1px solid var(--panel-border);
+			}
+
+			.controls h2 {
+				margin: 0 0 12px;
+				font-size: 13px;
+				font-weight: 650;
+				color: var(--page-fg);
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+			}
+
+			.control {
+				display: grid;
+				grid-template-columns: 56px 1fr 54px;
+				align-items: center;
+				gap: 12px;
+				margin-top: 10px;
+				color: var(--muted);
+				font-size: 12px;
+			}
+
+			.value {
+				font-variant-numeric: tabular-nums;
+				text-align: right;
+				color: var(--page-fg);
+			}
+
+			.theme-toggle {
+				border: 1px solid var(--panel-border);
+				border-radius: 999px;
+				background: color-mix(in srgb, var(--input-bg) 78%, transparent);
+				color: var(--page-fg);
+				font: inherit;
+				font-size: 12px;
+				padding: 5px 9px;
+				cursor: pointer;
+			}
+
+			input[type='range'] {
+				width: 100%;
+				accent-color: #4c8df6;
+			}
+
+			@media (max-width: 760px) {
+				.app {
+					grid-template-columns: 1fr;
+				}
+
+				.rail {
+					display: none;
+				}
+
+				.stage {
+					width: calc(100vw - 32px);
+				}
+
+				.input-shell {
+					border-radius: 30px;
+					grid-template-columns: 36px 1fr 36px;
+				}
+
+				.model-chip {
+					display: none;
+				}
+
+				.controls {
+					left: 16px;
+					right: 16px;
+					width: auto;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="app">
+			<aside class="rail" aria-hidden="true">
+				<div class="logo"></div>
+				<button class="icon-button active">✎</button>
+				<button class="icon-button">⌕</button>
+				<button class="icon-button">▣</button>
+				<button class="icon-button">◇</button>
+				<div class="avatar"></div>
+			</aside>
+
+			<main class="canvas">
+				<div class="glow-field" aria-hidden="true"></div>
+
+				<section class="stage" aria-label="输入区预览">
+					<h1 class="greeting">🌤️ 下午好，Ryan</h1>
+					<div class="input-shell">
+						<button class="icon-button">＋</button>
+						<input class="prompt" placeholder="有什么我能帮您的吗？" />
+						<div class="model-chip">极速⌄</div>
+						<button class="mic">◖</button>
+					</div>
+				</section>
+
+				<form class="controls">
+					<h2>
+						<span>背景光晕</span>
+						<button class="theme-toggle" type="button" id="theme-toggle">暗黑</button>
+					</h2>
+					<label class="control">
+						<span>强度</span>
+						<input
+							data-var="--glow-opacity"
+							data-display="percent"
+							type="range"
+							min="0.16"
+							max="0.72"
+							step="0.01"
+							value="0.42"
+						/>
+						<span class="value"></span>
+					</label>
+					<label class="control">
+						<span>宽度</span>
+						<input
+							data-var="--glow-width"
+							data-unit="px"
+							type="range"
+							min="520"
+							max="1040"
+							step="10"
+							value="760"
+						/>
+						<span class="value"></span>
+					</label>
+					<label class="control">
+						<span>高度</span>
+						<input
+							data-var="--glow-height"
+							data-unit="px"
+							type="range"
+							min="260"
+							max="560"
+							step="10"
+							value="390"
+						/>
+						<span class="value"></span>
+					</label>
+					<label class="control">
+						<span>柔化</span>
+						<input
+							data-var="--glow-blur"
+							data-unit="px"
+							type="range"
+							min="0"
+							max="56"
+							step="1"
+							value="22"
+						/>
+						<span class="value"></span>
+					</label>
+				</form>
+			</main>
+		</div>
+
+		<script>
+			const formatValue = (input) => {
+				if (input.dataset.display === 'percent') {
+					return `${Math.round(Number(input.value) * 100)}%`;
+				}
+
+				return `${input.value}${input.dataset.unit ?? ''}`;
+			};
+
+			const updateInput = (input) => {
+				document.documentElement.style.setProperty(
+					input.dataset.var,
+					`${input.value}${input.dataset.unit ?? ''}`
+				);
+				input.closest('.control').querySelector('.value').textContent = formatValue(input);
+			};
+
+			for (const input of document.querySelectorAll('input[type="range"]')) {
+				updateInput(input);
+				input.addEventListener('input', () => {
+					updateInput(input);
+				});
+			}
+
+			const themeToggle = document.getElementById('theme-toggle');
+			themeToggle.addEventListener('click', () => {
+				const isDark = document.documentElement.dataset.theme === 'dark';
+				document.documentElement.dataset.theme = isDark ? 'light' : 'dark';
+				themeToggle.textContent = isDark ? '暗黑' : '明亮';
+			});
+		</script>
+	</body>
+</html>

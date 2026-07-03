@@ -92,19 +92,23 @@
 <div class="flex items-center translate-x-0.5">
 	<Dropdown bind:show align="end">
 		<Tooltip content={$i18n.t('Terminal')} placement="top">
-			<button
-				type="button"
-				class="flex items-center gap-1.5 translate-y-[1px] hover:bg-gray-50 dark:hover:bg-gray-850 text-sm transition rounded-lg cursor-pointer {$selectedTerminalId &&
-				selectedLabel
-					? ' px-2.5 py-1 '
-					: ' p-2 opacity-50'}"
-			>
-				<Cloud className="size-3.5" strokeWidth="2" />
+			{#if $$slots.default}
+				<slot selected={$selectedTerminalId && selectedLabel} {selectedLabel} />
+			{:else}
+				<button
+					type="button"
+					class="flex items-center gap-1.5 translate-y-[1px] hover:bg-gray-50 dark:hover:bg-gray-850 text-sm transition rounded-lg cursor-pointer {$selectedTerminalId &&
+					selectedLabel
+						? ' px-2.5 py-1 '
+						: ' p-2 opacity-50'}"
+				>
+					<Cloud className="size-3.5" strokeWidth="2" />
 
-				{#if $selectedTerminalId && selectedLabel}
-					<span class="truncate text-[13px] max-w-[100px] sm:max-w-[150px]">{selectedLabel}</span>
-				{/if}
-			</button>
+					{#if $selectedTerminalId && selectedLabel}
+						<span class="truncate text-[13px] max-w-[100px] sm:max-w-[150px]">{selectedLabel}</span>
+					{/if}
+				</button>
+			{/if}
 		</Tooltip>
 
 		<div slot="content">

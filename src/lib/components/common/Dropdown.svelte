@@ -5,10 +5,10 @@
 	/** Whether the dropdown is open */
 	export let show = false;
 
-	/** Side to open on: 'bottom' | 'top' */
+	/** Side to open on: 'bottom' | 'top' | 'right' | 'left' */
 	export let side = 'bottom';
 
-	/** Alignment: 'start' | 'end' */
+	/** Alignment: 'start' | 'end'. For left/right side menus, this controls vertical alignment. */
 	export let align = 'start';
 
 	/** Close when clicking outside */
@@ -25,6 +25,9 @@
 
 	/** Side offset in px */
 	export let sideOffset = 4;
+
+	/** Alignment offset in px. For left/right side menus, positive values move the menu down. */
+	export let alignOffset = 0;
 
 	let triggerEl;
 	let contentEl;
@@ -73,10 +76,49 @@
 		contentEl.style.zIndex = '9999';
 
 		const contentHeight = contentEl.offsetHeight || 0;
+		const contentWidth = contentEl.offsetWidth || 0;
 		const spaceBelow = window.innerHeight - rect.bottom - sideOffset;
 		const spaceAbove = rect.top - sideOffset;
+		const spaceRight = window.innerWidth - rect.right - sideOffset;
+		const spaceLeft = rect.left - sideOffset;
 		const availableBelow = Math.max(80, spaceBelow - viewportPadding);
 		const availableAbove = Math.max(80, spaceAbove - viewportPadding);
+		const availableSide = Math.max(80, window.innerHeight - viewportPadding * 2);
+
+		if (side === 'right' || side === 'left') {
+			let openLeft = side === 'left';
+			if (side === 'right' && spaceRight < contentWidth && spaceLeft > spaceRight) {
+				openLeft = true;
+			} else if (side === 'left' && spaceLeft < contentWidth && spaceRight > spaceLeft) {
+				openLeft = false;
+			}
+
+			contentEl.style.setProperty('--dropdown-available-height', `${availableSide}px`);
+
+			if (openLeft) {
+				let right = window.innerWidth - rect.left + sideOffset;
+				if (right + contentWidth + viewportPadding > window.innerWidth) {
+					right = window.innerWidth - contentWidth - viewportPadding;
+				}
+				contentEl.style.right = `${Math.max(viewportPadding, right)}px`;
+				contentEl.style.left = 'auto';
+			} else {
+				let left = rect.right + sideOffset;
+				if (left + contentWidth + viewportPadding > window.innerWidth) {
+					left = window.innerWidth - contentWidth - viewportPadding;
+				}
+				contentEl.style.left = `${Math.max(viewportPadding, left)}px`;
+				contentEl.style.right = 'auto';
+			}
+
+			let top = align === 'end' ? rect.bottom - contentHeight + alignOffset : rect.top + alignOffset;
+			if (top + contentHeight + viewportPadding > window.innerHeight) {
+				top = window.innerHeight - contentHeight - viewportPadding;
+			}
+			contentEl.style.top = `${Math.max(viewportPadding, top)}px`;
+			contentEl.style.bottom = 'auto';
+			return;
+		}
 
 		// Auto-flip: prefer the requested side, but flip if not enough space
 		let openAbove = side === 'top';
@@ -102,7 +144,6 @@
 		if (align === 'end') {
 			let right = window.innerWidth - rect.right;
 			// Shift if overflowing left edge
-			const contentWidth = contentEl.offsetWidth || 0;
 			if (right + contentWidth > window.innerWidth) {
 				right = window.innerWidth - contentWidth - 16;
 			}
@@ -111,7 +152,6 @@
 		} else {
 			let left = rect.left;
 			// Shift if overflowing right edge
-			const contentWidth = contentEl.offsetWidth || 0;
 			if (left + contentWidth + 16 > window.innerWidth) {
 				left = window.innerWidth - contentWidth - 16;
 			}

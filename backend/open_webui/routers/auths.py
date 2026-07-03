@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from ssl import CERT_NONE, CERT_REQUIRED, PROTOCOL_TLS
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientTimeout
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from ldap3 import NONE, Connection, Server, Tls
@@ -98,6 +98,9 @@ ADMIN_CONFIG_KEYS = {
     'ENABLE_SIGNUP': 'ui.enable_signup',
     'ENABLE_SIGNUP_VERIFY': 'ui.signup_verify.enabled',
     'SIGNUP_EMAIL_DOMAIN_WHITELIST': 'ui.signup.email_domain_whitelist',
+    'ENABLE_CF_TURNSTILE': 'auth.cf_turnstile.enabled',
+    'CF_TURNSTILE_SITE_KEY': 'auth.cf_turnstile.site_key',
+    'CF_TURNSTILE_SECRET_KEY': 'auth.cf_turnstile.secret_key',
     'SMTP_HOST': 'ui.smtp.host',
     'SMTP_PORT': 'ui.smtp.port',
     'SMTP_USERNAME': 'ui.smtp.username',
@@ -176,6 +179,59 @@ def delete_splash_notice_media_file(file_name: str | None) -> None:
 async def get_config_values(key_map: dict[str, str]) -> dict:
     values = await Config.get_many(*key_map.values())
     return {field: values[storage_key] for field, storage_key in key_map.items() if storage_key in values}
+
+
+async def verify_cf_turnstile(request: Request, token: str | None) -> None:
+    turnstile_config = await Config.get_many(
+        'auth.cf_turnstile.enabled',
+        'auth.cf_turnstile.secret_key',
+    )
+
+    if not turnstile_config.get('auth.cf_turnstile.enabled'):
+        return
+
+    secret_key = (turnstile_config.get('auth.cf_turnstile.secret_key') or '').strip()
+    if not secret_key:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Cloudflare Turnstile is not configured.',
+        )
+
+    if not token:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Please complete the Cloudflare verification.',
+        )
+
+    payload = {
+        'secret': secret_key,
+        'response': token,
+    }
+    if request.client and request.client.host:
+        payload['remoteip'] = request.client.host
+
+    try:
+        timeout = ClientTimeout(total=10)
+        async with ClientSession(timeout=timeout, trust_env=True) as session:
+            async with session.post(
+                'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+                data=payload,
+                ssl=AIOHTTP_CLIENT_SESSION_SSL,
+            ) as response:
+                result = await response.json()
+    except Exception as e:
+        log.warning(f'Cloudflare Turnstile verification request failed: {e}')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Cloudflare Turnstile verification failed.',
+        )
+
+    if not result.get('success'):
+        log.warning(f'Cloudflare Turnstile verification rejected: {result.get("error-codes")}')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Cloudflare Turnstile verification failed.',
+        )
 
 
 def config_updates(data: dict, key_map: dict[str, str]) -> dict:
@@ -785,6 +841,8 @@ async def signin(
                 detail=ERROR_MESSAGES.RATE_LIMIT_EXCEEDED,
             )
 
+        await verify_cf_turnstile(request, form_data.cf_turnstile_token)
+
         user = await Auths.authenticate_user(
             form_data.email.lower(),
             lambda pw: verify_password(form_data.password, pw),
@@ -905,6 +963,8 @@ async def signup(
         raise HTTPException(400, detail=ERROR_MESSAGES.EMAIL_TAKEN)
 
     try:
+        await verify_cf_turnstile(request, form_data.cf_turnstile_token)
+
         try:
             validate_password(form_data.password)
         except Exception as e:
@@ -1206,6 +1266,9 @@ class AdminConfig(BaseModel):
     ENABLE_SIGNUP: bool
     ENABLE_SIGNUP_VERIFY: bool = False
     SIGNUP_EMAIL_DOMAIN_WHITELIST: str = ''
+    ENABLE_CF_TURNSTILE: bool = False
+    CF_TURNSTILE_SITE_KEY: str = ''
+    CF_TURNSTILE_SECRET_KEY: str = ''
     SMTP_HOST: str = ''
     SMTP_PORT: str = '465'
     SMTP_USERNAME: str = ''
@@ -1241,6 +1304,14 @@ class AdminConfig(BaseModel):
 
 @router.post('/admin/config')
 async def update_admin_config(request: Request, form_data: AdminConfig, user=Depends(get_admin_user)):
+    if form_data.ENABLE_CF_TURNSTILE and (
+        not form_data.CF_TURNSTILE_SITE_KEY.strip() or not form_data.CF_TURNSTILE_SECRET_KEY.strip()
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Cloudflare Turnstile Site Key and Secret Key are required when verification is enabled.',
+        )
+
     updates = config_updates(form_data.model_dump(), ADMIN_CONFIG_KEYS)
     updates['folders.max_file_count'] = int(form_data.FOLDER_MAX_FILE_COUNT) if form_data.FOLDER_MAX_FILE_COUNT else ''
     updates['automations.max_count'] = int(form_data.AUTOMATION_MAX_COUNT) if form_data.AUTOMATION_MAX_COUNT else ''

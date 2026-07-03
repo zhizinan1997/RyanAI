@@ -13,9 +13,10 @@
 		temporaryChatEnabled,
 		selectedFolder,
 		chats,
-		currentChatPage
+		currentChatPage,
+		chatId
 	} from '$lib/stores';
-	import { getGreetingLine } from '$lib/utils/greeting';
+	import { getGreetingLine, getRandomGreetingEmoji } from '$lib/utils/greeting';
 
 	import Suggestions from './Suggestions.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -63,8 +64,15 @@
 	let models = [];
 	let selectedModelIdx = 0;
 	let greetingNow = new Date();
+	let greetingChatId = $chatId;
+	let greetingEmoji = getRandomGreetingEmoji();
 	$: greetingName = $user?.name || 'Ryan';
-	$: greetingLine = getGreetingLine(greetingName, greetingNow);
+	$: greetingLine = getGreetingLine(greetingName, greetingNow, greetingEmoji);
+
+	$: if ($chatId !== greetingChatId) {
+		greetingChatId = $chatId;
+		greetingEmoji = getRandomGreetingEmoji();
+	}
 
 	onMount(() => {
 		greetingNow = new Date();
@@ -85,7 +93,13 @@
 	$: models = selectedModels.map((id) => $_models.find((m) => m.id === id));
 </script>
 
-<div class="m-auto w-full max-w-6xl px-2 @2xl:px-20 translate-y-6 py-24 text-center">
+<div
+	class="relative isolate m-auto w-full max-w-6xl px-2 @2xl:px-20 translate-y-6 py-24 text-center"
+>
+	{#if !$selectedFolder}
+		<div class="zero-state-glow" aria-hidden="true"></div>
+	{/if}
+
 	{#if $temporaryChatEnabled}
 		<Tooltip
 			content={$i18n.t("This chat won't appear in history and your messages will not be saved.")}
@@ -180,3 +194,74 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.zero-state-glow {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: min(1040px, 92vw);
+		height: 560px;
+		transform: translate(-50%, -50%);
+		pointer-events: none;
+		z-index: -1;
+		filter: blur(56px);
+		opacity: 0.72;
+	}
+
+	.zero-state-glow::before,
+	.zero-state-glow::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: 999px;
+	}
+
+	.zero-state-glow::before {
+		background: radial-gradient(
+			ellipse at 50% 50%,
+			rgba(112, 188, 255, 0.92) 0%,
+			rgba(165, 216, 255, 0.66) 34%,
+			rgba(211, 239, 255, 0.34) 56%,
+			rgba(255, 255, 255, 0) 78%
+		);
+	}
+
+	.zero-state-glow::after {
+		inset: -18% -14%;
+		background:
+			radial-gradient(ellipse at 36% 40%, rgba(255, 160, 214, 0.18), transparent 46%),
+			radial-gradient(ellipse at 68% 48%, rgba(119, 155, 255, 0.18), transparent 52%);
+		mix-blend-mode: multiply;
+	}
+
+	:global(.dark) .zero-state-glow {
+		opacity: 0.5;
+	}
+
+	:global(.dark) .zero-state-glow::before {
+		background: radial-gradient(
+			ellipse at 50% 50%,
+			rgba(87, 171, 255, 0.76) 0%,
+			rgba(88, 143, 255, 0.48) 34%,
+			rgba(70, 104, 190, 0.22) 56%,
+			rgba(0, 0, 0, 0) 78%
+		);
+	}
+
+	:global(.dark) .zero-state-glow::after {
+		background:
+			radial-gradient(ellipse at 36% 40%, rgba(255, 119, 211, 0.16), transparent 46%),
+			radial-gradient(ellipse at 68% 48%, rgba(101, 124, 255, 0.18), transparent 52%);
+		mix-blend-mode: screen;
+	}
+
+	@media (max-width: 768px) {
+		.zero-state-glow {
+			width: 94vw;
+			height: 420px;
+			top: 48%;
+			filter: blur(42px);
+		}
+	}
+</style>

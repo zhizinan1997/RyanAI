@@ -60,6 +60,7 @@ class SigninResponse(Token, UserProfileImageResponse):
 class SigninForm(BaseModel):
     email: str
     password: str
+    cf_turnstile_token: str | None = None
 
 
 class LdapForm(BaseModel):
@@ -81,6 +82,7 @@ class SignupForm(BaseModel):
     email: str
     password: str
     profile_image_url: str | None = '/user.png'
+    cf_turnstile_token: str | None = None
 
     @field_validator('profile_image_url')
     @classmethod

@@ -267,7 +267,10 @@
 									/>
 								</a>
 
-								<a href="https://github.com/zhizinan1997/RyanAI/pkgs/container/ryanai" target="_blank">
+								<a
+									href="https://github.com/zhizinan1997/RyanAI/pkgs/container/ryanai"
+									target="_blank"
+								>
 									<img
 										alt="GHCR"
 										src="https://img.shields.io/badge/GHCR-ryanai-blue?logo=github&style=flat-square"
@@ -483,6 +486,41 @@
 							bind:value={adminConfig.SIGNUP_EMAIL_DOMAIN_WHITELIST}
 						/>
 					</div>
+
+					<div class=" mt-0.5 mb-2.5 text-base font-medium">Cloudflare Turnstile</div>
+
+					<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2" />
+
+					<div class=" mb-2.5 flex w-full justify-between pr-2">
+						<div class=" self-center text-xs font-medium">启用 Cloudflare 验证</div>
+
+						<Switch bind:state={adminConfig.ENABLE_CF_TURNSTILE} />
+					</div>
+
+					{#if adminConfig.ENABLE_CF_TURNSTILE}
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2.5 pr-2">
+							<div class="w-full">
+								<div class=" self-center text-xs font-medium min-w-fit mb-1">Site Key</div>
+								<input
+									class="w-full bg-transparent outline-hidden py-0.5"
+									placeholder="输入 Cloudflare Turnstile Site Key"
+									bind:value={adminConfig.CF_TURNSTILE_SITE_KEY}
+									required={adminConfig.ENABLE_CF_TURNSTILE}
+								/>
+							</div>
+
+							<div class="w-full">
+								<div class=" self-center text-xs font-medium min-w-fit mb-1">Secret Key</div>
+								<SensitiveInput
+									placeholder="输入 Cloudflare Turnstile Secret Key"
+									required={adminConfig.ENABLE_CF_TURNSTILE}
+									outerClassName="flex flex-1 bg-transparent"
+									inputClassName="w-full text-sm py-0.5 bg-transparent"
+									bind:value={adminConfig.CF_TURNSTILE_SECRET_KEY}
+								/>
+							</div>
+						</div>
+					{/if}
 
 					<div class="mb-2.5 flex w-full items-center justify-between pr-2">
 						<div class=" self-center text-xs font-medium">

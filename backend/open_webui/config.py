@@ -1669,6 +1669,12 @@ ENABLE_SIGNUP_VERIFY = os.getenv('ENABLE_SIGNUP_VERIFY', 'False').lower() == 'tr
 
 SIGNUP_EMAIL_DOMAIN_WHITELIST = os.getenv('SIGNUP_EMAIL_DOMAIN_WHITELIST', '')
 
+ENABLE_CF_TURNSTILE = os.getenv('ENABLE_CF_TURNSTILE', 'False').lower() == 'true'
+
+CF_TURNSTILE_SITE_KEY = os.getenv('CF_TURNSTILE_SITE_KEY', '')
+
+CF_TURNSTILE_SECRET_KEY = os.getenv('CF_TURNSTILE_SECRET_KEY', '')
+
 SMTP_HOST = os.getenv('SMTP_HOST', '')
 
 SMTP_PORT = os.getenv('SMTP_PORT', '465')
@@ -3152,6 +3158,9 @@ DEFAULT_CONFIG = {
     'ui.enable_signup': ENABLE_SIGNUP,
     'ui.signup_verify.enabled': ENABLE_SIGNUP_VERIFY,
     'ui.signup.email_domain_whitelist': SIGNUP_EMAIL_DOMAIN_WHITELIST,
+    'auth.cf_turnstile.enabled': ENABLE_CF_TURNSTILE,
+    'auth.cf_turnstile.site_key': CF_TURNSTILE_SITE_KEY,
+    'auth.cf_turnstile.secret_key': CF_TURNSTILE_SECRET_KEY,
     'ui.smtp.host': SMTP_HOST,
     'ui.smtp.port': SMTP_PORT,
     'ui.smtp.username': SMTP_USERNAME,

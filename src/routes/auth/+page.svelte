@@ -25,6 +25,7 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import OnBoarding from '$lib/components/OnBoarding.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
+	import CloudflareTurnstile from '$lib/components/auth/CloudflareTurnstile.svelte';
 	import { redirect } from '@sveltejs/kit';
 
 	const i18n = getContext('i18n');
@@ -39,8 +40,20 @@
 	let email = '';
 	let password = '';
 	let confirmPassword = '';
+	let cfTurnstileToken = '';
+	let cfTurnstile: { reset?: () => void } | null = null;
 
 	let ldapUsername = '';
+
+	$: cfTurnstileEnabled = Boolean(
+		$config?.features?.cf_turnstile?.enabled && $config?.features?.cf_turnstile?.site_key
+	);
+	$: cfTurnstileRequired = cfTurnstileEnabled && (mode === 'signin' || mode === 'signup');
+
+	const resetCfTurnstile = () => {
+		cfTurnstileToken = '';
+		cfTurnstile?.reset?.();
+	};
 
 	const setSessionUser = async (sessionUser, redirectPath: string | null = null) => {
 		if (sessionUser) {
@@ -69,8 +82,14 @@
 	};
 
 	const signInHandler = async () => {
-		const sessionUser = await userSignIn(email, password).catch((error) => {
+		if (cfTurnstileRequired && !cfTurnstileToken) {
+			toast.error($i18n.t('Please complete the Cloudflare verification.'));
+			return;
+		}
+
+		const sessionUser = await userSignIn(email, password, cfTurnstileToken).catch((error) => {
 			toast.error(`${error}`);
+			resetCfTurnstile();
 			return null;
 		});
 
@@ -85,12 +104,22 @@
 			}
 		}
 
-		const sessionUser = await userSignUp(name, email, password, generateInitialsImage(name)).catch(
-			(error) => {
-				toast.error(`${error}`);
-				return null;
-			}
-		);
+		if (cfTurnstileRequired && !cfTurnstileToken) {
+			toast.error($i18n.t('Please complete the Cloudflare verification.'));
+			return;
+		}
+
+		const sessionUser = await userSignUp(
+			name,
+			email,
+			password,
+			generateInitialsImage(name),
+			cfTurnstileToken
+		).catch((error) => {
+			toast.error(`${error}`);
+			resetCfTurnstile();
+			return null;
+		});
 
 		await setSessionUser(sessionUser);
 	};
@@ -390,6 +419,16 @@
 										{/if}
 									</div>
 								{/if}
+
+								{#if cfTurnstileRequired}
+									<div class="mt-4">
+										<CloudflareTurnstile
+											bind:this={cfTurnstile}
+											siteKey={$config?.features?.cf_turnstile?.site_key ?? ''}
+											bind:token={cfTurnstileToken}
+										/>
+									</div>
+								{/if}
 								<div class="mt-5">
 									{#if $config?.features.enable_login_form || $config?.features.enable_ldap || form}
 										{#if mode === 'ldap'}
@@ -426,6 +465,7 @@
 															} else {
 																mode = 'signin';
 															}
+															resetCfTurnstile();
 														}}
 													>
 														{mode === 'signin' ? $i18n.t('Sign up') : $i18n.t('Sign in')}

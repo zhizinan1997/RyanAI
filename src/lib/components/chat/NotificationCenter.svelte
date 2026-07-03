@@ -154,7 +154,7 @@
 			aria-label={$i18n.t('Notifications')}
 			type="button"
 		>
-			<div class=" m-auto self-center">
+			<div class=" m-auto self-center translate-y-px">
 				<AppNotification className="size-5" strokeWidth="1.45" />
 			</div>
 			{#if unreadCount > 0}

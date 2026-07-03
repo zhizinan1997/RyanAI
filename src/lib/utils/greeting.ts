@@ -1,12 +1,4 @@
-const ASSIST_QUESTIONS = [
-	'需要我们一起做点什么吗？',
-	'今天想先推进哪件事？',
-	'要不要一起把下一步理清楚？',
-	'现在想从哪里开始？',
-	'有什么想让我帮你拆解的吗？',
-	'要一起处理代码、写作，还是规划点什么？',
-	'今天有什么值得我们马上动手的事？'
-];
+const GREETING_EMOJIS = ['✨', '🌤️', '☕', '💡', '🚀', '🌿', '🧭', '🪄'];
 
 export const getTimeOfDayGreeting = (date = new Date()) => {
 	const hour = date.getHours();
@@ -34,12 +26,18 @@ export const getTimeOfDayGreeting = (date = new Date()) => {
 	return '凌晨好';
 };
 
-export const getAssistQuestion = (date = new Date()) => {
-	const hourlyIndex = Math.floor(date.getTime() / (1000 * 60 * 60));
-
-	return ASSIST_QUESTIONS[hourlyIndex % ASSIST_QUESTIONS.length];
+export const getRandomGreetingEmoji = () => {
+	return GREETING_EMOJIS[Math.floor(Math.random() * GREETING_EMOJIS.length)];
 };
 
-export const getGreetingLine = (name = 'Ryan', date = new Date()) => {
-	return `${getTimeOfDayGreeting(date)}，${name || 'Ryan'}。${getAssistQuestion(date)}`;
+const getFirstName = (name = 'Ryan') => {
+	return (name || 'Ryan').trim().split(/\s+/)[0] || 'Ryan';
+};
+
+export const getGreetingLine = (
+	name = 'Ryan',
+	date = new Date(),
+	greetingEmoji = getRandomGreetingEmoji()
+) => {
+	return `${greetingEmoji} ${getTimeOfDayGreeting(date)}，${getFirstName(name)}`;
 };
