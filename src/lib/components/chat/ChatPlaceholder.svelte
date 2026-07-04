@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { chatId, config, user, models as _models, temporaryChatEnabled } from '$lib/stores';
+	import { config, user, models as _models, temporaryChatEnabled } from '$lib/stores';
 	import { onMount, getContext } from 'svelte';
-	import { getGreetingLine, getRandomGreetingEmoji } from '$lib/utils/greeting';
+	import { getGreetingLine } from '$lib/utils/greeting';
 
 	import { fade } from 'svelte/transition';
 
@@ -20,15 +20,8 @@
 	let mounted = false;
 	let selectedModelIdx = 0;
 	let greetingNow = new Date();
-	let greetingChatId = $chatId;
-	let greetingEmoji = getRandomGreetingEmoji();
 	$: greetingName = $user?.name || 'Ryan';
-	$: greetingLine = getGreetingLine(greetingName, greetingNow, greetingEmoji);
-
-	$: if ($chatId !== greetingChatId) {
-		greetingChatId = $chatId;
-		greetingEmoji = getRandomGreetingEmoji();
-	}
+	$: greetingLine = getGreetingLine(greetingName, greetingNow);
 
 	$: if (modelIds.length > 0) {
 		selectedModelIdx = models.length - 1;

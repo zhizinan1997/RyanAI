@@ -516,7 +516,29 @@
 		saveChatHandler(_chatId, history);
 	};
 
+	const markChatItemsRead = (items: any[] = [], id: string) => {
+		const readAt = Math.floor(Date.now() / 1000);
+
+		return items.map((item) => {
+			if (item?.id !== id) {
+				return item;
+			}
+
+			return {
+				...item,
+				last_read_at: Math.max(item?.last_read_at ?? 0, item?.updated_at ?? 0, readAt)
+			};
+		});
+	};
+
+	const markChatReadLocally = (id: string) => {
+		chats.update((items) => markChatItemsRead(items ?? [], id));
+		pinnedChats.update((items) => markChatItemsRead(items ?? [], id));
+	};
+
 	const updateLastReadAt = (id) => {
+		markChatReadLocally(id);
+
 		$socket?.emit('events:chat', {
 			chat_id: id,
 			data: { type: 'last_read_at' }
@@ -1619,8 +1641,12 @@
 		// Just refresh the sidebar chat list.
 		try {
 			if ($chatId == _chatId && !$temporaryChatEnabled) {
+				updateLastReadAt(_chatId);
 				currentChatPage.set(1);
-				await chats.set(await getChatList(localStorage.token, $currentChatPage));
+				await chats.set(
+					markChatItemsRead(await getChatList(localStorage.token, $currentChatPage), _chatId)
+				);
+				markChatReadLocally(_chatId);
 			}
 		} catch (error) {
 			console.error('chatCompletedHandler', error);

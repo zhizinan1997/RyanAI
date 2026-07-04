@@ -86,6 +86,14 @@ log = logging.getLogger(__name__)
 
 SPLASH_NOTICE_MEDIA_DIR = UPLOAD_DIR / 'splash_notice'
 SPLASH_NOTICE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+SPLASH_NOTICE_MEDIA_MAX_SIZE = 15 * 1024 * 1024
+SPLASH_NOTICE_MEDIA_ALLOWED_TYPES = {
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+}
+SPLASH_NOTICE_MEDIA_ALLOWED_SUFFIXES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 
 # Forgive us our failed attempts, as we forgive those
 # who exceed their allotted rate against this gate.
@@ -1338,15 +1346,36 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
 
 @router.post('/admin/config/splash-notice/media')
 async def upload_splash_notice_media(
-    file: UploadFile = File(...),
+    media: UploadFile | None = File(None),
+    file: UploadFile | None = File(None),
     user=Depends(get_admin_user),
 ):
-    original_name = Path(file.filename or 'splash-notice').name
+    upload = media or file
+    if upload is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='No file selected')
+
+    original_name = Path(upload.filename or 'splash-notice').name
     suffix = Path(original_name).suffix
+    if (
+        upload.content_type not in SPLASH_NOTICE_MEDIA_ALLOWED_TYPES
+        or suffix.lower() not in SPLASH_NOTICE_MEDIA_ALLOWED_SUFFIXES
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Unsupported image format. Please upload a PNG, JPG, GIF, or WebP file.',
+        )
+
+    content = await upload.read(SPLASH_NOTICE_MEDIA_MAX_SIZE + 1)
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Uploaded file is empty')
+    if len(content) > SPLASH_NOTICE_MEDIA_MAX_SIZE:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Image is too large. Please keep it under 15 MB.',
+        )
+
     file_name = f'{uuid.uuid4().hex}{suffix}'
     file_path = SPLASH_NOTICE_MEDIA_DIR / file_name
-
-    content = await file.read()
     file_path.write_bytes(content)
 
     previous_file_name = await Config.get('ui.splash_notice_media', '')

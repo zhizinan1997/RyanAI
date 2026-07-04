@@ -1,5 +1,3 @@
-const GREETING_EMOJIS = ['✨', '🌤️', '☕', '💡', '🚀', '🌿', '🧭', '🪄'];
-
 export const getTimeOfDayGreeting = (date = new Date()) => {
 	const hour = date.getHours();
 
@@ -26,18 +24,10 @@ export const getTimeOfDayGreeting = (date = new Date()) => {
 	return '凌晨好';
 };
 
-export const getRandomGreetingEmoji = () => {
-	return GREETING_EMOJIS[Math.floor(Math.random() * GREETING_EMOJIS.length)];
-};
-
 const getFirstName = (name = 'Ryan') => {
 	return (name || 'Ryan').trim().split(/\s+/)[0] || 'Ryan';
 };
 
-export const getGreetingLine = (
-	name = 'Ryan',
-	date = new Date(),
-	greetingEmoji = getRandomGreetingEmoji()
-) => {
-	return `${greetingEmoji} ${getTimeOfDayGreeting(date)}，${getFirstName(name)}`;
+export const getGreetingLine = (name = 'Ryan', date = new Date()) => {
+	return `${getTimeOfDayGreeting(date)}，${getFirstName(name)}`;
 };

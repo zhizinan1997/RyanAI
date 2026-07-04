@@ -213,11 +213,55 @@
 			advanced: 'high'
 		}
 	};
+	const legacyIntelligenceParams = ['reasoning_effort', 'think'];
 
 	let showIntelligenceMenu = false;
 	let selectedIntelligenceModel: any = null;
 	let intelligenceConfig: any = null;
 	let currentIntelligenceTier: string | null = null;
+
+	const normalizeIntelligenceOption = (value: any, fallback: any) => {
+		if (typeof value === 'string') {
+			return value.trim() !== '' ? value.trim() : fallback;
+		}
+
+		return value !== undefined && value !== null ? value : fallback;
+	};
+
+	const parseIntelligenceOptionValue = (value: any) => {
+		if (typeof value !== 'string') {
+			return value;
+		}
+
+		const trimmed = value.trim();
+		if (trimmed === 'true') return true;
+		if (trimmed === 'false') return false;
+		if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+
+		return trimmed;
+	};
+
+	const intelligenceValuesEqual = (optionValue: any, actualValue: any) => {
+		const parsedOptionValue = parseIntelligenceOptionValue(optionValue);
+
+		return (
+			Object.is(optionValue, actualValue) ||
+			Object.is(parsedOptionValue, actualValue) ||
+			String(parsedOptionValue) === String(actualValue)
+		);
+	};
+
+	const isEmptyIntelligenceValue = (value: any) => {
+		return value === undefined || value === null || value === '';
+	};
+
+	const getIntelligenceTierFromValue = (config: any, value: any) => {
+		return intelligenceTiers.find((tier) => intelligenceValuesEqual(config.options[tier], value));
+	};
+
+	const getIntelligenceParamAliases = (config: any) => {
+		return legacyIntelligenceParams.filter((param) => param !== config.param);
+	};
 
 	const normalizeIntelligenceConfig = (config: any = {}) => {
 		const options = {
@@ -236,18 +280,15 @@
 				? config.default
 				: defaultIntelligenceConfig.default,
 			options: {
-				fast:
-					typeof options.fast === 'string' && options.fast !== ''
-						? options.fast
-						: defaultIntelligenceConfig.options.fast,
-				balanced:
-					typeof options.balanced === 'string' && options.balanced !== ''
-						? options.balanced
-						: defaultIntelligenceConfig.options.balanced,
-				advanced:
-					typeof options.advanced === 'string' && options.advanced !== ''
-						? options.advanced
-						: defaultIntelligenceConfig.options.advanced
+				fast: normalizeIntelligenceOption(options.fast, defaultIntelligenceConfig.options.fast),
+				balanced: normalizeIntelligenceOption(
+					options.balanced,
+					defaultIntelligenceConfig.options.balanced
+				),
+				advanced: normalizeIntelligenceOption(
+					options.advanced,
+					defaultIntelligenceConfig.options.advanced
+				)
 			}
 		};
 	};
@@ -283,14 +324,23 @@
 		}
 
 		const value = params?.[config.param];
-		const tier = intelligenceTiers.find((tier) => config.options[tier] === value);
+		const tier = getIntelligenceTierFromValue(config, value);
 
 		if (tier) {
 			return tier;
 		}
 
-		if (value !== undefined && value !== null && value !== '') {
+		if (!isEmptyIntelligenceValue(value)) {
 			return 'custom';
+		}
+
+		for (const param of getIntelligenceParamAliases(config)) {
+			const aliasValue = params?.[param];
+			const aliasTier = getIntelligenceTierFromValue(config, aliasValue);
+
+			if (aliasTier) {
+				return aliasTier;
+			}
 		}
 
 		return config.default;
@@ -301,10 +351,20 @@
 			return;
 		}
 
-		params = {
+		const nextParams = {
 			...(params ?? {}),
-			[intelligenceConfig.param]: intelligenceConfig.options[tier]
+			[intelligenceConfig.param]: parseIntelligenceOptionValue(intelligenceConfig.options[tier])
 		};
+
+		for (const param of getIntelligenceParamAliases(intelligenceConfig)) {
+			const aliasTier = getIntelligenceTierFromValue(intelligenceConfig, nextParams[param]);
+
+			if (aliasTier || isEmptyIntelligenceValue(nextParams[intelligenceConfig.param])) {
+				delete nextParams[param];
+			}
+		}
+
+		params = nextParams;
 	};
 
 	$: selectedIntelligenceModel = getSelectedModel(selectedModels, $models);
@@ -315,11 +375,12 @@
 	}
 	$: if (
 		intelligenceConfig &&
-		(params?.[intelligenceConfig.param] === undefined ||
-			params?.[intelligenceConfig.param] === null ||
-			params?.[intelligenceConfig.param] === '')
+		isEmptyIntelligenceValue(params?.[intelligenceConfig.param])
 	) {
-		setIntelligenceTier(intelligenceConfig.default);
+		const tier = getCurrentIntelligenceTier(intelligenceConfig, params);
+		const tierToApply =
+			tier && intelligenceTiers.includes(tier) ? tier : intelligenceConfig.default;
+		setIntelligenceTier(tierToApply);
 	}
 
 	const inputVariableHandler = async (text: string): Promise<string> => {

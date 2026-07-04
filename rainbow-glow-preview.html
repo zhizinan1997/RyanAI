@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Rainbow Glow Preview</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--page-bg: #f7faff;
+				--page-bg-soft: #eef5ff;
+				--text: #1f2937;
+				--muted: #6b7280;
+				--line: rgba(31, 41, 55, 0.08);
+				--surface: rgba(255, 255, 255, 0.82);
+				--surface-strong: rgba(255, 255, 255, 0.94);
+				--shadow: 0 20px 60px rgba(36, 55, 88, 0.12), 0 2px 10px rgba(36, 55, 88, 0.08);
+				--glow-opacity: 0.72;
+				--glow-blur: 56px;
+				font-family:
+					Inter,
+					'PingFang SC',
+					'Microsoft YaHei',
+					'Segoe UI',
+					Arial,
+					sans-serif;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				min-height: 100vh;
+				background:
+					radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.95), transparent 36%),
+					linear-gradient(180deg, var(--page-bg), var(--page-bg-soft));
+				color: var(--text);
+				overflow: hidden;
+			}
+
+			.app {
+				min-height: 100vh;
+				display: grid;
+				grid-template-columns: 56px minmax(0, 1fr);
+			}
+
+			.rail {
+				position: relative;
+				z-index: 3;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 18px;
+				padding: 18px 0;
+				border-right: 1px solid var(--line);
+				background: rgba(255, 255, 255, 0.55);
+				backdrop-filter: blur(20px);
+			}
+
+			.mark {
+				width: 24px;
+				height: 24px;
+				border-radius: 9px;
+				background:
+					linear-gradient(135deg, #2b74ff 0 50%, transparent 50%),
+					linear-gradient(315deg, #10b981 0 50%, #f59e0b 50%);
+				box-shadow: 0 8px 20px rgba(43, 116, 255, 0.2);
+			}
+
+			.nav-dot,
+			.avatar {
+				width: 30px;
+				height: 30px;
+				border: 0;
+				border-radius: 999px;
+				background: transparent;
+				display: grid;
+				place-items: center;
+				color: var(--muted);
+			}
+
+			.nav-dot.active {
+				background: rgba(255, 255, 255, 0.86);
+				color: var(--text);
+				box-shadow: 0 8px 24px rgba(31, 41, 55, 0.08);
+			}
+
+			.nav-dot svg,
+			.avatar svg,
+			.tool-button svg,
+			.send-button svg {
+				width: 18px;
+				height: 18px;
+				stroke: currentColor;
+				stroke-width: 2;
+				fill: none;
+				stroke-linecap: round;
+				stroke-linejoin: round;
+			}
+
+			.avatar {
+				margin-top: auto;
+				background: linear-gradient(135deg, #dbeafe, #fce7f3);
+			}
+
+			.canvas {
+				position: relative;
+				isolation: isolate;
+				display: grid;
+				place-items: center;
+				min-width: 0;
+				min-height: 100vh;
+				padding: 40px;
+			}
+
+			.rainbow-glow {
+				position: absolute;
+				left: 50%;
+				top: 50%;
+				z-index: -1;
+				width: min(1040px, 92vw);
+				height: 560px;
+				transform: translate(-50%, -50%);
+				pointer-events: none;
+				opacity: var(--glow-opacity);
+				filter: blur(var(--glow-blur)) hue-rotate(0deg) saturate(1);
+				animation: glow-color-shift 42s ease-in-out infinite;
+			}
+
+			.rainbow-glow::before,
+			.rainbow-glow::after {
+				content: '';
+				position: absolute;
+				inset: 0;
+				border-radius: 999px;
+			}
+
+			.rainbow-glow::before {
+				background: radial-gradient(
+					ellipse at 50% 50%,
+					rgba(112, 188, 255, 0.92) 0%,
+					rgba(165, 216, 255, 0.66) 34%,
+					rgba(211, 239, 255, 0.34) 56%,
+					rgba(255, 255, 255, 0) 78%
+				);
+			}
+
+			.rainbow-glow::after {
+				inset: -18% -14%;
+				background:
+					radial-gradient(ellipse at 36% 40%, rgba(255, 160, 214, 0.18), transparent 46%),
+					radial-gradient(ellipse at 68% 48%, rgba(119, 155, 255, 0.18), transparent 52%);
+				mix-blend-mode: multiply;
+			}
+
+			@keyframes glow-color-shift {
+				0%,
+				100% {
+					filter: blur(var(--glow-blur)) hue-rotate(0deg) saturate(1);
+				}
+				25% {
+					filter: blur(var(--glow-blur)) hue-rotate(42deg) saturate(1.04);
+				}
+				50% {
+					filter: blur(var(--glow-blur)) hue-rotate(96deg) saturate(1.06);
+				}
+				75% {
+					filter: blur(var(--glow-blur)) hue-rotate(168deg) saturate(1.03);
+				}
+			}
+
+			@media (max-width: 720px) {
+				.app {
+					grid-template-columns: 1fr;
+				}
+
+				.rail {
+					display: none;
+				}
+
+				.canvas {
+					padding: 24px 16px;
+				}
+
+				.rainbow-glow {
+					top: 48%;
+					width: 94vw;
+					height: 420px;
+					--glow-blur: 42px;
+				}
+
+				.stage {
+					width: 100%;
+				}
+
+				.input-shell {
+					grid-template-columns: 38px minmax(0, 1fr) 38px 38px;
+					min-height: 62px;
+				}
+
+				.suggestions {
+					grid-template-columns: 1fr;
+				}
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				.rainbow-glow,
+				.rainbow-glow::after {
+					animation: none;
+					filter: blur(var(--glow-blur));
+				}
+			}
+
+			.stage {
+				position: relative;
+				z-index: 1;
+				width: min(760px, calc(100vw - 112px));
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				transform: translateY(-10px);
+			}
+
+			.greeting {
+				margin: 0 0 26px;
+				font-size: clamp(28px, 3.2vw, 38px);
+				font-weight: 430;
+				line-height: 1.2;
+				letter-spacing: 0;
+				text-align: center;
+				color: var(--text);
+			}
+
+			.input-shell {
+				width: min(680px, 100%);
+				min-height: 68px;
+				display: grid;
+				grid-template-columns: 42px minmax(0, 1fr) 40px 40px;
+				align-items: center;
+				gap: 8px;
+				padding: 10px 14px;
+				border: 1px solid rgba(255, 255, 255, 0.82);
+				border-radius: 999px;
+				background: var(--surface-strong);
+				box-shadow: var(--shadow);
+				backdrop-filter: blur(22px);
+			}
+
+			.prompt {
+				width: 100%;
+				min-width: 0;
+				border: 0;
+				outline: 0;
+				background: transparent;
+				color: var(--text);
+				font: inherit;
+				font-size: 16px;
+				line-height: 24px;
+			}
+
+			.prompt::placeholder {
+				color: #788293;
+			}
+
+			.tool-button,
+			.send-button {
+				width: 38px;
+				height: 38px;
+				border: 0;
+				border-radius: 999px;
+				display: grid;
+				place-items: center;
+				color: var(--muted);
+				background: transparent;
+			}
+
+			.send-button {
+				color: #ffffff;
+				background: #111827;
+				box-shadow: 0 12px 26px rgba(17, 24, 39, 0.2);
+			}
+
+			.suggestions {
+				width: min(640px, 100%);
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 12px;
+				margin-top: 24px;
+			}
+
+			.suggestion {
+				min-height: 54px;
+				border: 1px solid rgba(255, 255, 255, 0.72);
+				border-radius: 18px;
+				background: var(--surface);
+				box-shadow: 0 12px 34px rgba(36, 55, 88, 0.08);
+				backdrop-filter: blur(18px);
+			}
+
+		</style>
+	</head>
+	<body>
+		<div class="app">
+			<aside class="rail" aria-hidden="true">
+				<div class="mark"></div>
+				<div class="nav-dot active">
+					<svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h16" /></svg>
+				</div>
+				<div class="nav-dot">
+					<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+				</div>
+				<div class="avatar">
+					<svg viewBox="0 0 24 24"><path d="M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10" /></svg>
+				</div>
+			</aside>
+
+			<main class="canvas">
+				<div class="rainbow-glow" aria-hidden="true"></div>
+
+				<section class="stage" aria-label="Chat preview">
+					<h1 class="greeting">早上好，Ryan</h1>
+
+					<div class="input-shell">
+						<button class="tool-button" type="button" aria-label="添加">
+							<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+						</button>
+						<input class="prompt" value="" placeholder="询问任何问题" />
+						<button class="tool-button" type="button" aria-label="语音">
+							<svg viewBox="0 0 24 24">
+								<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+								<path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3" />
+							</svg>
+						</button>
+						<button class="send-button" type="button" aria-label="发送">
+							<svg viewBox="0 0 24 24"><path d="m5 12 14-7-7 14-2-5-5-2Z" /></svg>
+						</button>
+					</div>
+
+					<div class="suggestions" aria-hidden="true">
+						<div class="suggestion"></div>
+						<div class="suggestion"></div>
+						<div class="suggestion"></div>
+						<div class="suggestion"></div>
+					</div>
+				</section>
+			</main>
+		</div>
+	</body>
+</html>

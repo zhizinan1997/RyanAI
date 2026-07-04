@@ -55,6 +55,10 @@
 		cfTurnstile?.reset?.();
 	};
 
+	const showAuthError = (error: unknown) => {
+		toast.error($i18n.t(String(error)));
+	};
+
 	const setSessionUser = async (sessionUser, redirectPath: string | null = null) => {
 		if (sessionUser) {
 			console.log(sessionUser);
@@ -88,7 +92,7 @@
 		}
 
 		const sessionUser = await userSignIn(email, password, cfTurnstileToken).catch((error) => {
-			toast.error(`${error}`);
+			showAuthError(error);
 			resetCfTurnstile();
 			return null;
 		});
@@ -116,7 +120,7 @@
 			generateInitialsImage(name),
 			cfTurnstileToken
 		).catch((error) => {
-			toast.error(`${error}`);
+			showAuthError(error);
 			resetCfTurnstile();
 			return null;
 		});

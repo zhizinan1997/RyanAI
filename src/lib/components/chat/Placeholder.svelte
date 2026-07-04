@@ -13,10 +13,9 @@
 		temporaryChatEnabled,
 		selectedFolder,
 		chats,
-		currentChatPage,
-		chatId
+		currentChatPage
 	} from '$lib/stores';
-	import { getGreetingLine, getRandomGreetingEmoji } from '$lib/utils/greeting';
+	import { getGreetingLine } from '$lib/utils/greeting';
 
 	import Suggestions from './Suggestions.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -64,15 +63,8 @@
 	let models = [];
 	let selectedModelIdx = 0;
 	let greetingNow = new Date();
-	let greetingChatId = $chatId;
-	let greetingEmoji = getRandomGreetingEmoji();
 	$: greetingName = $user?.name || 'Ryan';
-	$: greetingLine = getGreetingLine(greetingName, greetingNow, greetingEmoji);
-
-	$: if ($chatId !== greetingChatId) {
-		greetingChatId = $chatId;
-		greetingEmoji = getRandomGreetingEmoji();
-	}
+	$: greetingLine = getGreetingLine(greetingName, greetingNow);
 
 	onMount(() => {
 		greetingNow = new Date();
@@ -197,6 +189,8 @@
 
 <style>
 	.zero-state-glow {
+		--zero-state-glow-blur: 56px;
+
 		position: absolute;
 		left: 50%;
 		top: 50%;
@@ -205,8 +199,9 @@
 		transform: translate(-50%, -50%);
 		pointer-events: none;
 		z-index: -1;
-		filter: blur(56px);
+		filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
 		opacity: 0.72;
+		animation: zero-state-glow-color-shift 42s ease-in-out infinite;
 	}
 
 	.zero-state-glow::before,
@@ -256,12 +251,35 @@
 		mix-blend-mode: screen;
 	}
 
+	@keyframes zero-state-glow-color-shift {
+		0%,
+		100% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
+		}
+		25% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(42deg) saturate(1.04);
+		}
+		50% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(96deg) saturate(1.06);
+		}
+		75% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(168deg) saturate(1.03);
+		}
+	}
+
 	@media (max-width: 768px) {
 		.zero-state-glow {
 			width: 94vw;
 			height: 420px;
 			top: 48%;
-			filter: blur(42px);
+			--zero-state-glow-blur: 42px;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.zero-state-glow {
+			animation: none;
+			filter: blur(var(--zero-state-glow-blur));
 		}
 	}
 </style>
