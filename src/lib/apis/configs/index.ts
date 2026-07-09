@@ -786,6 +786,14 @@ export const getNotifications = async (
 	return res;
 };
 
+const parseConfigResponseError = async (res: Response) => {
+	try {
+		return await res.json();
+	} catch {
+		return { detail: `${res.status} ${res.statusText}`.trim() };
+	}
+};
+
 export const createNotification = async (
 	token: string,
 	notification: Partial<Notification>
@@ -801,12 +809,12 @@ export const createNotification = async (
 		body: JSON.stringify(notification)
 	})
 		.then(async (res) => {
-			if (!res.ok) throw await res.json();
+			if (!res.ok) throw await parseConfigResponseError(res);
 			return res.json();
 		})
 		.catch((err) => {
 			console.error(err);
-			error = err.detail;
+			error = err.detail ?? err.message ?? `${err}`;
 			return null;
 		});
 
@@ -833,12 +841,39 @@ export const updateNotification = async (
 		body: JSON.stringify(notification)
 	})
 		.then(async (res) => {
-			if (!res.ok) throw await res.json();
+			if (!res.ok) throw await parseConfigResponseError(res);
 			return res.json();
 		})
 		.catch((err) => {
 			console.error(err);
-			error = err.detail;
+			error = err.detail ?? err.message ?? `${err}`;
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const deleteNotification = async (token: string, id: string): Promise<boolean> => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/configs/notifications/${id}`, {
+		method: 'DELETE',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await parseConfigResponseError(res);
+			return res.json();
+		})
+		.catch((err) => {
+			console.error(err);
+			error = err.detail ?? err.message ?? `${err}`;
 			return null;
 		});
 

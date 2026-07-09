@@ -577,6 +577,18 @@
 					} else {
 						message.statusHistory = [data];
 					}
+				} else if (type === 'chat:active') {
+					if (data?.active === false) {
+						taskIds = null;
+
+						const currentMessage = history.currentId ? history.messages[history.currentId] : null;
+						if (currentMessage?.role === 'assistant' && !currentMessage.done) {
+							currentMessage.done = true;
+							history.messages[currentMessage.id] = currentMessage;
+						}
+
+						await processNextInQueue($chatId);
+					}
 				} else if (type === 'chat:completion') {
 					chatCompletionEventHandler(data, message, event.chat_id);
 				} else if (type === 'chat:tasks:cancel') {
@@ -872,7 +884,7 @@
 
 				// Re-fetch notifications on navigation to homepage so newly configured items appear
 				try {
-					const res = await getNotifications(localStorage.token, 1, 100, true);
+					const res = await getNotifications(localStorage.token, 1, 100, false);
 					notifications.set(res.items);
 				} catch (e) {
 					console.error('Failed to refresh notifications:', e);

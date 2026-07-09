@@ -1681,7 +1681,9 @@
 								</div>
 							{/if}
 
-							<div class="pl-12 pr-28 sm:pr-36">
+							<div
+								class="pl-12 {intelligenceConfig ? 'pr-44 sm:pr-48' : 'pr-28 sm:pr-36'}"
+							>
 								<div
 									class="scrollbar-none rtl:text-right ltr:text-left bg-transparent dark:text-gray-100 outline-hidden w-full py-3 px-1 resize-none h-fit min-h-11 max-h-72 overflow-auto"
 									id="chat-input-container"

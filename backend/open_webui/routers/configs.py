@@ -959,3 +959,24 @@ async def update_notification(
         data={'action': 'updated', 'active': notification.active},
     )
     return notification
+
+
+@router.delete('/notifications/{id}', response_model=bool)
+async def delete_notification(
+    request: Request,
+    id: str,
+    user=Depends(get_admin_user),
+):
+    deleted = await Notifications.delete_notification_by_id(id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail='Notification not found')
+
+    await publish_event(
+        request,
+        EVENTS.CONFIG_NOTIFICATIONS_UPDATED,
+        actor=user,
+        subject_id=id,
+        subject_type='notification',
+        data={'action': 'deleted'},
+    )
+    return True

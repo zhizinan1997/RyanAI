@@ -11,7 +11,12 @@
 		updateLdapConfig,
 		updateLdapServer
 	} from '$lib/apis/auths';
-	import { createNotification, getNotifications, updateNotification } from '$lib/apis/configs';
+	import {
+		createNotification,
+		deleteNotification,
+		getNotifications,
+		updateNotification
+	} from '$lib/apis/configs';
 	import { getGroups } from '$lib/apis/groups';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -53,6 +58,7 @@
 	let groups = [];
 
 	let notifications: Notification[] = [];
+	let deletedNotificationIds: string[] = [];
 
 	// LDAP
 	let ENABLE_LDAP = false;
@@ -102,7 +108,20 @@
 	};
 
 	const updateNotifications = async () => {
+		for (const id of [...deletedNotificationIds]) {
+			await deleteNotification(localStorage.token, id);
+			deletedNotificationIds = deletedNotificationIds.filter((deletedId) => deletedId !== id);
+		}
+
 		for (const notification of notifications) {
+			if (
+				notification.id.startsWith('local-') &&
+				(notification.title ?? '').trim() === '' &&
+				(notification.content ?? '').trim() === ''
+			) {
+				continue;
+			}
+
 			const payload = {
 				type: notification.type || 'info',
 				title: notification.title ?? '',
@@ -113,9 +132,6 @@
 			};
 
 			if (notification.id.startsWith('local-')) {
-				if (payload.content.trim() === '') {
-					continue;
-				}
 				await createNotification(localStorage.token, payload);
 			} else {
 				await updateNotification(localStorage.token, notification.id, payload);
@@ -124,23 +140,33 @@
 
 		const refreshed = await getNotifications(localStorage.token, 1, 100, true);
 		notifications = refreshed.items;
-		_notifications.set(refreshed.items);
+		const activeNotifications = await getNotifications(localStorage.token, 1, 100, false);
+		_notifications.set(activeNotifications.items);
 	};
 
 	const updateHandler = async () => {
-		webhookUrl = await updateWebhookUrl(localStorage.token, webhookUrl);
-		const res = await updateAdminConfig(localStorage.token, adminConfig);
-		await updateLdapConfig(localStorage.token, ENABLE_LDAP);
-		await updateLdapServerHandler();
+		try {
+			webhookUrl = await updateWebhookUrl(localStorage.token, webhookUrl);
+			const res = await updateAdminConfig(localStorage.token, adminConfig);
+			await updateLdapConfig(localStorage.token, ENABLE_LDAP);
+			await updateLdapServerHandler();
 
-		await updateNotifications();
+			await updateNotifications();
 
-		await config.set(await getBackendConfig());
+			await config.set(await getBackendConfig());
 
-		if (res) {
-			saveHandler();
-		} else {
-			toast.error($i18n.t('Failed to update settings'));
+			if (res) {
+				saveHandler();
+			} else {
+				toast.error($i18n.t('Failed to update settings'));
+			}
+		} catch (error) {
+			const errorDetail = error as { detail?: string; message?: string };
+			const message =
+				typeof error === 'string'
+					? error
+					: errorDetail?.detail || errorDetail?.message || $i18n.t('Failed to update settings');
+			toast.error(`${message}`);
 		}
 	};
 
@@ -169,13 +195,14 @@
 		ENABLE_LDAP = ldapConfig.ENABLE_LDAP;
 
 		notifications = (await getNotifications(localStorage.token, 1, 100, true)).items;
+		deletedNotificationIds = [];
 	});
 </script>
 
 <form
 	class="flex flex-col h-full justify-between space-y-3 text-sm"
 	on:submit|preventDefault={async () => {
-		updateHandler();
+		await updateHandler();
 	}}
 >
 	<div class="space-y-3 overflow-y-scroll scrollbar-hidden h-full">
@@ -1047,8 +1074,14 @@
 							<button
 								class="p-1 px-3 text-xs flex rounded-sm transition"
 								type="button"
+								aria-label={$i18n.t('Add')}
 								on:click={() => {
-									if (notifications.length === 0 || notifications.at(-1).content !== '') {
+									const lastNotification = notifications.at(-1);
+									if (
+										notifications.length === 0 ||
+										(lastNotification?.title ?? '').trim() !== '' ||
+										(lastNotification?.content ?? '').trim() !== ''
+									) {
 										notifications = [
 											...notifications,
 											{
@@ -1079,7 +1112,7 @@
 							</button>
 						</div>
 
-						<NotificationsEditor bind:notifications />
+						<NotificationsEditor bind:notifications bind:deletedNotificationIds />
 					</div>
 				</div>
 			</div>

@@ -181,6 +181,17 @@ class NotificationTable:
             await db.refresh(notification)
             return NotificationModel.model_validate(notification)
 
+    async def delete_notification_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(select(Notification).where(Notification.id == id))
+            notification = result.scalar_one_or_none()
+            if notification is None:
+                return False
+
+            await db.delete(notification)
+            await db.commit()
+            return True
+
     async def set_notifications_from_banners(self, banners: list, db: Optional[AsyncSession] = None) -> list[NotificationModel]:
         async with get_async_db_context(db) as db:
             now = int(time.time())

@@ -81,6 +81,7 @@
 	import PinnedNoteList from './Sidebar/PinnedNoteList.svelte';
 	import Note from '../icons/Note.svelte';
 	import Code from '../icons/Code.svelte';
+	import Settings from '../icons/Settings.svelte';
 	import { slide } from 'svelte/transition';
 	import HotkeyHint from '../common/HotkeyHint.svelte';
 
@@ -1608,45 +1609,67 @@
 				></div>
 				<div class="flex flex-col font-primary">
 					{#if $user !== undefined && $user !== null}
-						<UserMenu
-							role={$user?.role}
-							profile={$config?.features?.enable_user_status ?? true}
-							showActiveUsers={false}
-							className="w-[calc(var(--sidebar-width)-1rem)]"
-							on:show={(e) => {
-								if (e.detail === 'archived-chat') {
-									showArchivedChats.set(true);
-								}
-							}}
-						>
-							<button
-								type="button"
-								class=" flex items-center rounded-2xl py-2 px-1.5 w-full hover:bg-gray-100/50 dark:hover:bg-gray-900/50 transition"
-								aria-label={$i18n.t('User menu')}
-							>
-								<div class=" self-center mr-3 relative flex-shrink-0">
-									<img
-										src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
-										class=" size-7 object-cover rounded-full"
-										alt={$i18n.t('Open User Profile Menu')}
-										aria-label={$i18n.t('Open User Profile Menu')}
-									/>
+						<div class="flex items-center gap-1">
+							<div class="min-w-0 flex-1">
+								<UserMenu
+									role={$user?.role}
+									profile={$config?.features?.enable_user_status ?? true}
+									showActiveUsers={false}
+									className="w-[calc(var(--sidebar-width)-1rem)]"
+									on:show={(e) => {
+										if (e.detail === 'archived-chat') {
+											showArchivedChats.set(true);
+										}
+									}}
+								>
+									<button
+										type="button"
+										class=" flex items-center rounded-2xl py-2 px-1.5 w-full hover:bg-gray-100/50 dark:hover:bg-gray-900/50 transition"
+										aria-label={$i18n.t('User menu')}
+									>
+										<div class=" self-center mr-3 relative flex-shrink-0">
+											<img
+												src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+												class=" size-7 object-cover rounded-full"
+												alt={$i18n.t('Open User Profile Menu')}
+												aria-label={$i18n.t('Open User Profile Menu')}
+											/>
 
-									{#if $config?.features?.enable_user_status}
-										<div class="absolute -bottom-0.5 -right-0.5">
-											<span class="relative flex size-2.5">
-												<span
-													class="relative inline-flex size-2.5 rounded-full {true
-														? 'bg-green-500'
-														: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
-												></span>
-											</span>
+											{#if $config?.features?.enable_user_status}
+												<div class="absolute -bottom-0.5 -right-0.5">
+													<span class="relative flex size-2.5">
+														<span
+															class="relative inline-flex size-2.5 rounded-full {true
+																? 'bg-green-500'
+																: 'bg-gray-300 dark:bg-gray-700'} border-2 border-white dark:border-gray-900"
+														></span>
+													</span>
+												</div>
+											{/if}
 										</div>
-									{/if}
-								</div>
-								<div class=" self-center font-medium truncate">{$user?.name}</div>
-							</button>
-						</UserMenu>
+										<div class=" self-center font-medium truncate">{$user?.name}</div>
+									</button>
+								</UserMenu>
+							</div>
+
+							<Tooltip content={$i18n.t('Settings')} className="shrink-0">
+								<button
+									type="button"
+									class="flex size-9 items-center justify-center rounded-2xl hover:bg-gray-100/50 dark:hover:bg-gray-900/50 transition"
+									aria-label={$i18n.t('Settings')}
+									on:click={async () => {
+										await showSettings.set(true);
+
+										if ($mobile) {
+											await tick();
+											showSidebar.set(false);
+										}
+									}}
+								>
+									<Settings className="size-5" strokeWidth="1.5" />
+								</button>
+							</Tooltip>
+						</div>
 					{/if}
 				</div>
 			</div>

@@ -190,7 +190,7 @@
 	};
 
 	const setNotifications = async () => {
-		const notificationsData = await getNotifications(localStorage.token, 1, 100, true);
+		const notificationsData = await getNotifications(localStorage.token, 1, 100, false);
 		notifications.set(notificationsData.items);
 	};
 

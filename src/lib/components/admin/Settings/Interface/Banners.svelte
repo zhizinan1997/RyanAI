@@ -12,6 +12,7 @@
 	const i18n: Writable<i18nType> = getContext('i18n');
 
 	export let notifications: Notification[] = [];
+	export let deletedNotificationIds: string[] = [];
 
 	let sortable = null;
 	let notificationListElement = null;
@@ -96,10 +97,12 @@
 				class="pr-3"
 				type="button"
 				on:click={() => {
-					notifications[notificationIdx].active = false;
-					notifications = notifications;
+					if (!notification.id.startsWith('local-')) {
+						deletedNotificationIds = [...deletedNotificationIds, notification.id];
+					}
+					notifications = notifications.filter((_, index) => index !== notificationIdx);
 				}}
-				aria-label={$i18n.t('Unpublish')}
+				aria-label={$i18n.t('Delete')}
 			>
 				<XMark className={'size-4'} />
 			</button>

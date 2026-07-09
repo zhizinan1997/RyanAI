@@ -58,13 +58,13 @@
 	};
 
 	const refreshSummary = async () => {
-		const res = await getNotifications(localStorage.token, 1, 100, true);
+		const res = await getNotifications(localStorage.token, 1, 100, false);
 		notifications.set(res.items);
 	};
 
 	const refreshList = async () => {
 		loading = true;
-		const res = await getNotifications(localStorage.token, page, limit, true).catch((error) => {
+		const res = await getNotifications(localStorage.token, page, limit, false).catch((error) => {
 			console.error('Failed to load notifications:', error);
 			return null;
 		});
