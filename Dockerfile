@@ -35,7 +35,7 @@ RUN sed -i 's|https://dl-cdn.alpinelinux.org|https://mirrors.aliyun.com|g' /etc/
 RUN apk add --no-cache git
 
 COPY package.json package-lock.json ./
-RUN npm install -g npm@latest
+RUN npm install -g npm@11.18.0
 RUN npm config set registry https://registry.npmmirror.com && \
     npm config set fetch-retries 5 && \
     npm config set fetch-retry-factor 2 && \
