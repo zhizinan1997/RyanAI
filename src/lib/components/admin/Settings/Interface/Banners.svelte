@@ -1,7 +1,6 @@
 <script lang="ts">
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
-	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import EllipsisVertical from '$lib/components/icons/EllipsisVertical.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import type { Notification } from '$lib/types';
@@ -16,6 +15,17 @@
 
 	let sortable = null;
 	let notificationListElement = null;
+
+	const deleteNotificationItem = (notification: Notification) => {
+		if (
+			!notification.id.startsWith('local-') &&
+			!deletedNotificationIds.includes(notification.id)
+		) {
+			deletedNotificationIds = [...deletedNotificationIds, notification.id];
+		}
+
+		notifications = notifications.filter((item) => item.id !== notification.id);
+	};
 
 	const positionChangeHandler = () => {
 		const notificationIdOrder = Array.from(notificationListElement.children).map((child) =>
@@ -53,12 +63,12 @@
 	class=" flex flex-col gap-3 {notifications?.length > 0 ? 'mt-2' : ''}"
 	bind:this={notificationListElement}
 >
-	{#each notifications as notification, notificationIdx (notification.id)}
+	{#each notifications as notification (notification.id)}
 		<div class=" flex justify-between items-start -ml-1" id="notification-item-{notification.id}">
 			<EllipsisVertical className="size-4 cursor-move item-handle" />
 
 			<div class="flex flex-col flex-1 gap-2">
-				<div class="flex flex-row flex-1 gap-2 items-center">
+				<div class="flex flex-row flex-1 flex-wrap gap-2 items-center">
 					<select
 						class="w-fit capitalize rounded-xl text-xs bg-transparent outline-hidden pl-1 pr-5"
 						bind:value={notification.type}
@@ -76,13 +86,29 @@
 						bind:value={notification.title}
 					/>
 
-					<Tooltip content={$i18n.t('Published')} className="flex h-fit items-center">
-						<Switch bind:state={notification.active} />
-					</Tooltip>
+					<div
+						class="flex h-fit shrink-0 items-center gap-1 text-xs text-gray-600 dark:text-gray-300"
+					>
+						<span id="notification-published-label-{notification.id}">{$i18n.t('Published')}</span>
+						<Switch
+							id="notification-published-{notification.id}"
+							ariaLabelledbyId="notification-published-label-{notification.id}"
+							bind:state={notification.active}
+						/>
+					</div>
 
-					<Tooltip content={$i18n.t('Remember Dismissal')} className="flex h-fit items-center">
-						<Switch bind:state={notification.dismissible} />
-					</Tooltip>
+					<div
+						class="flex h-fit shrink-0 items-center gap-1 text-xs text-gray-600 dark:text-gray-300"
+					>
+						<span id="notification-dismissible-label-{notification.id}">
+							{$i18n.t('Remember Dismissal')}
+						</span>
+						<Switch
+							id="notification-dismissible-{notification.id}"
+							ariaLabelledbyId="notification-dismissible-label-{notification.id}"
+							bind:state={notification.dismissible}
+						/>
+					</div>
 				</div>
 
 				<Textarea
@@ -94,17 +120,14 @@
 			</div>
 
 			<button
-				class="pr-3"
+				class="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white transition"
 				type="button"
-				on:click={() => {
-					if (!notification.id.startsWith('local-')) {
-						deletedNotificationIds = [...deletedNotificationIds, notification.id];
-					}
-					notifications = notifications.filter((_, index) => index !== notificationIdx);
-				}}
+				on:pointerdown|stopPropagation
+				on:click|preventDefault|stopPropagation={() => deleteNotificationItem(notification)}
 				aria-label={$i18n.t('Delete')}
 			>
 				<XMark className={'size-4'} />
+				<span>{$i18n.t('Delete')}</span>
 			</button>
 		</div>
 	{/each}
