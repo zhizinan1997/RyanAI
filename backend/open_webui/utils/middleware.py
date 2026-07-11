@@ -73,6 +73,7 @@ from open_webui.socket.main import (
     get_event_emitter,
 )
 from open_webui.utils.access_control import has_connection_access, has_permission
+from open_webui.utils.ai_error_notifications import report_ai_response_failure
 from open_webui.utils.access_control.files import get_accessible_folder_files
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.code_interpreter import execute_code_jupyter
@@ -3440,20 +3441,27 @@ async def non_streaming_chat_response_handler(response, ctx):
                     error = str(error)
 
                 log.error('Provider returned error (non-streaming): %s', error)
+                error_payload = await report_ai_response_failure(
+                    request,
+                    error=error,
+                    user=user,
+                    metadata=metadata,
+                    model=ctx.get('model'),
+                )
 
                 if not metadata.get('chat_id', '').startswith('channel:'):
                     await Chats.upsert_message_to_chat_by_id_and_message_id(
                         metadata['chat_id'],
                         metadata['message_id'],
                         {
-                            'error': {'content': error},
+                            'error': error_payload,
                         },
                     )
                 if isinstance(error, str) or isinstance(error, dict):
                     await event_emitter(
                         {
                             'type': 'chat:message:error',
-                            'data': {'error': {'content': error}},
+                            'data': {'error': error_payload},
                         }
                     )
 
@@ -4011,17 +4019,24 @@ async def streaming_chat_response_handler(response, ctx):
                                 raw_obj = json.loads(data)
                                 raw_error = raw_obj.get('error') if isinstance(raw_obj, dict) else None
                                 if raw_error:
+                                    error_payload = await report_ai_response_failure(
+                                        request,
+                                        error=raw_error,
+                                        user=user,
+                                        metadata=metadata,
+                                        model=model,
+                                    )
                                     try:
-                                        Chats.upsert_message_to_chat_by_id_and_message_id(
+                                        await Chats.upsert_message_to_chat_by_id_and_message_id(
                                             metadata['chat_id'],
                                             metadata['message_id'],
                                             {
-                                                'error': {'content': raw_error},
+                                                'error': error_payload,
                                             },
                                         )
                                     except Exception:
                                         pass
-                                    await event_emitter({'type': 'chat:completion', 'data': {'error': raw_error}})
+                                    await event_emitter({'type': 'chat:completion', 'data': {'error': error_payload}})
                             except Exception:
                                 pass
                             continue
@@ -4041,6 +4056,25 @@ async def streaming_chat_response_handler(response, ctx):
                             )
 
                             if data:
+                                if data.get('error'):
+                                    error_payload = await report_ai_response_failure(
+                                        request,
+                                        error=data.get('error'),
+                                        user=user,
+                                        metadata=metadata,
+                                        model=model,
+                                    )
+                                    if not metadata.get('chat_id', '').startswith('channel:'):
+                                        await Chats.upsert_message_to_chat_by_id_and_message_id(
+                                            metadata['chat_id'],
+                                            metadata['message_id'],
+                                            {'error': error_payload},
+                                        )
+                                    await event_emitter(
+                                        {'type': 'chat:completion', 'data': {'error': error_payload}}
+                                    )
+                                    continue
+
                                 if 'event' in data and not getattr(request.state, 'direct', False):
                                     await event_emitter(data.get('event', {}))
 
@@ -5023,16 +5057,24 @@ async def streaming_chat_response_handler(response, ctx):
                 ):
                     log.warning('Tool-call iteration limit reached (%s)', CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS)
                     error_content = f'Tool-call limit reached ({CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS} iterations).'
+                    error_payload = await report_ai_response_failure(
+                        request,
+                        error=error_content,
+                        user=user,
+                        metadata=metadata,
+                        model=model,
+                        category='tool_failed',
+                    )
                     if not metadata.get('chat_id', '').startswith('channel:'):
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
                             metadata['chat_id'],
                             metadata['message_id'],
-                            {'error': {'content': error_content}},
+                            {'error': error_payload},
                         )
                     await event_emitter(
                         {
                             'type': 'chat:message:error',
-                            'data': {'error': {'content': error_content}},
+                            'data': {'error': error_payload},
                         }
                     )
 

@@ -64,6 +64,7 @@
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
 	import OutputEditView from './OutputEditView.svelte';
 	import { getOutputText, replaceOutputMessageText, type OutputItem } from './structuredOutput';
+	import type { AIErrorPayload } from '$lib/utils/chatError';
 
 	interface MessageType {
 		id: string;
@@ -88,7 +89,7 @@
 			query?: string;
 		};
 		done: boolean;
-		error?: boolean | { content: string };
+		error?: boolean | AIErrorPayload;
 		sources?: string[];
 		code_executions?: {
 			uuid: string;
@@ -987,7 +988,7 @@
 							{/if}
 
 							{#if message?.error}
-								<Error content={message?.error?.content ?? message.content} />
+								<Error content={message.error === true ? message.content : message.error} />
 							{/if}
 
 							{#if (message?.sources || message?.citations) && (model?.info?.meta?.capabilities?.citations ?? true)}
@@ -1269,8 +1270,7 @@
 											maxWidth: 'min(320px, calc(100vw - 24px))',
 											onCreate(instance) {
 												calcUsageDetailMaxHeight(instance.popper);
-												usageDetailResizeHandler = () =>
-													calcUsageDetailMaxHeight(instance.popper);
+												usageDetailResizeHandler = () => calcUsageDetailMaxHeight(instance.popper);
 												window.addEventListener('resize', usageDetailResizeHandler);
 											},
 											onShow(instance) {

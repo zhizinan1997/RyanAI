@@ -422,7 +422,33 @@
 						{$i18n.t('After verify, will auto change to role User')}
 					</div>
 
-					{#if adminConfig.ENABLE_SIGNUP_VERIFY}
+					<div class="mb-2.5 flex w-full justify-between pr-2">
+						<div class="self-center text-xs font-medium">
+							{$i18n.t('Enable AI Error Email Notifications')}
+						</div>
+
+						<Switch bind:state={adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION} />
+					</div>
+
+					{#if adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
+						<div class="mb-2.5 flex w-full flex-col pr-2">
+							<div class="text-xs font-medium">
+								{$i18n.t('AI Error Email Cooldown Seconds')}
+							</div>
+							<div class="text-xs text-gray-300 font-medium">
+								{$i18n.t('Repeated errors of the same type are suppressed during this period.')}
+							</div>
+							<input
+								class="w-full mt-2 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								type="number"
+								min="1"
+								required
+								bind:value={adminConfig.AI_ERROR_EMAIL_COOLDOWN_SECONDS}
+							/>
+						</div>
+					{/if}
+
+					{#if adminConfig.ENABLE_SIGNUP_VERIFY || adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
 						<div class="mb-2.5 flex w-full flex-col pr-2">
 							<div class=" text-xs font-medium">
 								{$i18n.t('SMTP Host')}
@@ -432,7 +458,8 @@
 								<input
 									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
 									type="text"
-									required={adminConfig.ENABLE_SIGNUP_VERIFY}
+									required={adminConfig.ENABLE_SIGNUP_VERIFY ||
+										adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
 									bind:value={adminConfig.SMTP_HOST}
 								/>
 							</div>
@@ -447,7 +474,8 @@
 								<input
 									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
 									type="text"
-									required={adminConfig.ENABLE_SIGNUP_VERIFY}
+									required={adminConfig.ENABLE_SIGNUP_VERIFY ||
+										adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
 									bind:value={adminConfig.SMTP_PORT}
 								/>
 							</div>
@@ -479,7 +507,8 @@
 								<input
 									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
 									type="text"
-									required={adminConfig.ENABLE_SIGNUP_VERIFY}
+									required={adminConfig.ENABLE_SIGNUP_VERIFY ||
+										adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
 									bind:value={adminConfig.SMTP_USERNAME}
 								/>
 							</div>
@@ -494,7 +523,8 @@
 								class="flex mt-2 space-x-2 w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
 							>
 								<SensitiveInput
-									required={adminConfig.ENABLE_SIGNUP_VERIFY}
+									required={adminConfig.ENABLE_SIGNUP_VERIFY ||
+										adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
 									bind:value={adminConfig.SMTP_PASSWORD}
 								/>
 							</div>
@@ -557,22 +587,23 @@
 						<Switch bind:state={adminConfig.SHOW_ADMIN_DETAILS} />
 					</div>
 
-					{#if adminConfig.SHOW_ADMIN_DETAILS}
-						<div class="mb-2.5 w-full justify-between">
-							<div class="flex w-full justify-between">
-								<div class=" self-center text-xs font-medium">{$i18n.t('Admin Contact Email')}</div>
-							</div>
-
-							<div class="flex mt-2 space-x-2">
-								<input
-									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
-									type="email"
-									placeholder={$i18n.t('Leave empty to use first admin user')}
-									bind:value={adminConfig.ADMIN_EMAIL}
-								/>
-							</div>
+					<div class="mb-2.5 w-full justify-between">
+						<div class="flex w-full justify-between">
+							<div class=" self-center text-xs font-medium">{$i18n.t('Admin Contact Email')}</div>
 						</div>
-					{/if}
+						<div class="text-xs text-gray-300 font-medium">
+							{$i18n.t('Used as the recipient for AI error email notifications.')}
+						</div>
+
+						<div class="flex mt-2 space-x-2">
+							<input
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								type="email"
+								placeholder={$i18n.t('Leave empty to use first admin user')}
+								bind:value={adminConfig.ADMIN_EMAIL}
+							/>
+						</div>
+					</div>
 
 					<div class="mb-2.5">
 						<div class=" self-center text-xs font-medium mb-2">

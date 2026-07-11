@@ -114,6 +114,8 @@ ADMIN_CONFIG_KEYS = {
     'SMTP_USERNAME': 'ui.smtp.username',
     'SMTP_PASSWORD': 'ui.smtp.password',
     'SMTP_SENT_FROM': 'ui.smtp.sent_from',
+    'ENABLE_AI_ERROR_EMAIL_NOTIFICATION': 'notifications.ai_error_email.enabled',
+    'AI_ERROR_EMAIL_COOLDOWN_SECONDS': 'notifications.ai_error_email.cooldown_seconds',
     'ENABLE_API_KEYS': 'auth.enable_api_keys',
     'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS': 'auth.api_key.endpoint_restrictions',
     'API_KEYS_ALLOWED_ENDPOINTS': 'auth.api_key.allowed_endpoints',
@@ -1282,6 +1284,8 @@ class AdminConfig(BaseModel):
     SMTP_USERNAME: str = ''
     SMTP_PASSWORD: str = ''
     SMTP_SENT_FROM: str = ''
+    ENABLE_AI_ERROR_EMAIL_NOTIFICATION: bool = False
+    AI_ERROR_EMAIL_COOLDOWN_SECONDS: int = 600
     ENABLE_API_KEYS: bool
     ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: bool
     API_KEYS_ALLOWED_ENDPOINTS: str
@@ -1325,6 +1329,9 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     updates['automations.max_count'] = int(form_data.AUTOMATION_MAX_COUNT) if form_data.AUTOMATION_MAX_COUNT else ''
     updates['automations.min_interval'] = (
         int(form_data.AUTOMATION_MIN_INTERVAL) if form_data.AUTOMATION_MIN_INTERVAL else ''
+    )
+    updates['notifications.ai_error_email.cooldown_seconds'] = max(
+        1, int(form_data.AI_ERROR_EMAIL_COOLDOWN_SECONDS)
     )
 
     if form_data.DEFAULT_USER_ROLE not in ['pending', 'user', 'admin']:

@@ -68,6 +68,7 @@
 		displayFileHandler
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
+	import { normalizeAIError } from '$lib/utils/chatError';
 
 	import {
 		archiveChatById,
@@ -2605,22 +2606,11 @@
 			`${WEBUI_BASE_URL}/api`
 		).catch(async (error) => {
 			console.log(error);
-
-			let errorMessage = error;
-			if (error?.error?.message) {
-				errorMessage = error.error.message;
-			} else if (error?.message) {
-				errorMessage = error.message;
-			}
-
-			if (typeof errorMessage === 'object') {
-				errorMessage = $i18n.t(`Uh-oh! There was an issue with the response.`);
-			}
-
-			toast.error(`${errorMessage}`);
-			responseMessage.error = {
-				content: error
-			};
+			const normalizedError = normalizeAIError(error);
+			toast.error(
+				normalizedError.content || $i18n.t(`Uh-oh! There was an issue with the response.`)
+			);
+			responseMessage.error = normalizedError;
 
 			responseMessage.done = true;
 
@@ -2675,36 +2665,10 @@
 	};
 
 	const handleOpenAIError = async (error, responseMessage) => {
-		let errorMessage = '';
-		let innerError;
-
-		if (error) {
-			innerError = error;
-		}
-
-		console.error(innerError);
-		if ('detail' in innerError) {
-			// FastAPI error
-			toast.error(innerError.detail);
-			errorMessage = innerError.detail;
-		} else if ('error' in innerError) {
-			// OpenAI error
-			if ('message' in innerError.error) {
-				toast.error(innerError.error.message);
-				errorMessage = innerError.error.message;
-			} else {
-				toast.error(innerError.error);
-				errorMessage = innerError.error;
-			}
-		} else if ('message' in innerError) {
-			// OpenAI error
-			toast.error(innerError.message);
-			errorMessage = innerError.message;
-		}
-
-		responseMessage.error = {
-			content: $i18n.t(`Uh-oh! There was an issue with the response.`) + '\n' + errorMessage
-		};
+		const normalizedError = normalizeAIError(error);
+		console.error(error);
+		toast.error(normalizedError.content || $i18n.t(`Uh-oh! There was an issue with the response.`));
+		responseMessage.error = normalizedError;
 		responseMessage.done = true;
 
 		if (responseMessage.statusHistory) {

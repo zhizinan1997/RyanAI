@@ -1167,6 +1167,12 @@ async def publish_model_provider_request_failed(
     if error:
         data['upstream_message'] = error
 
+    request = request_or_app if hasattr(request_or_app, 'app') else None
+    if request is not None and requested_model:
+        failures = getattr(request.state, 'model_provider_failures', {})
+        failures[str(requested_model)] = data
+        request.state.model_provider_failures = failures
+
     await publish_event(
         request_or_app,
         EVENTS.MODEL_PROVIDER_REQUEST_FAILED,

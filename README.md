@@ -208,6 +208,15 @@ https://your-domain.com/api/v1/credit/callback/alipay
 - `SMTP_SENT_FROM`
 - `SIGNUP_EMAIL_DOMAIN_WHITELIST`，可选，用于限制注册邮箱域名
 
+### AI 异常邮件通知
+
+管理员可在同一页面开启 AI 回答异常邮件通知。通知仅包含脱敏后的技术信息，不包含用户提问或对话正文。
+
+- `ENABLE_AI_ERROR_EMAIL_NOTIFICATION`，默认 `False`
+- `AI_ERROR_EMAIL_COOLDOWN_SECONDS`，默认 `600`
+- `ADMIN_EMAIL`，告警收件人
+- SMTP 参数与邮箱验证功能共用
+
 ## 项目结构
 
 ```text

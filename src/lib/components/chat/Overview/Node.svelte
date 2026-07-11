@@ -1,30 +1,35 @@
 <script lang="ts">
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
-	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
+	import { Handle, Position } from '@xyflow/svelte';
 	import { getContext } from 'svelte';
+	import type { Writable } from 'svelte/store';
+	import type { i18n as i18nType } from 'i18next';
 
 	import ProfileImage from '../Messages/ProfileImage.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Heart from '$lib/components/icons/Heart.svelte';
 	import { getOutputText } from '../Messages/structuredOutput';
+	import { getAIErrorDescription, normalizeAIError } from '$lib/utils/chatError';
 
-	const i18n = getContext('i18n');
+	const i18n: Writable<i18nType> = getContext('i18n');
 
-	type $$Props = NodeProps;
-	export let data: $$Props['data'];
+	export let data: any;
 
 	const getMessageContent = (nodeData: any) =>
 		getOutputText(nodeData?.message?.output) || nodeData?.message?.content || '';
 
 	$: messageContent = getMessageContent(data);
+	$: errorSummary = data?.message?.error
+		? $i18n.t(getAIErrorDescription(normalizeAIError(data.message.error).category))
+		: '';
 </script>
 
 <div
 	class="px-4 py-3 shadow-md rounded-xl dark:bg-black bg-white border border-gray-100 dark:border-gray-900 w-60 h-20 group"
 >
 	<Tooltip
-		content={data?.message?.error ? data.message.error.content : messageContent}
-		class="w-full"
+		content={data?.message?.error ? errorSummary : messageContent}
+		className="w-full"
 		allowHTML={false}
 	>
 		{#if data.message.role === 'user'}
@@ -41,7 +46,7 @@
 					</div>
 
 					{#if data?.message?.error}
-						<div class="text-red-500 line-clamp-2 text-xs mt-0.5">{data.message.error.content}</div>
+						<div class="text-red-500 line-clamp-2 text-xs mt-0.5">{errorSummary}</div>
 					{:else}
 						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{messageContent}</div>
 					{/if}
@@ -80,7 +85,7 @@
 
 					{#if data?.message?.error}
 						<div class="text-red-500 line-clamp-2 text-xs mt-0.5">
-							{data.message.error.content}
+							{errorSummary}
 						</div>
 					{:else}
 						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{messageContent}</div>

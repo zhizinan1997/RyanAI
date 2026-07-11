@@ -200,6 +200,7 @@ from open_webui.tasks import (
 from open_webui.utils import logger
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.actions import chat_action as chat_action_handler
+from open_webui.utils.ai_error_notifications import AIResponseFailure, report_ai_response_failure
 from open_webui.utils.asgi_middleware import (
     AuthTokenMiddleware,
     CommitSessionMiddleware,
@@ -1494,7 +1495,7 @@ async def chat_completion(
                         detail = detail.get('message', detail.get('detail', str(detail)))
                 except Exception:
                     detail = f'Provider returned HTTP {response.status_code}'
-                raise Exception(detail)
+                raise AIResponseFailure(str(detail), status_code=response.status_code)
 
             ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, events)
 
@@ -1515,6 +1516,14 @@ async def chat_completion(
         except Exception as e:
             error_detail = e.detail if isinstance(e, HTTPException) else str(e)
             log.error('Error processing chat payload: %s', error_detail)
+            error_payload = await report_ai_response_failure(
+                request,
+                error=error_detail,
+                user=user,
+                metadata=metadata,
+                model=model,
+                status_code=getattr(e, 'status_code', None),
+            )
             if metadata.get('chat_id') and metadata.get('message_id'):
                 # Update the chat message with the error
                 try:
@@ -1526,7 +1535,7 @@ async def chat_completion(
                             metadata['message_id'],
                             {
                                 'parentId': metadata.get('user_message_id', None),
-                                'error': {'content': error_detail},
+                                'error': error_payload,
                             },
                         )
 
@@ -1535,7 +1544,7 @@ async def chat_completion(
                         await event_emitter(
                             {
                                 'type': 'chat:message:error',
-                                'data': {'error': {'content': error_detail}},
+                                'data': {'error': error_payload},
                             }
                         )
                         await event_emitter(
@@ -1550,8 +1559,8 @@ async def chat_completion(
                 # a proper HTTP response; without this the function would
                 # return None which FastAPI serializes as null.  #23924
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=error_detail,
+                    status_code=getattr(e, 'status_code', None) or status.HTTP_400_BAD_REQUEST,
+                    detail=error_payload,
                 )
         finally:
             # Clean up MCP clients.  Each client is isolated so one
