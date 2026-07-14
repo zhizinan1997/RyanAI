@@ -67,6 +67,7 @@ from open_webui.utils.auth import (
     get_http_authorization_cred,
     get_password_hash,
     get_verified_user,
+    has_unconsumed_email_verification,
     invalidate_token,
     send_verify_email,
     validate_password,
@@ -98,6 +99,8 @@ SPLASH_NOTICE_MEDIA_ALLOWED_SUFFIXES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'
 # Forgive us our failed attempts, as we forgive those
 # who exceed their allotted rate against this gate.
 signin_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=5 * 3, window=60 * 3)
+signup_verify_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=10, window=10 * 60)
+signup_verify_resend_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=3, window=10 * 60)
 
 ADMIN_CONFIG_KEYS = {
     'SHOW_ADMIN_DETAILS': 'auth.admin.show',
@@ -870,6 +873,11 @@ async def signin(
 ############################
 
 
+class SignupVerifyForm(BaseModel):
+    email: str
+    code: str
+
+
 async def signup_handler(
     request: Request,
     email: str,
@@ -1012,9 +1020,62 @@ async def signup_verify(request: Request, code: str, db: AsyncSession = Depends(
 
     user = await Users.get_user_by_email(email, db=db)
     if user and user.role == 'pending':
-        await Users.update_user_role_by_id(user.id, await Config.get('ui.default_user_role'), db=db)
+        activation_role = await Config.get('ui.default_user_role', 'user') or 'user'
+        if activation_role == 'pending':
+            activation_role = 'user'
+        await Users.update_user_role_by_id(user.id, activation_role, db=db)
 
     return RedirectResponse(url=(await Config.get('webui.url', '')) or '/')
+
+
+@router.post('/signup_verify')
+async def signup_verify_code(
+    request: Request,
+    form_data: SignupVerifyForm,
+    response: Response,
+    db: AsyncSession = Depends(get_async_session),
+):
+    email = form_data.email.strip().lower()
+    code = form_data.code.strip()
+    if not validate_email_format(email):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Invalid email address')
+    if not re.fullmatch(r'\d{6}', code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='请输入 6 位数字验证码')
+    if signup_verify_rate_limiter.is_limited(email):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail='验证码尝试次数过多，请稍后再试')
+
+    user = await Users.get_user_by_email(email, db=db)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail='待激活账号不存在')
+
+    verified_email = await verify_email_by_code(code=code, email=email, db=db)
+    if not verified_email:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='验证码无效或已过期')
+
+    if user.role == 'pending':
+        activation_role = await Config.get('ui.default_user_role', 'user') or 'user'
+        if activation_role == 'pending':
+            activation_role = 'user'
+        await Users.update_user_role_by_id(user.id, activation_role, db=db)
+        user = await Users.get_user_by_id(user.id, db=db)
+
+    return await create_session_response(request, user, db, response, set_cookie=True, source='email_verify')
+
+
+@router.post('/signup_verify/resend')
+async def resend_signup_verify_code(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    if user.role != 'pending':
+        return {'status': True}
+    if not await has_unconsumed_email_verification(user.email, db=db):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail='该账号不属于邮箱验证码待激活状态')
+    if signup_verify_resend_rate_limiter.is_limited(user.email):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail='验证码发送过于频繁，请稍后再试')
+
+    await send_verify_email(email=user.email, db=db)
+    return {'status': True}
 
 
 @router.post('/signout')

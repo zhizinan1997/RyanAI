@@ -57,11 +57,14 @@ EMAIL_VERIFY_CODE_TTL = 24 * 60 * 60
 
 VERIFY_EMAIL_TEMPLATE = """<!doctype html>
 <html>
+<head><meta charset="UTF-8"></head>
 <body style="font-family: Arial, sans-serif; color: #111827;">
-  <h2>Verify your email</h2>
-  <p>Please click the link below to activate your account.</p>
-  <p><a href="%(link)s">Activate account</a></p>
-  <p>If you did not request this, you can ignore this email.</p>
+  <h2>验证您的邮箱</h2>
+  <p>您好，感谢您注册 %(webui_name)s。</p>
+  <p>您的邮箱验证码是：</p>
+  <div style="font-size: 32px; font-weight: 700; letter-spacing: 8px; margin: 20px 0;">%(code)s</div>
+  <p>请在注册页面输入上述 6 位验证码。验证码 24 小时内有效。</p>
+  <p>如果您没有进行注册操作，可以忽略此邮件。</p>
 </body>
 </html>"""
 
@@ -331,33 +334,45 @@ def get_email_code_hash(code: str) -> str:
 
 
 async def send_verify_email(email: str, db: AsyncSession | None = None):
-    code = secrets.token_urlsafe(32)
     now = int(time.time())
-    verification = await EmailVerifications.create_verification(
-        email=email.lower(),
-        code_hash=get_email_code_hash(code=code),
-        expires_at=now + EMAIL_VERIFY_CODE_TTL,
-        db=db,
-    )
+    code = ''
+    verification = None
+    for _ in range(5):
+        code = f'{secrets.randbelow(900000) + 100000:06d}'
+        verification = await EmailVerifications.create_verification(
+            email=email.lower(),
+            code_hash=get_email_code_hash(code=code),
+            expires_at=now + EMAIL_VERIFY_CODE_TTL,
+            db=db,
+        )
+        if verification:
+            break
     if not verification:
         raise HTTPException(status_code=500, detail='Failed to create email verification code.')
 
-    webui_url = (await Config.get('webui.url', '')) or ''
-    link = f'{webui_url.rstrip("/")}/api/v1/auths/signup_verify/{code}'
     send_email(
         receiver=email,
-        subject=f'{WEBUI_NAME} Email Verify',
-        body=VERIFY_EMAIL_TEMPLATE % {'link': link},
+        subject=f'{WEBUI_NAME} 邮箱验证码',
+        body=VERIFY_EMAIL_TEMPLATE % {'code': code, 'webui_name': WEBUI_NAME},
     )
 
 
-async def verify_email_by_code(code: str, db: AsyncSession | None = None) -> str | None:
+async def verify_email_by_code(
+    code: str,
+    email: str | None = None,
+    db: AsyncSession | None = None,
+) -> str | None:
     if not code:
         return None
     return await EmailVerifications.consume_code(
         code_hash=get_email_code_hash(code=code),
+        email=email,
         db=db,
     )
+
+
+async def has_unconsumed_email_verification(email: str, db: AsyncSession | None = None) -> bool:
+    return await EmailVerifications.has_unconsumed_verification(email=email, db=db)
 
 
 async def get_current_user(

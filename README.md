@@ -208,6 +208,8 @@ https://your-domain.com/api/v1/credit/callback/alipay
 - `SMTP_SENT_FROM`
 - `SIGNUP_EMAIL_DOMAIN_WHITELIST`，可选，用于限制注册邮箱域名
 
+注册后，系统会发送中文 6 位数字验证码；用户在“待激活用户”界面输入验证码即可激活账号。验证码默认 24 小时有效，并支持重新发送。
+
 ### AI 异常邮件通知
 
 管理员可在同一页面开启 AI 回答异常邮件通知。通知仅包含脱敏后的技术信息，不包含用户提问或对话正文。

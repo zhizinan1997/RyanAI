@@ -37,6 +37,26 @@ class EmailVerificationModel(BaseModel):
 
 
 class EmailVerificationTable:
+    async def has_unconsumed_verification(
+        self,
+        email: str,
+        db: AsyncSession | None = None,
+    ) -> bool:
+        try:
+            async with get_async_db_context(db) as session:
+                result = await session.execute(
+                    select(EmailVerification.code_hash)
+                    .where(
+                        EmailVerification.email == email.lower(),
+                        EmailVerification.used_at.is_(None),
+                    )
+                    .limit(1)
+                )
+                return result.scalar_one_or_none() is not None
+        except Exception as e:
+            log.error(f'Error checking email verification: {e}')
+            return False
+
     async def create_verification(
         self,
         email: str,
@@ -77,15 +97,15 @@ class EmailVerificationTable:
     async def consume_code(
         self,
         code_hash: str,
+        email: str | None = None,
         db: AsyncSession | None = None,
     ) -> str | None:
         try:
             async with get_async_db_context(db) as session:
-                result = await session.execute(
-                    select(EmailVerification)
-                    .where(EmailVerification.code_hash == code_hash)
-                    .with_for_update()
-                )
+                query = select(EmailVerification).where(EmailVerification.code_hash == code_hash)
+                if email:
+                    query = query.where(EmailVerification.email == email.lower())
+                result = await session.execute(query.with_for_update())
                 verification = result.scalars().first()
                 if not verification:
                     return None
