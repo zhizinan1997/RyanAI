@@ -192,6 +192,7 @@ def _email_body(context: dict, repeated_count: int) -> str:
         ('供应商', context.get('provider') or '未知'),
         ('服务地址', context.get('base_url') or '未知'),
         ('用户 ID', context.get('user_id') or '未知'),
+        ('用户姓名', context.get('user_name') or '未知'),
         ('用户邮箱', context.get('user_email') or '未知'),
         ('Chat ID', context.get('chat_id') or '未知'),
         ('Message ID', context.get('message_id') or '未知'),
@@ -304,6 +305,7 @@ async def report_ai_response_failure(
     webui_url = str((await Config.get('webui.url', WEBUI_URL)) or '').rstrip('/')
     chat_id = str(metadata.get('chat_id') or '')
     user_id = str(getattr(user, 'id', '') or '')
+    user_name = str(getattr(user, 'name', '') or '')
     user_email = str(getattr(user, 'email', '') or '')
     request_id = str(
         getattr(state, 'request_id', '')
@@ -319,6 +321,7 @@ async def report_ai_response_failure(
         'provider': provider_name,
         'base_url': redact_url(base_url),
         'user_id': user_id,
+        'user_name': user_name,
         'user_email': user_email,
         'chat_id': chat_id,
         'message_id': str(metadata.get('message_id') or ''),

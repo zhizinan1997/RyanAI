@@ -85,7 +85,7 @@ class AIErrorReportingTests(IsolatedAsyncioTestCase):
             'message_id': 'message-1',
             'user_message': {'content': 'private user question'},
         }
-        user = SimpleNamespace(id='user-1', email='user@example.com')
+        user = SimpleNamespace(id='user-1', name='Ryan', email='user@example.com')
         with (
             patch.object(notifications.Config, 'get', side_effect=config_get),
             patch.object(notifications, '_schedule_notification', side_effect=capture),
@@ -114,4 +114,5 @@ class AIErrorReportingTests(IsolatedAsyncioTestCase):
         self.assertEqual(receiver, 'admin@example.com')
         self.assertNotIn('private user question', body)
         self.assertNotIn('sk-abcdefghijk', body)
+        self.assertIn('Ryan', body)
         self.assertIn('chat-1', body)
