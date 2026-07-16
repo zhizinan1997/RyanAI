@@ -14,6 +14,7 @@ describe('chatError', () => {
 
 		expect(error).toEqual({
 			content: 'Console API returned 429',
+			technical_detail: undefined,
 			category: 'rate_limited',
 			status_code: 429,
 			incident_id: 'ERR-20260711-ABCDEF12',
@@ -36,5 +37,17 @@ describe('chatError', () => {
 		expect(getAIErrorDescription('rate_limited')).toContain('too many requests');
 		expect(getAIErrorDescription('context_length_exceeded')).toContain('context limit');
 		expect(getAIErrorDescription('unknown_error')).toContain('system error');
+		expect(getAIErrorDescription('response_interrupted')).toContain('retry once');
+		expect(getAIErrorDescription('insufficient_credit')).toContain('enough credit');
+		expect(getAIErrorDescription('invalid_request')).toContain('missing valid conversation content');
+	});
+
+	it('classifies EOF and credit errors before generic status handling', () => {
+		expect(normalizeAIError('unexpected EOF')).toMatchObject({
+			category: 'response_interrupted'
+		});
+		expect(normalizeAIError('您的绘图积分不足')).toMatchObject({
+			category: 'insufficient_credit'
+		});
 	});
 });

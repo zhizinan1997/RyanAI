@@ -1,7 +1,8 @@
-export type AIErrorNotificationStatus = 'submitted' | 'disabled' | 'failed';
+export type AIErrorNotificationStatus = 'submitted' | 'disabled' | 'failed' | 'not_required';
 
 export type AIErrorPayload = {
 	content: string;
+	technical_detail?: string;
 	category?: string;
 	status_code?: number | null;
 	incident_id?: string;
@@ -11,6 +12,30 @@ export type AIErrorPayload = {
 
 const categoryFromContent = (content: string): string => {
 	const marker = content.toLowerCase();
+	if (
+		marker.includes('积分不足') ||
+		marker.includes('余额不足') ||
+		marker.includes('insufficient credit') ||
+		marker.includes('not enough credit')
+	) {
+		return 'insufficient_credit';
+	}
+	if (
+		marker.includes('unexpected eof') ||
+		marker.includes('stream ended: reason=eof') ||
+		marker.includes('response body closed') ||
+		marker.includes('internal_error; received from peer') ||
+		marker.includes('stream error: stream id')
+	) {
+		return 'response_interrupted';
+	}
+	if (
+		marker.includes('field messages is required') ||
+		marker.includes('messages is required') ||
+		marker.includes('缺少有效的对话内容')
+	) {
+		return 'invalid_request';
+	}
 	if (
 		/\b429\b/.test(marker) ||
 		marker.includes('rate limit') ||
@@ -67,6 +92,7 @@ export const normalizeAIError = (value: unknown): AIErrorPayload => {
 	);
 	return {
 		content,
+		technical_detail: candidate.technical_detail,
 		category: candidate.category ?? categoryFromContent(content),
 		status_code: candidate.status_code ?? null,
 		incident_id: candidate.incident_id,
@@ -77,6 +103,12 @@ export const normalizeAIError = (value: unknown): AIErrorPayload => {
 
 export const getAIErrorDescription = (category?: string): string => {
 	switch (category) {
+		case 'response_interrupted':
+			return 'The AI response was interrupted while it was being delivered. Please retry once. If it still fails, switch models or start a new chat.';
+		case 'insufficient_credit':
+			return 'There is not enough credit to complete this request. Please get more credit and try again.';
+		case 'invalid_request':
+			return 'The request is missing valid conversation content. Please refresh the page and retry once. If it still fails, start a new chat.';
 		case 'rate_limited':
 			return 'The model service is receiving too many requests and cannot answer right now. Please try again later.';
 		case 'authentication_failed':

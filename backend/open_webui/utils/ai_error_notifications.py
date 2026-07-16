@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_COOLDOWN_SECONDS = 600
 MAX_ERROR_LENGTH = 2000
+NON_ALERT_CATEGORIES = {'insufficient_credit'}
 _memory_cooldowns: dict[str, dict[str, float | int]] = {}
 _memory_lock = asyncio.Lock()
 _notification_tasks: set[asyncio.Task] = set()
@@ -70,6 +71,41 @@ def classify_ai_error(error, status_code: int | None = None) -> tuple[str, int |
     status_code = _extract_status_code(error_text, status_code)
     marker = error_text.lower()
 
+    if any(
+        value in marker
+        for value in (
+            '积分不足',
+            '余额不足',
+            'insufficient credit',
+            'not enough credit',
+        )
+    ):
+        return 'insufficient_credit', status_code
+    if any(
+        value in marker
+        for value in (
+            'unexpected eof',
+            'stream ended: reason=eof',
+            'response body closed',
+            'not enough data to satisfy transfer length header',
+            'transferencodingerror',
+            'stream disconnected before valid content',
+            'internal_error; received from peer',
+            'stream error: stream id',
+        )
+    ):
+        return 'response_interrupted', status_code
+    if any(
+        value in marker
+        for value in (
+            'field messages is required',
+            'messages is required',
+            'missing messages',
+            '缺少有效的对话内容',
+            '请求中缺少有效的对话内容',
+        )
+    ):
+        return 'invalid_request', status_code
     if status_code == 429 or any(value in marker for value in ('rate limit', 'too many requests', 'quota exceeded')):
         return 'rate_limited', status_code
     if status_code in (401, 403) or any(
@@ -106,6 +142,28 @@ def classify_ai_error(error, status_code: int | None = None) -> tuple[str, int |
     if status_code is not None and status_code >= 500:
         return 'server_failed', status_code
     return 'unknown_error', status_code
+
+
+def get_user_facing_error(category: str, error_text: str = '') -> str:
+    if category == 'insufficient_credit':
+        return error_text or '当前积分不足，暂时无法完成本次请求。请获取积分后再试。'
+
+    messages = {
+        'response_interrupted': (
+            'AI 回答在传输过程中意外中断。请先重试一次；如果仍然失败，请切换模型或新建对话后再试。'
+        ),
+        'invalid_request': '本次请求缺少有效的对话内容。请刷新页面后重试一次；如果仍然失败，请新建对话。',
+        'rate_limited': '当前使用人数较多，请稍等片刻后重试一次。',
+        'authentication_failed': '模型服务配置异常，请联系管理员处理。',
+        'model_not_found': '当前模型暂不可用，请切换其他模型后重试。',
+        'context_length_exceeded': '当前对话内容过长，请精简内容或新建对话后重试。',
+        'content_filtered': '请求内容未通过模型的安全检查，请修改内容后重试。',
+        'timeout': 'AI 响应时间过长。请先重试一次；如果仍然失败，请切换模型。',
+        'network_error': '暂时无法连接模型服务。请稍后重试一次。',
+        'tool_failed': '回答所需的工具执行失败。请重试一次；如果仍然失败，请关闭相关工具后再试。',
+        'server_failed': '模型服务暂时异常。请先重试一次；如果仍然失败，请切换模型。',
+    }
+    return messages.get(category, 'AI 未能完成本次回答。请先重试一次；如果仍然失败，请切换模型或新建对话。')
 
 
 def redact_sensitive_text(value) -> str:
@@ -251,6 +309,7 @@ async def report_ai_response_failure(
     detected_category, detected_status = classify_ai_error(error_text, status_code)
     category = category or detected_category
     status_code = detected_status
+    user_message = get_user_facing_error(category, error_text)
     incident_id = f'ERR-{dt.datetime.now(dt.UTC).strftime("%Y%m%d")}-{uuid4().hex[:8].upper()}'
 
     message_key = ':'.join(
@@ -266,7 +325,8 @@ async def report_ai_response_failure(
         return incidents[message_key]
 
     payload = {
-        'content': error_text,
+        'content': user_message,
+        'technical_detail': error_text,
         'category': category,
         'status_code': status_code,
         'incident_id': incident_id,
@@ -275,6 +335,10 @@ async def report_ai_response_failure(
     if state is not None and message_key:
         incidents[message_key] = payload
         state.ai_error_incidents = incidents
+
+    if category in NON_ALERT_CATEGORIES:
+        payload['admin_notification'] = 'not_required'
+        return payload
 
     enabled = _config_bool(await Config.get('notifications.ai_error_email.enabled', False))
     if not enabled:

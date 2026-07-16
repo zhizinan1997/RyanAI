@@ -68,7 +68,7 @@
 		displayFileHandler
 	} from '$lib/utils';
 	import { AudioQueue } from '$lib/utils/audio';
-	import { normalizeAIError } from '$lib/utils/chatError';
+	import { getAIErrorDescription, normalizeAIError } from '$lib/utils/chatError';
 
 	import {
 		archiveChatById,
@@ -2607,9 +2607,7 @@
 		).catch(async (error) => {
 			console.log(error);
 			const normalizedError = normalizeAIError(error);
-			toast.error(
-				normalizedError.content || $i18n.t(`Uh-oh! There was an issue with the response.`)
-			);
+			toast.error($i18n.t(getAIErrorDescription(normalizedError.category)));
 			responseMessage.error = normalizedError;
 
 			responseMessage.done = true;
@@ -2667,7 +2665,7 @@
 	const handleOpenAIError = async (error, responseMessage) => {
 		const normalizedError = normalizeAIError(error);
 		console.error(error);
-		toast.error(normalizedError.content || $i18n.t(`Uh-oh! There was an issue with the response.`));
+		toast.error($i18n.t(getAIErrorDescription(normalizedError.category)));
 		responseMessage.error = normalizedError;
 		responseMessage.done = true;
 

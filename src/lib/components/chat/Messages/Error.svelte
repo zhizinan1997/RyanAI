@@ -10,6 +10,7 @@
 
 	$: error = normalizeAIError(content);
 	$: description = $i18n.t(getAIErrorDescription(error.category));
+	$: technicalDetail = error.technical_detail;
 </script>
 
 <div
@@ -53,7 +54,7 @@
 				</div>
 			{/if}
 
-			{#if error.content}
+			{#if technicalDetail}
 				<details class="group mt-2 text-xs text-gray-400 dark:text-gray-500">
 					<summary
 						class="w-fit cursor-pointer select-none rounded outline-none transition-colors hover:text-gray-600 focus-visible:ring-2 focus-visible:ring-gray-400/40 dark:hover:text-gray-300"
@@ -63,7 +64,7 @@
 					<div
 						class="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/[0.035] px-2.5 py-2 font-mono text-[11px] leading-4 text-gray-500 dark:bg-white/[0.04] dark:text-gray-400"
 					>
-						{error.content}
+						{technicalDetail}
 					</div>
 				</details>
 			{/if}

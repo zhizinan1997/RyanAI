@@ -15,6 +15,10 @@ class AIErrorClassificationTests(IsolatedAsyncioTestCase):
             ('request timed out', None, 'timeout', None),
             ('upstream failed', 503, 'server_failed', 503),
             ('Tool-call limit reached', None, 'tool_failed', None),
+            ('unexpected EOF', None, 'response_interrupted', None),
+            ('stream error: stream ID 1; INTERNAL_ERROR; received from peer', None, 'response_interrupted', None),
+            ('您的绘图积分不足', 403, 'insufficient_credit', 403),
+            ('field messages is required', 500, 'invalid_request', 500),
         ]
         for error, status, expected_category, expected_status in cases:
             with self.subTest(error=error):
@@ -59,6 +63,37 @@ class AIErrorReportingTests(IsolatedAsyncioTestCase):
         self.assertEqual(payload['status_code'], 429)
         self.assertEqual(payload['admin_notification'], 'disabled')
         self.assertRegex(payload['incident_id'], r'^ERR-\d{8}-[A-F0-9]{8}$')
+
+    async def test_insufficient_credit_does_not_notify_admin(self):
+        with (
+            patch.object(notifications.Config, 'get', AsyncMock(return_value=True)),
+            patch.object(notifications, '_schedule_notification') as schedule,
+        ):
+            payload = await notifications.report_ai_response_failure(
+                self.request(),
+                error='您的绘图积分不足，请获取积分后再试。',
+                status_code=403,
+                metadata={'chat_id': 'chat-credit', 'message_id': 'message-credit'},
+                model={'id': 'image-model'},
+            )
+
+        self.assertEqual(payload['category'], 'insufficient_credit')
+        self.assertEqual(payload['admin_notification'], 'not_required')
+        self.assertEqual(payload['content'], '您的绘图积分不足，请获取积分后再试。')
+        schedule.assert_not_called()
+
+    async def test_eof_returns_chinese_user_message_and_keeps_technical_detail(self):
+        with patch.object(notifications.Config, 'get', AsyncMock(return_value=False)):
+            payload = await notifications.report_ai_response_failure(
+                self.request(),
+                error='unexpected EOF',
+                metadata={'chat_id': 'chat-eof', 'message_id': 'message-eof'},
+                model={'id': 'gpt-lite'},
+            )
+
+        self.assertEqual(payload['category'], 'response_interrupted')
+        self.assertIn('请先重试一次', payload['content'])
+        self.assertEqual(payload['technical_detail'], 'unexpected EOF')
 
     async def test_submits_redacted_email_and_suppresses_duplicate(self):
         values = {

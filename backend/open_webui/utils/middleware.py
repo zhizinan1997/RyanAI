@@ -75,7 +75,7 @@ from open_webui.socket.main import (
 from open_webui.utils.access_control import has_connection_access, has_permission
 from open_webui.utils.ai_error_notifications import report_ai_response_failure
 from open_webui.utils.access_control.files import get_accessible_folder_files
-from open_webui.utils.chat import generate_chat_completion
+from open_webui.utils.chat import generate_chat_completion, validate_chat_messages
 from open_webui.utils.code_interpreter import execute_code_jupyter
 from open_webui.utils.context_compaction import compact_messages_for_request
 from open_webui.utils.files import (
@@ -2162,6 +2162,8 @@ async def connect_mcp_server(
 
 
 async def process_chat_payload(request, form_data, user, metadata, model):
+    validate_chat_messages(form_data, stage='process_chat_payload:input')
+
     # Ensure chat_id is always a string — external API clients may omit it.
     if not isinstance(metadata.get('chat_id'), str):
         metadata['chat_id'] = ''
@@ -2435,6 +2437,8 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         )
     except Exception as e:
         raise Exception(f'{e}')
+
+    validate_chat_messages(form_data, stage='process_chat_payload:after_inlet_filters')
 
     features = form_data.pop('features', None) or {}
     extra_params['__features__'] = features
