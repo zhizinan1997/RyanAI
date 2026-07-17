@@ -33,7 +33,6 @@ from open_webui.utils.filter import (
     get_sorted_filter_ids,
     process_filter_functions,
 )
-from open_webui.utils.ai_error_notifications import AIResponseFailure
 from open_webui.utils.credit.usage import CreditDeduct
 from open_webui.utils.credit.utils import check_credit_by_user_id
 from open_webui.utils.models import check_model_access, get_all_models
@@ -46,27 +45,6 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
-
-
-def validate_chat_messages(form_data: dict, *, stage: str = 'generate_chat_completion') -> list[dict]:
-    messages = form_data.get('messages') if isinstance(form_data, dict) else None
-    if isinstance(messages, list) and messages and all(isinstance(message, dict) for message in messages):
-        return messages
-
-    metadata = form_data.get('metadata', {}) if isinstance(form_data, dict) else {}
-    log.warning(
-        'Rejected chat completion without valid messages: stage=%s model=%s task=%s chat_id=%s message_id=%s keys=%s',
-        stage,
-        form_data.get('model') if isinstance(form_data, dict) else None,
-        metadata.get('task') if isinstance(metadata, dict) else None,
-        metadata.get('chat_id') if isinstance(metadata, dict) else None,
-        metadata.get('message_id') if isinstance(metadata, dict) else None,
-        sorted(form_data.keys()) if isinstance(form_data, dict) else [],
-    )
-    raise AIResponseFailure(
-        '请求中缺少有效的对话内容。请刷新页面后重试一次；如果仍然失败，请新建对话。',
-        status_code=400,
-    )
 
 
 # When the question has been asked, let silence not be the
@@ -180,7 +158,6 @@ async def generate_chat_completion(
     bypass_filter: bool = False,
     bypass_system_prompt: bool = False,
 ):
-    validate_chat_messages(form_data)
     check_credit_by_user_id(user_id=user.id, form_data=form_data)
 
     log.debug(f'generate_chat_completion: {form_data}')
