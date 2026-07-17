@@ -1689,6 +1689,8 @@ ENABLE_AI_ERROR_EMAIL_NOTIFICATION = os.getenv('ENABLE_AI_ERROR_EMAIL_NOTIFICATI
 
 AI_ERROR_EMAIL_COOLDOWN_SECONDS = int(os.getenv('AI_ERROR_EMAIL_COOLDOWN_SECONDS', '600'))
 
+AI_ERROR_EMAIL_RECIPIENT_MODE = os.getenv('AI_ERROR_EMAIL_RECIPIENT_MODE', 'admin')
+
 ENABLE_LOGIN_FORM = os.getenv('ENABLE_LOGIN_FORM', 'True').lower() == 'true'
 
 ENABLE_PASSWORD_CHANGE_FORM = os.getenv('ENABLE_PASSWORD_CHANGE_FORM', 'True').lower() == 'true'
@@ -3172,6 +3174,7 @@ DEFAULT_CONFIG = {
     'ui.smtp.sent_from': SMTP_SENT_FROM,
     'notifications.ai_error_email.enabled': ENABLE_AI_ERROR_EMAIL_NOTIFICATION,
     'notifications.ai_error_email.cooldown_seconds': AI_ERROR_EMAIL_COOLDOWN_SECONDS,
+    'notifications.ai_error_email.recipient_mode': AI_ERROR_EMAIL_RECIPIENT_MODE,
     'ui.enable_login_form': ENABLE_LOGIN_FORM,
     'ui.enable_password_change_form': ENABLE_PASSWORD_CHANGE_FORM,
     'ui.default_locale': DEFAULT_LOCALE,

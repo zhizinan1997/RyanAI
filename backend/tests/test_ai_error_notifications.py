@@ -104,6 +104,7 @@ class AIErrorReportingTests(IsolatedAsyncioTestCase):
             'ui.smtp.username': 'sender@example.com',
             'ui.smtp.password': 'smtp-password',
             'notifications.ai_error_email.cooldown_seconds': 600,
+            'notifications.ai_error_email.recipient_mode': 'admin_and_user',
             'webui.url': 'https://ryan.example.com',
         }
 
@@ -141,13 +142,114 @@ class AIErrorReportingTests(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(first['admin_notification'], 'submitted')
+        self.assertEqual(first['user_notification'], 'submitted')
+        self.assertEqual(first['recipient_mode'], 'admin_and_user')
         self.assertFalse(first['notification_suppressed'])
         self.assertEqual(second['admin_notification'], 'submitted')
+        self.assertEqual(second['user_notification'], 'submitted')
         self.assertTrue(second['notification_suppressed'])
+        self.assertEqual(len(scheduled), 2)
+
+        receivers = [item[0] for item in scheduled]
+        self.assertEqual(set(receivers), {'admin@example.com', 'user@example.com'})
+
+        admin_mail = next(item for item in scheduled if item[0] == 'admin@example.com')
+        user_mail = next(item for item in scheduled if item[0] == 'user@example.com')
+        _, admin_subject, admin_body, _ = admin_mail
+        _, user_subject, user_body, _ = user_mail
+
+        self.assertIn('告警', admin_subject)
+        self.assertIn('AI 回答失败通知', user_subject)
+        self.assertNotIn('private user question', admin_body)
+        self.assertNotIn('private user question', user_body)
+        self.assertNotIn('sk-abcdefghijk', admin_body)
+        self.assertNotIn('sk-abcdefghijk', user_body)
+        self.assertIn('Ryan', admin_body)
+        self.assertIn('chat-1', admin_body)
+        self.assertIn('脱敏后的系统错误', admin_body)
+        self.assertIn('Ryan AI', admin_body)
+        self.assertIn('ADMIN ALERT', admin_body)
+        self.assertIn('linear-gradient', admin_body)
+        self.assertIn('说明', user_body)
+        self.assertIn('USER NOTICE', user_body)
+        self.assertNotIn('脱敏后的系统错误', user_body)
+
+    async def test_merges_user_email_when_user_is_admin(self):
+        values = {
+            'notifications.ai_error_email.enabled': True,
+            'auth.admin.email': 'admin@example.com',
+            'ui.smtp.host': 'smtp.example.com',
+            'ui.smtp.port': '465',
+            'ui.smtp.username': 'sender@example.com',
+            'ui.smtp.password': 'smtp-password',
+            'notifications.ai_error_email.cooldown_seconds': 600,
+            'notifications.ai_error_email.recipient_mode': 'admin_and_user',
+            'webui.url': 'https://ryan.example.com',
+        }
+
+        async def config_get(key, default=None):
+            return values.get(key, default)
+
+        scheduled = []
+
+        def capture(receiver, subject, body, incident_id):
+            scheduled.append((receiver, subject, body, incident_id))
+
+        user = SimpleNamespace(id='admin-1', name='Admin', email='admin@example.com')
+        with (
+            patch.object(notifications.Config, 'get', side_effect=config_get),
+            patch.object(notifications, '_schedule_notification', side_effect=capture),
+        ):
+            payload = await notifications.report_ai_response_failure(
+                self.request(),
+                error='Console API returned 500',
+                user=user,
+                metadata={'chat_id': 'chat-admin', 'message_id': 'message-admin'},
+                model={'id': 'grok-4.3', 'provider': 'console'},
+            )
+
+        self.assertEqual(payload['admin_notification'], 'submitted')
+        self.assertEqual(payload['user_notification'], 'merged_with_admin')
         self.assertEqual(len(scheduled), 1)
-        receiver, _subject, body, _incident_id = scheduled[0]
-        self.assertEqual(receiver, 'admin@example.com')
-        self.assertNotIn('private user question', body)
-        self.assertNotIn('sk-abcdefghijk', body)
-        self.assertIn('Ryan', body)
-        self.assertIn('chat-1', body)
+        self.assertEqual(scheduled[0][0], 'admin@example.com')
+
+    async def test_admin_only_recipient_mode_skips_user_email(self):
+        values = {
+            'notifications.ai_error_email.enabled': True,
+            'auth.admin.email': 'admin@example.com',
+            'ui.smtp.host': 'smtp.example.com',
+            'ui.smtp.port': '465',
+            'ui.smtp.username': 'sender@example.com',
+            'ui.smtp.password': 'smtp-password',
+            'notifications.ai_error_email.cooldown_seconds': 600,
+            'notifications.ai_error_email.recipient_mode': 'admin',
+            'webui.url': 'https://ryan.example.com',
+        }
+
+        async def config_get(key, default=None):
+            return values.get(key, default)
+
+        scheduled = []
+
+        def capture(receiver, subject, body, incident_id):
+            scheduled.append((receiver, subject, body, incident_id))
+
+        user = SimpleNamespace(id='user-2', name='Taylor', email='taylor@example.com')
+        with (
+            patch.object(notifications.Config, 'get', side_effect=config_get),
+            patch.object(notifications, '_schedule_notification', side_effect=capture),
+        ):
+            payload = await notifications.report_ai_response_failure(
+                self.request(),
+                error='Console API returned 503',
+                user=user,
+                metadata={'chat_id': 'chat-admin-only', 'message_id': 'message-admin-only'},
+                model={'id': 'gpt-lite', 'provider': 'console'},
+            )
+
+        self.assertEqual(payload['admin_notification'], 'submitted')
+        self.assertEqual(payload['user_notification'], 'disabled')
+        self.assertEqual(payload['recipient_mode'], 'admin')
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(scheduled[0][0], 'admin@example.com')
+        self.assertIn('Ryan AI', scheduled[0][2])

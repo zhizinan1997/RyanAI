@@ -178,6 +178,9 @@
 		await Promise.all([
 			(async () => {
 				adminConfig = await getAdminConfig(localStorage.token);
+				if (!adminConfig.AI_ERROR_EMAIL_RECIPIENT_MODE) {
+					adminConfig.AI_ERROR_EMAIL_RECIPIENT_MODE = 'admin';
+				}
 			})(),
 
 			(async () => {
@@ -431,6 +434,22 @@
 					</div>
 
 					{#if adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
+						<div class="mb-2.5 flex w-full flex-col pr-2">
+							<div class="text-xs font-medium">
+								{$i18n.t('AI Error Email Recipients')}
+							</div>
+							<div class="text-xs text-gray-300 font-medium">
+								{$i18n.t('Choose whether only admins receive AI error emails, or both admins and the affected user.')}
+							</div>
+							<select
+								class="w-full mt-2 rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								bind:value={adminConfig.AI_ERROR_EMAIL_RECIPIENT_MODE}
+							>
+								<option value="admin">{$i18n.t('Admin only')}</option>
+								<option value="admin_and_user">{$i18n.t('Admin and user')}</option>
+							</select>
+						</div>
+
 						<div class="mb-2.5 flex w-full flex-col pr-2">
 							<div class="text-xs font-medium">
 								{$i18n.t('AI Error Email Cooldown Seconds')}

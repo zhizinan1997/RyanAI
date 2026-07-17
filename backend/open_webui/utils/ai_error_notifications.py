@@ -26,6 +26,10 @@ log = logging.getLogger(__name__)
 DEFAULT_COOLDOWN_SECONDS = 600
 MAX_ERROR_LENGTH = 2000
 NON_ALERT_CATEGORIES = {'insufficient_credit'}
+RECIPIENT_MODE_ADMIN = 'admin'
+RECIPIENT_MODE_ADMIN_AND_USER = 'admin_and_user'
+DEFAULT_RECIPIENT_MODE = RECIPIENT_MODE_ADMIN
+VALID_RECIPIENT_MODES = {RECIPIENT_MODE_ADMIN, RECIPIENT_MODE_ADMIN_AND_USER}
 _memory_cooldowns: dict[str, dict[str, float | int]] = {}
 _memory_lock = asyncio.Lock()
 _notification_tasks: set[asyncio.Task] = set()
@@ -237,14 +241,167 @@ async def _cooldown_decision(app, signature: str, cooldown: int) -> tuple[bool, 
         return False, int(entry['count'])
 
 
-def _email_body(context: dict, repeated_count: int) -> str:
-    def esc(value) -> str:
-        return html.escape(str(value or ''))
+def _normalize_recipient_mode(value) -> str:
+    mode = str(value or DEFAULT_RECIPIENT_MODE).strip().lower().replace('-', '_')
+    if mode in {'admin_only', 'admin'}:
+        return RECIPIENT_MODE_ADMIN
+    if mode in {'admin_and_user', 'admin_user', 'both', 'all'}:
+        return RECIPIENT_MODE_ADMIN_AND_USER
+    return DEFAULT_RECIPIENT_MODE
 
+
+def _format_display_time(value: str) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return '未知'
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace('Z', '+00:00'))
+        return parsed.astimezone(dt.UTC).strftime('%Y-%m-%d %H:%M:%S UTC')
+    except Exception:
+        return text
+
+
+def _category_label(category: str) -> str:
+    labels = {
+        'insufficient_credit': '积分不足',
+        'response_interrupted': '回复中断',
+        'invalid_request': '请求无效',
+        'rate_limited': '请求限流',
+        'authentication_failed': '鉴权失败',
+        'model_not_found': '模型不可用',
+        'context_length_exceeded': '上下文过长',
+        'content_filtered': '内容过滤',
+        'timeout': '响应超时',
+        'network_error': '网络异常',
+        'tool_failed': '工具执行失败',
+        'server_failed': '服务异常',
+        'unknown_error': '未知错误',
+    }
+    return labels.get(str(category or ''), str(category or '未知错误'))
+
+
+def _render_detail_rows(rows: list[tuple[str, object]]) -> str:
+    parts: list[str] = []
+    for index, (label, value) in enumerate(rows):
+        border = '' if index == len(rows) - 1 else 'border-bottom:1px solid #edf2f7;'
+        parts.append(
+            f'''
+            <tr>
+              <td style="padding:12px 0;{border}width:34%;vertical-align:top;font-size:12px;font-weight:700;letter-spacing:0.02em;color:#64748b;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                {html.escape(str(label))}
+              </td>
+              <td style="padding:12px 0;{border}vertical-align:top;font-size:13px;line-height:1.55;color:#0f172a;word-break:break-word;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                {html.escape(str(value if value not in (None, '') else '未知'))}
+              </td>
+            </tr>'''
+        )
+    return ''.join(parts)
+
+
+def _render_email_shell(
+    *,
+    badge: str,
+    title: str,
+    subtitle: str,
+    body_html: str,
+    cta_url: str = '',
+    cta_label: str = '',
+    footer_note: str = '',
+) -> str:
+    badge_html = html.escape(badge)
+    title_html = html.escape(title)
+    subtitle_html = html.escape(subtitle)
+    footer_html = html.escape(footer_note or '本邮件由 Ryan AI 自动发送，请勿直接回复。')
+    cta_html = ''
+    if cta_url and cta_label:
+        cta_html = f'''
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px 0;">
+            <tr>
+              <td style="border-radius:999px;background:linear-gradient(135deg,#38bdf8,#2563eb);box-shadow:0 12px 28px rgba(37,99,235,0.28);">
+                <a href="{html.escape(cta_url)}" style="display:inline-block;padding:12px 22px;font-size:13px;font-weight:700;color:#ffffff;text-decoration:none;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                  {html.escape(cta_label)}
+                </a>
+              </td>
+            </tr>
+          </table>'''
+
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title_html}</title>
+</head>
+<body style="margin:0;padding:0;background:#edf3fb;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+    {subtitle_html}
+  </div>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;background:linear-gradient(135deg,#edf3fb 0%,#f7fafc 42%,#dfe9f5 100%);padding:28px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;max-width:640px;">
+          <tr>
+            <td style="padding:0 0 16px 0;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="width:12px;height:12px;border-radius:999px;background:linear-gradient(135deg,#38bdf8,#2563eb);box-shadow:0 6px 20px rgba(37,99,235,0.35);"></td>
+                  <td style="padding-left:10px;font-size:14px;font-weight:700;letter-spacing:0.04em;color:#0f172a;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                    Ryan AI
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="border:1px solid rgba(255,255,255,0.72);border-radius:24px;background:rgba(255,255,255,0.94);box-shadow:0 36px 90px -42px rgba(15,23,42,0.28);overflow:hidden;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td style="padding:22px 28px 18px 28px;background:linear-gradient(135deg,rgba(56,189,248,0.16),rgba(37,99,235,0.10));border-bottom:1px solid rgba(226,232,240,0.9);">
+                    <div style="display:inline-block;padding:6px 12px;border-radius:999px;background:rgba(37,99,235,0.10);color:#1d4ed8;font-size:11px;font-weight:700;letter-spacing:0.04em;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                      {badge_html}
+                    </div>
+                    <div style="margin-top:14px;font-size:24px;line-height:1.25;font-weight:800;color:#0f172a;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                      {title_html}
+                    </div>
+                    <div style="margin-top:8px;font-size:14px;line-height:1.6;color:#64748b;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                      {subtitle_html}
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:24px 28px 10px 28px;">
+                    {body_html}
+                    {cta_html}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 28px 24px 28px;">
+                    <div style="padding-top:16px;border-top:1px solid #edf2f7;font-size:12px;line-height:1.6;color:#94a3b8;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+                      {footer_html}
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:18px 8px 0 8px;font-size:11px;color:#94a3b8;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+              © Ryan AI · Intelligent Assistant
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>'''
+
+
+def _admin_email_body(context: dict, repeated_count: int) -> str:
     rows = [
-        ('异常编号', context['incident_id']),
-        ('发生时间', context['created_at']),
-        ('错误分类', context['category']),
+        ('异常编号', context.get('incident_id')),
+        ('发生时间', _format_display_time(context.get('created_at'))),
+        ('错误分类', _category_label(context.get('category'))),
         ('HTTP 状态码', context.get('status_code') or '未知'),
         ('模型', context.get('model') or '未知'),
         ('供应商', context.get('provider') or '未知'),
@@ -257,27 +414,86 @@ def _email_body(context: dict, repeated_count: int) -> str:
         ('请求/事件 ID', context.get('request_id') or '未知'),
         ('上一冷却窗口重复次数', repeated_count),
     ]
-    rows_html = ''.join(f'<tr><th align="left">{esc(label)}</th><td>{esc(value)}</td></tr>' for label, value in rows)
-    chat_link = context.get('chat_link')
-    chat_html = f'<p><a href="{esc(chat_link)}">打开相关会话</a></p>' if chat_link else ''
-    return f"""
-    <h2>AI 回答异常</h2>
-    <table cellpadding="6" cellspacing="0" border="1">{rows_html}</table>
-    <h3>脱敏后的系统错误</h3>
-    <pre>{esc(context.get('error'))}</pre>
-    {chat_html}
-    <p><strong>隐私说明：</strong>出于隐私保护，本通知未包含用户提问正文、历史对话、上传文件内容或 AI 已生成内容。</p>
-    """
+    error_text = html.escape(str(context.get('error') or '无'))
+    body_html = f'''
+      <p style="margin:0 0 18px 0;font-size:14px;line-height:1.7;color:#334155;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+        检测到一次 AI 回答失败。以下为脱敏后的运维信息，便于定位与处理。
+      </p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;margin:0 0 18px 0;">
+        {_render_detail_rows(rows)}
+      </table>
+      <div style="margin:0 0 18px 0;padding:14px 16px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;">
+        <div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:8px;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+          脱敏后的系统错误
+        </div>
+        <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.55;color:#0f172a;font-family:Consolas,'SFMono-Regular',Menlo,monospace;">{error_text}</pre>
+      </div>
+      <p style="margin:0 0 18px 0;font-size:12px;line-height:1.6;color:#94a3b8;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+        隐私说明：本通知未包含用户提问正文、历史对话、上传文件内容或 AI 已生成内容。
+      </p>
+    '''
+    return _render_email_shell(
+        badge='ADMIN ALERT',
+        title='AI 回答异常告警',
+        subtitle=f"事件 {context.get('incident_id') or ''} · {_category_label(context.get('category'))}",
+        body_html=body_html,
+        cta_url=str(context.get('chat_link') or ''),
+        cta_label='打开相关会话',
+        footer_note='本邮件由 Ryan AI 自动发送给管理员。请优先检查模型连接、鉴权配置与上游服务状态。',
+    )
+
+
+def _user_email_body(context: dict) -> str:
+    user_name = str(context.get('user_name') or '').strip()
+    greeting = f'{html.escape(user_name)}，您好：' if user_name else '您好：'
+    rows = [
+        ('异常编号', context.get('incident_id')),
+        ('发生时间', _format_display_time(context.get('created_at'))),
+        ('模型', context.get('model') or '未知'),
+        ('说明', context.get('user_message') or 'AI 未能完成本次回答，请稍后重试。'),
+    ]
+    body_html = f'''
+      <p style="margin:0 0 12px 0;font-size:14px;line-height:1.7;color:#334155;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+        {greeting}
+      </p>
+      <p style="margin:0 0 18px 0;font-size:14px;line-height:1.7;color:#334155;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+        您的一次 AI 对话请求未能成功完成。我们已记录该问题，并通知管理员处理。您可稍后重试，或切换其他模型后再试。
+      </p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;margin:0 0 18px 0;">
+        {_render_detail_rows(rows)}
+      </table>
+      <p style="margin:0 0 18px 0;font-size:12px;line-height:1.6;color:#94a3b8;font-family:'PingFang SC','Microsoft YaHei','Segoe UI',sans-serif;">
+        如问题持续出现，请联系管理员并提供上方异常编号。本通知未包含您的提问正文、历史对话、上传文件内容或 AI 已生成内容。
+      </p>
+    '''
+    return _render_email_shell(
+        badge='USER NOTICE',
+        title='AI 回答失败通知',
+        subtitle='本次对话未能完成，系统已自动记录',
+        body_html=body_html,
+        cta_url=str(context.get('chat_link') or ''),
+        cta_label='返回相关会话',
+        footer_note='本邮件由 Ryan AI 自动发送。如非本人操作，可忽略本通知。',
+    )
+
+
+# Keep the old name as an alias for any external/test callers.
+def _email_body(context: dict, repeated_count: int) -> str:
+    return _admin_email_body(context, repeated_count)
+
+
 
 
 async def _send_notification(receiver: str, subject: str, body: str, incident_id: str) -> None:
     try:
         await asyncio.to_thread(send_email, receiver=receiver, subject=subject, body=body)
     except Exception:
-        log.exception('Failed to send AI error notification email for %s', incident_id)
+        log.exception('Failed to send AI error notification email for %s to %s', incident_id, receiver)
 
 
 def _schedule_notification(receiver: str, subject: str, body: str, incident_id: str) -> None:
+    if not receiver:
+        return
     task = asyncio.create_task(_send_notification(receiver, subject, body, incident_id))
     _notification_tasks.add(task)
     task.add_done_callback(_notification_tasks.discard)
@@ -331,6 +547,7 @@ async def report_ai_response_failure(
         'status_code': status_code,
         'incident_id': incident_id,
         'admin_notification': 'disabled',
+        'user_notification': 'disabled',
     }
     if state is not None and message_key:
         incidents[message_key] = payload
@@ -338,20 +555,33 @@ async def report_ai_response_failure(
 
     if category in NON_ALERT_CATEGORIES:
         payload['admin_notification'] = 'not_required'
+        payload['user_notification'] = 'not_required'
         return payload
 
     enabled = _config_bool(await Config.get('notifications.ai_error_email.enabled', False))
     if not enabled:
         return payload
 
+    recipient_mode = _normalize_recipient_mode(
+        await Config.get('notifications.ai_error_email.recipient_mode', DEFAULT_RECIPIENT_MODE)
+    )
+    notify_user = recipient_mode == RECIPIENT_MODE_ADMIN_AND_USER
+    payload['recipient_mode'] = recipient_mode
+
     admin_email = str((await Config.get('auth.admin.email', ADMIN_EMAIL)) or '').strip()
+    user_email = str(getattr(user, 'email', '') or '').strip() if notify_user else ''
     smtp_host = str((await Config.get('ui.smtp.host', SMTP_HOST)) or '').strip()
     smtp_port = str((await Config.get('ui.smtp.port', SMTP_PORT)) or '').strip()
     smtp_username = str((await Config.get('ui.smtp.username', SMTP_USERNAME)) or '').strip()
     smtp_password = str((await Config.get('ui.smtp.password', SMTP_PASSWORD)) or '').strip()
-    if not admin_email or not smtp_host or smtp_port not in ('465', '587') or not smtp_username or not smtp_password:
+    smtp_ready = bool(smtp_host and smtp_port in ('465', '587') and smtp_username and smtp_password)
+    if not smtp_ready or (not admin_email and not user_email):
         payload['admin_notification'] = 'failed'
-        log.warning('AI error notification is enabled but ADMIN_EMAIL or SMTP configuration is incomplete')
+        payload['user_notification'] = 'failed' if notify_user else 'disabled'
+        log.warning(
+            'AI error notification is enabled but SMTP configuration is incomplete, '
+            'or neither ADMIN_EMAIL nor the user email is available'
+        )
         return payload
 
     provider_name = _provider_name(model, provider)
@@ -361,16 +591,20 @@ async def report_ai_response_failure(
     )
     signature = f'{provider_name}|{model_id}|{category}|{status_code or ""}'
     should_send, repeated_count = await _cooldown_decision(request.app, signature, cooldown)
-    payload['admin_notification'] = 'submitted'
     payload['notification_suppressed'] = not should_send
     if not should_send:
+        payload['admin_notification'] = 'submitted' if admin_email else 'skipped'
+        if notify_user:
+            payload['user_notification'] = 'submitted' if user_email else 'skipped'
+        else:
+            payload['user_notification'] = 'disabled'
         return payload
 
     webui_url = str((await Config.get('webui.url', WEBUI_URL)) or '').rstrip('/')
     chat_id = str(metadata.get('chat_id') or '')
     user_id = str(getattr(user, 'id', '') or '')
     user_name = str(getattr(user, 'name', '') or '')
-    user_email = str(getattr(user, 'email', '') or '')
+    actual_user_email = str(getattr(user, 'email', '') or '').strip()
     request_id = str(
         getattr(state, 'request_id', '')
         or request.headers.get('x-request-id', '')
@@ -386,7 +620,8 @@ async def report_ai_response_failure(
         'base_url': redact_url(base_url),
         'user_id': user_id,
         'user_name': user_name,
-        'user_email': user_email,
+        'user_email': actual_user_email,
+        'user_message': user_message,
         'chat_id': chat_id,
         'message_id': str(metadata.get('message_id') or ''),
         'request_id': request_id,
@@ -394,6 +629,24 @@ async def report_ai_response_failure(
         'error': error_text,
     }
     subject_status = f'[{status_code}]' if status_code else ''
-    subject = f'[RyanAI告警]{subject_status} {model_id or "AI"} 回答失败'
-    _schedule_notification(admin_email, subject, _email_body(context, repeated_count), incident_id)
+    admin_subject = f'[RyanAI告警]{subject_status} {model_id or "AI"} 回答失败'
+    user_subject = f'[RyanAI]{subject_status} AI 回答失败通知'
+
+    if admin_email:
+        _schedule_notification(admin_email, admin_subject, _admin_email_body(context, repeated_count), incident_id)
+        payload['admin_notification'] = 'submitted'
+    else:
+        payload['admin_notification'] = 'skipped'
+        log.warning('AI error admin notification skipped: ADMIN_EMAIL is not configured')
+
+    if not notify_user:
+        payload['user_notification'] = 'disabled'
+    elif actual_user_email and actual_user_email.lower() != admin_email.lower():
+        _schedule_notification(actual_user_email, user_subject, _user_email_body(context), incident_id)
+        payload['user_notification'] = 'submitted'
+    elif actual_user_email and actual_user_email.lower() == admin_email.lower():
+        payload['user_notification'] = 'merged_with_admin'
+    else:
+        payload['user_notification'] = 'skipped'
+
     return payload
