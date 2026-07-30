@@ -80,7 +80,13 @@
 		$selectedFolder.permission !== 'write';
 </script>
 
-<div class="m-auto w-full max-w-[58rem] px-2 @2xl:px-20 translate-y-6 py-24 text-center">
+<div
+	class="relative isolate m-auto w-full max-w-[58rem] px-2 @2xl:px-20 translate-y-6 py-24 text-center"
+>
+	{#if !$selectedFolder}
+		<div class="zero-state-glow" aria-hidden="true"></div>
+	{/if}
+
 	{#if $temporaryChatEnabled}
 		<Tooltip
 			content={$i18n.t("This chat won't appear in history and your messages will not be saved.")}
@@ -266,3 +272,100 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.zero-state-glow {
+		--zero-state-glow-blur: 56px;
+
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: min(1040px, 92vw);
+		height: 560px;
+		transform: translate(-50%, -50%);
+		pointer-events: none;
+		z-index: -1;
+		filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
+		opacity: 0.72;
+		animation: zero-state-glow-color-shift 42s ease-in-out infinite;
+	}
+
+	.zero-state-glow::before,
+	.zero-state-glow::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: 999px;
+	}
+
+	.zero-state-glow::before {
+		background: radial-gradient(
+			ellipse at 50% 50%,
+			rgba(112, 188, 255, 0.92) 0%,
+			rgba(165, 216, 255, 0.66) 34%,
+			rgba(211, 239, 255, 0.34) 56%,
+			rgba(255, 255, 255, 0) 78%
+		);
+	}
+
+	.zero-state-glow::after {
+		inset: -18% -14%;
+		background:
+			radial-gradient(ellipse at 36% 40%, rgba(255, 160, 214, 0.18), transparent 46%),
+			radial-gradient(ellipse at 68% 48%, rgba(119, 155, 255, 0.18), transparent 52%);
+		mix-blend-mode: multiply;
+	}
+
+	:global(.dark) .zero-state-glow {
+		opacity: 0.5;
+	}
+
+	:global(.dark) .zero-state-glow::before {
+		background: radial-gradient(
+			ellipse at 50% 50%,
+			rgba(87, 171, 255, 0.76) 0%,
+			rgba(88, 143, 255, 0.48) 34%,
+			rgba(70, 104, 190, 0.22) 56%,
+			rgba(0, 0, 0, 0) 78%
+		);
+	}
+
+	:global(.dark) .zero-state-glow::after {
+		background:
+			radial-gradient(ellipse at 36% 40%, rgba(255, 119, 211, 0.16), transparent 46%),
+			radial-gradient(ellipse at 68% 48%, rgba(101, 124, 255, 0.18), transparent 52%);
+		mix-blend-mode: screen;
+	}
+
+	@keyframes zero-state-glow-color-shift {
+		0%,
+		100% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
+		}
+		25% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(42deg) saturate(1.04);
+		}
+		50% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(96deg) saturate(1.06);
+		}
+		75% {
+			filter: blur(var(--zero-state-glow-blur)) hue-rotate(168deg) saturate(1.03);
+		}
+	}
+
+	@media (max-width: 768px) {
+		.zero-state-glow {
+			width: 94vw;
+			height: 420px;
+			top: 48%;
+			--zero-state-glow-blur: 42px;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.zero-state-glow {
+			animation: none;
+			filter: blur(var(--zero-state-glow-blur));
+		}
+	}
+</style>
