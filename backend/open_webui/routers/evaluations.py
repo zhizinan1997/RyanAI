@@ -427,7 +427,7 @@ async def create_feedback(
         EVENTS.FEEDBACK_CREATED,
         actor=user,
         subject_id=feedback.id,
-        data={'rating': getattr(feedback, 'rating', None)},
+        data={'rating': (feedback.data or {}).get('rating')},
     )
     return feedback
 
@@ -466,7 +466,7 @@ async def update_feedback_by_id(
         EVENTS.FEEDBACK_UPDATED,
         actor=user,
         subject_id=feedback.id,
-        data={'rating': getattr(feedback, 'rating', None)},
+        data={'rating': (feedback.data or {}).get('rating')},
     )
     return feedback
 

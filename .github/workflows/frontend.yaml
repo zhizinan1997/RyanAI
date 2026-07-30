@@ -40,6 +40,8 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
         run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
   # ── Vitest unit tests ────────────────────────────────────────────────────
   unit-tests:

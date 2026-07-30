@@ -6,10 +6,8 @@
 	import * as FocusTrap from 'focus-trap';
 	export let show = true;
 	export let size = 'md';
-	export let backdropToneClassName = 'bg-black/30 dark:bg-black/60';
-	export let backdropClassName = '';
 	export let containerClassName = 'p-3';
-	export let className = 'bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm rounded-4xl';
+	export let className = 'bg-white dark:bg-gray-900 rounded-4xl';
 
 	let modalElement = null;
 	let mounted = false;
@@ -39,26 +37,6 @@
 		} else {
 			return 'w-[56rem]';
 		}
-	};
-
-	const handleBackdropClick = (event: MouseEvent) => {
-		// check if user is selecting text
-		const selection = window.getSelection();
-		if (selection && selection.toString().length > 0) {
-			return;
-		}
-
-		// check if the click target contains selectable text elements
-		const target = event.target as Element;
-		if (
-			target &&
-			target.closest &&
-			target.closest('.select-text, input, textarea, [contenteditable]')
-		) {
-			return;
-		}
-
-		show = false;
 	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
@@ -143,12 +121,13 @@
 		bind:this={modalElement}
 		aria-modal="true"
 		role="dialog"
-		class="modal fixed top-0 right-0 left-0 bottom-0 {backdropToneClassName} w-full h-screen max-h-[100dvh] {containerClassName} {backdropClassName} flex justify-center z-9999 overflow-y-auto overscroll-contain"
+		class="modal fixed top-0 right-0 left-0 bottom-0 bg-black/45 dark:bg-black/60 w-full h-screen max-h-[100dvh] {containerClassName}  flex justify-center z-9999 overflow-y-auto overscroll-contain"
 		style="scrollbar-gutter: stable;"
 		in:fade={{ duration: 10 }}
-		on:mousedown={handleBackdropClick}
+		on:mousedown={() => {
+			show = false;
+		}}
 	>
-		<slot name="backdrop" />
 		<div
 			class="m-auto max-w-full {sizeToWidth(size)} {size !== 'full'
 				? 'mx-2'

@@ -1,21 +1,25 @@
 <script lang="ts">
-	import { getContext, createEventDispatcher, onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { toast } from 'svelte-sonner';
+	import { marked } from 'marked';
+	import DOMPurify from 'dompurify';
+
+	import { onMount, getContext, tick, createEventDispatcher } from 'svelte';
+	import { blur, fade } from 'svelte/transition';
 
 	const dispatch = createEventDispatcher();
 
-	import { getChatList } from '$lib/apis/chats';
+	import { updateFolderById } from '$lib/apis/folders';
 
 	import {
 		config,
 		user,
 		models as _models,
 		temporaryChatEnabled,
-		selectedFolder,
-		chats,
-		currentChatPage
+		selectedFolder
 	} from '$lib/stores';
-	import { getGreetingLine } from '$lib/utils/greeting';
+	import { refreshChatList } from '$lib/stores/chatList';
+	import { sanitizeResponseContent, extractCurlyBraceWords } from '$lib/utils';
+	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import Suggestions from './Suggestions.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -31,14 +35,13 @@
 
 	export let autoScroll = false;
 
-	export let atSelectedModel: any;
+	export let atSelectedModel: Model | undefined;
 	export let selectedModels: [''];
 
 	export let history;
 
 	export let prompt = '';
 	export let files = [];
-	export let params = {};
 	export let messageInput = null;
 
 	export let selectedToolIds = [];
@@ -55,6 +58,7 @@
 	export let onUpload: Function = (e) => {};
 	export let onSelect = (e) => {};
 	export let onChange = (e) => {};
+	export let onWebSearchToggle: Function = () => {};
 
 	export let toolServers = [];
 
@@ -62,117 +66,193 @@
 
 	let models = [];
 	let selectedModelIdx = 0;
-	let greetingNow = new Date();
-	$: greetingName = $user?.name || 'Ryan';
-	$: greetingLine = getGreetingLine(greetingName, greetingNow);
-
-	onMount(() => {
-		greetingNow = new Date();
-
-		const greetingTimer = window.setInterval(() => {
-			greetingNow = new Date();
-		}, 60 * 1000);
-
-		return () => {
-			window.clearInterval(greetingTimer);
-		};
-	});
 
 	$: if (selectedModels.length > 0) {
 		selectedModelIdx = models.length - 1;
 	}
 
 	$: models = selectedModels.map((id) => $_models.find((m) => m.id === id));
+
+	// True when viewing a shared folder the current user doesn't own AND lacks write access
+	$: folderReadOnly =
+		$selectedFolder != null &&
+		$selectedFolder.user_id !== $user?.id &&
+		$selectedFolder.permission !== 'write';
 </script>
 
-<div
-	class="relative isolate m-auto w-full max-w-6xl px-2 @2xl:px-20 translate-y-6 py-24 text-center"
->
-	{#if !$selectedFolder}
-		<div class="zero-state-glow" aria-hidden="true"></div>
-	{/if}
-
+<div class="m-auto w-full max-w-[58rem] px-2 @2xl:px-20 translate-y-6 py-24 text-center">
 	{#if $temporaryChatEnabled}
 		<Tooltip
 			content={$i18n.t("This chat won't appear in history and your messages will not be saved.")}
 			className="w-full flex justify-center mb-0.5"
 			placement="top"
 		>
-			<div class="flex items-center gap-2 text-gray-500 text-base my-2 w-fit">
-				<EyeSlash strokeWidth="2.5" className="size-4" />{$i18n.t('Temporary Chat')}
+			<div class="flex items-center gap-1.5 text-gray-500 text-xs my-1 w-fit">
+				<EyeSlash strokeWidth="2" className="size-3.5" />{$i18n.t('Temporary Chat')}
 			</div>
 		</Tooltip>
 	{/if}
 
-	<div
-		class="w-full text-3xl text-gray-800 dark:text-gray-100 text-center flex items-center gap-4 font-primary"
-	>
+	<div class="w-full text-3xl text-gray-800 dark:text-gray-100 text-center flex items-center gap-4">
 		<div class="w-full flex flex-col justify-center items-center">
 			{#if $selectedFolder}
 				<FolderTitle
 					folder={$selectedFolder}
+					readOnly={folderReadOnly}
 					onUpdate={async (folder) => {
-						await chats.set(await getChatList(localStorage.token, $currentChatPage));
-						currentChatPage.set(1);
+						await refreshChatList(localStorage.token);
 					}}
 					onDelete={async () => {
-						await chats.set(await getChatList(localStorage.token, $currentChatPage));
-						currentChatPage.set(1);
+						await refreshChatList(localStorage.token);
 
 						selectedFolder.set(null);
 					}}
 				/>
 			{:else}
-				<div
-					class="w-full max-w-3xl px-5 text-center text-3xl @sm:text-3xl leading-snug"
-					in:fade={{ duration: 100 }}
-				>
-					{greetingLine}
+				<div class="flex flex-row justify-center gap-2.5 @sm:gap-3 w-fit px-5 max-w-xl">
+					<div class="flex shrink-0 justify-center">
+						<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 100 }}>
+							{#each models as model, modelIdx}
+								<Tooltip
+									content={(models[modelIdx]?.info?.meta?.tags ?? [])
+										.map((tag) => tag.name.toUpperCase())
+										.join(', ')}
+									placement="top"
+								>
+									<button
+										aria-hidden={models.length <= 1}
+										aria-label={$i18n.t('Get information on {{name}} in the UI', {
+											name: models[modelIdx]?.name
+										})}
+										on:click={() => {
+											selectedModelIdx = modelIdx;
+										}}
+									>
+										<img
+											src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id}&lang=${$i18n.language}`}
+											class=" size-9 @sm:size-10 rounded-2xl"
+											aria-hidden="true"
+											draggable="false"
+											on:error={(e) => {
+												e.currentTarget.src = '/favicon.png';
+											}}
+										/>
+									</button>
+								</Tooltip>
+							{/each}
+						</div>
+					</div>
+
+					<div
+						class=" text-2xl @sm:text-2xl line-clamp-1 flex items-center"
+						in:fade={{ duration: 100 }}
+					>
+						{#if models[selectedModelIdx]?.name}
+							<Tooltip
+								content={models[selectedModelIdx]?.name}
+								placement="top"
+								className=" flex items-center "
+							>
+								<span class="line-clamp-1">
+									{models[selectedModelIdx]?.name}
+								</span>
+							</Tooltip>
+						{:else}
+							{$i18n.t('Hello, {{name}}', { name: $user?.name })}
+						{/if}
+					</div>
+				</div>
+
+				<div class="flex mt-1 mb-2">
+					<div in:fade={{ duration: 100, delay: 50 }}>
+						{#if models[selectedModelIdx]?.info?.meta?.description ?? null}
+							<Tooltip
+								className=" w-fit"
+								content={DOMPurify.sanitize(
+									marked.parse(
+										sanitizeResponseContent(
+											models[selectedModelIdx]?.info?.meta?.description ?? ''
+										).replaceAll('\n', '<br>')
+									)
+								)}
+								placement="top"
+							>
+								<div
+									class="mt-0.5 px-2 text-sm font-normal text-gray-500 dark:text-gray-400 line-clamp-2 max-w-xl markdown"
+								>
+									{@html DOMPurify.sanitize(
+										marked.parse(
+											sanitizeResponseContent(
+												models[selectedModelIdx]?.info?.meta?.description ?? ''
+											).replaceAll('\n', '<br>')
+										)
+									)}
+								</div>
+							</Tooltip>
+
+							{#if models[selectedModelIdx]?.info?.meta?.user}
+								<div class="mt-0.5 text-sm font-normal text-gray-400 dark:text-gray-500">
+									By
+									{#if models[selectedModelIdx]?.info?.meta?.user.community}
+										<a
+											href="https://openwebui.com/m/{models[selectedModelIdx]?.info?.meta?.user
+												.username}"
+											>{models[selectedModelIdx]?.info?.meta?.user.name
+												? models[selectedModelIdx]?.info?.meta?.user.name
+												: `@${models[selectedModelIdx]?.info?.meta?.user.username}`}</a
+										>
+									{:else}
+										{models[selectedModelIdx]?.info?.meta?.user.name}
+									{/if}
+								</div>
+							{/if}
+						{/if}
+					</div>
 				</div>
 			{/if}
 
 			<div class="text-base font-normal @md:max-w-3xl w-full py-3 {atSelectedModel ? 'mt-2' : ''}">
-				<MessageInput
-					bind:this={messageInput}
-					{history}
-					{selectedModels}
-					bind:files
-					bind:prompt
-					bind:params
-					bind:autoScroll
-					bind:selectedToolIds
-					bind:selectedSkillIds
-					bind:selectedFilterIds
-					bind:imageGenerationEnabled
-					bind:codeInterpreterEnabled
-					bind:webSearchEnabled
-					bind:atSelectedModel
-					bind:showCommands
-					bind:dragged
-					{pendingOAuthTools}
-					{toolServers}
-					{stopResponse}
-					{createMessagePair}
-					placeholder={$i18n.t('How can I help you today?')}
-					{onChange}
-					{onUpload}
-					on:submit={(e) => {
-						dispatch('submit', e.detail);
-					}}
-				/>
+				{#if !($selectedFolder && folderReadOnly)}
+					<MessageInput
+						bind:this={messageInput}
+						{history}
+						bind:selectedModels
+						bind:files
+						bind:prompt
+						bind:autoScroll
+						bind:selectedToolIds
+						bind:selectedSkillIds
+						bind:selectedFilterIds
+						bind:imageGenerationEnabled
+						bind:codeInterpreterEnabled
+						bind:webSearchEnabled
+						bind:atSelectedModel
+						bind:showCommands
+						bind:dragged
+						{pendingOAuthTools}
+						{toolServers}
+						{stopResponse}
+						{createMessagePair}
+						placeholder={$i18n.t('How can I help you today?')}
+						{onChange}
+						{onUpload}
+						{onWebSearchToggle}
+						on:chatVariables
+						on:submit={(e) => {
+							dispatch('submit', e.detail);
+						}}
+					/>
+				{/if}
 			</div>
 		</div>
 	</div>
 
 	{#if $selectedFolder}
-		<div
-			class="mx-auto px-4 md:max-w-3xl md:px-6 font-primary min-h-62"
-			in:fade={{ duration: 200, delay: 200 }}
-		>
+		<div class="mx-auto px-4 md:max-w-3xl md:px-6 min-h-62" in:fade={{ duration: 200, delay: 200 }}>
 			<FolderPlaceholder folder={$selectedFolder} />
 		</div>
 	{:else}
-		<div class="mx-auto max-w-2xl font-primary mt-2" in:fade={{ duration: 200, delay: 200 }}>
+		<div class="mx-auto max-w-2xl mt-2" in:fade={{ duration: 200, delay: 200 }}>
 			<div class="mx-5">
 				<Suggestions
 					suggestionPrompts={atSelectedModel?.info?.meta?.suggestion_prompts ??
@@ -186,100 +266,3 @@
 		</div>
 	{/if}
 </div>
-
-<style>
-	.zero-state-glow {
-		--zero-state-glow-blur: 56px;
-
-		position: absolute;
-		left: 50%;
-		top: 50%;
-		width: min(1040px, 92vw);
-		height: 560px;
-		transform: translate(-50%, -50%);
-		pointer-events: none;
-		z-index: -1;
-		filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
-		opacity: 0.72;
-		animation: zero-state-glow-color-shift 42s ease-in-out infinite;
-	}
-
-	.zero-state-glow::before,
-	.zero-state-glow::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		border-radius: 999px;
-	}
-
-	.zero-state-glow::before {
-		background: radial-gradient(
-			ellipse at 50% 50%,
-			rgba(112, 188, 255, 0.92) 0%,
-			rgba(165, 216, 255, 0.66) 34%,
-			rgba(211, 239, 255, 0.34) 56%,
-			rgba(255, 255, 255, 0) 78%
-		);
-	}
-
-	.zero-state-glow::after {
-		inset: -18% -14%;
-		background:
-			radial-gradient(ellipse at 36% 40%, rgba(255, 160, 214, 0.18), transparent 46%),
-			radial-gradient(ellipse at 68% 48%, rgba(119, 155, 255, 0.18), transparent 52%);
-		mix-blend-mode: multiply;
-	}
-
-	:global(.dark) .zero-state-glow {
-		opacity: 0.5;
-	}
-
-	:global(.dark) .zero-state-glow::before {
-		background: radial-gradient(
-			ellipse at 50% 50%,
-			rgba(87, 171, 255, 0.76) 0%,
-			rgba(88, 143, 255, 0.48) 34%,
-			rgba(70, 104, 190, 0.22) 56%,
-			rgba(0, 0, 0, 0) 78%
-		);
-	}
-
-	:global(.dark) .zero-state-glow::after {
-		background:
-			radial-gradient(ellipse at 36% 40%, rgba(255, 119, 211, 0.16), transparent 46%),
-			radial-gradient(ellipse at 68% 48%, rgba(101, 124, 255, 0.18), transparent 52%);
-		mix-blend-mode: screen;
-	}
-
-	@keyframes zero-state-glow-color-shift {
-		0%,
-		100% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
-		}
-		25% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(42deg) saturate(1.04);
-		}
-		50% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(96deg) saturate(1.06);
-		}
-		75% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(168deg) saturate(1.03);
-		}
-	}
-
-	@media (max-width: 768px) {
-		.zero-state-glow {
-			width: 94vw;
-			height: 420px;
-			top: 48%;
-			--zero-state-glow-blur: 42px;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.zero-state-glow {
-			animation: none;
-			filter: blur(var(--zero-state-glow-blur));
-		}
-	}
-</style>

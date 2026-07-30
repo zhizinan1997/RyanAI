@@ -4,7 +4,7 @@
 
 	import { toast } from 'svelte-sonner';
 
-	import { onMount, getContext, tick } from 'svelte';
+	import { onMount, getContext } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 
@@ -42,22 +42,18 @@
 	let confirmPassword = '';
 	let cfTurnstileToken = '';
 	let cfTurnstile: { reset?: () => void } | null = null;
-
-	let ldapUsername = '';
-
 	$: cfTurnstileEnabled = Boolean(
 		$config?.features?.cf_turnstile?.enabled && $config?.features?.cf_turnstile?.site_key
 	);
 	$: cfTurnstileRequired = cfTurnstileEnabled && (mode === 'signin' || mode === 'signup');
-
 	const resetCfTurnstile = () => {
 		cfTurnstileToken = '';
 		cfTurnstile?.reset?.();
 	};
 
-	const showAuthError = (error: unknown) => {
-		toast.error($i18n.t(String(error)));
-	};
+	let ldapUsername = '';
+
+	let submitting = false;
 
 	const setSessionUser = async (sessionUser, redirectPath: string | null = null) => {
 		if (sessionUser) {
@@ -90,9 +86,8 @@
 			toast.error($i18n.t('Please complete the Cloudflare verification.'));
 			return;
 		}
-
 		const sessionUser = await userSignIn(email, password, cfTurnstileToken).catch((error) => {
-			showAuthError(error);
+			toast.error(`${error}`);
 			resetCfTurnstile();
 			return null;
 		});
@@ -101,16 +96,15 @@
 	};
 
 	const signUpHandler = async () => {
+		if (cfTurnstileRequired && !cfTurnstileToken) {
+			toast.error($i18n.t('Please complete the Cloudflare verification.'));
+			return;
+		}
 		if ($config?.features?.enable_signup_password_confirmation) {
 			if (password !== confirmPassword) {
 				toast.error($i18n.t('Passwords do not match.'));
 				return;
 			}
-		}
-
-		if (cfTurnstileRequired && !cfTurnstileToken) {
-			toast.error($i18n.t('Please complete the Cloudflare verification.'));
-			return;
 		}
 
 		const sessionUser = await userSignUp(
@@ -119,11 +113,13 @@
 			password,
 			generateInitialsImage(name),
 			cfTurnstileToken
-		).catch((error) => {
-			showAuthError(error);
-			resetCfTurnstile();
-			return null;
-		});
+		).catch(
+			(error) => {
+				toast.error(`${error}`);
+				resetCfTurnstile();
+				return null;
+			}
+		);
 
 		await setSessionUser(sessionUser);
 	};
@@ -137,12 +133,21 @@
 	};
 
 	const submitHandler = async () => {
-		if (mode === 'ldap') {
-			await ldapSignInHandler();
-		} else if (mode === 'signin') {
-			await signInHandler();
-		} else {
-			await signUpHandler();
+		if (submitting) {
+			return;
+		}
+
+		submitting = true;
+		try {
+			if (mode === 'ldap') {
+				await ldapSignInHandler();
+			} else if (mode === 'signin') {
+				await signInHandler();
+			} else {
+				await signUpHandler();
+			}
+		} finally {
+			submitting = false;
 		}
 	};
 
@@ -175,32 +180,9 @@
 
 	let onboarding = false;
 
-	async function setLogoImage() {
-		await tick();
-		const logo = document.getElementById('logo');
-
-		if (logo) {
-			const isDarkMode = document.documentElement.classList.contains('dark');
-
-			if (isDarkMode) {
-				const darkImage = new Image();
-				darkImage.src = `${WEBUI_BASE_URL}/static/favicon-dark.png`;
-
-				darkImage.onload = () => {
-					logo.src = `${WEBUI_BASE_URL}/static/favicon-dark.png`;
-					logo.style.filter = ''; // Ensure no inversion is applied if favicon-dark.png exists
-				};
-
-				darkImage.onerror = () => {
-					logo.style.filter = 'invert(1)'; // Invert image if favicon-dark.png is missing
-				};
-			}
-		}
-	}
-
 	onMount(async () => {
 		const redirectPath = $page.url.searchParams.get('redirect');
-		if ($user !== undefined) {
+		if ($user) {
 			goto(redirectPath || '/');
 		} else {
 			if (redirectPath) {
@@ -238,7 +220,6 @@
 		}
 
 		loaded = true;
-		setLogoImage();
 
 		if (($config?.features?.auth_trusted_header ?? false) || $config?.features?.auth === false) {
 			await signInHandler();
@@ -269,14 +250,14 @@
 
 	{#if loaded}
 		<div
-			class="fixed bg-transparent min-h-screen w-full flex justify-center font-primary z-50 text-black dark:text-white"
+			class="fixed bg-transparent min-h-screen w-full flex justify-center z-50 text-black dark:text-white"
 			id="auth-container"
 		>
 			<div class="w-full px-10 min-h-screen flex flex-col text-center">
 				{#if ($config?.features.auth_trusted_header ?? false) || $config?.features.auth === false}
 					<div class=" my-auto pb-10 w-full sm:max-w-md">
 						<div
-							class="flex items-center justify-center gap-3 text-xl sm:text-2xl text-center font-medium dark:text-gray-200"
+							class="flex items-center justify-center gap-3 text-xl sm:text-2xl text-center font-normal dark:text-gray-200"
 						>
 							<div>
 								{$i18n.t('Signing in to {{WEBUI_NAME}}', { WEBUI_NAME: $WEBUI_NAME })}
@@ -309,7 +290,7 @@
 								}}
 							>
 								<div class="mb-1">
-									<div class=" text-2xl font-medium">
+									<div class=" text-2xl font-normal">
 										{#if $config?.onboarding ?? false}
 											{$i18n.t(`Get started with {{WEBUI_NAME}}`, { WEBUI_NAME: $WEBUI_NAME })}
 										{:else if mode === 'ldap'}
@@ -322,7 +303,7 @@
 									</div>
 
 									{#if $config?.onboarding ?? false}
-										<div class="mt-1 text-xs font-medium text-gray-600 dark:text-gray-500">
+										<div class="mt-1 text-xs font-normal text-gray-600 dark:text-gray-500">
 											ⓘ {$WEBUI_NAME}
 											{$i18n.t(
 												'does not make any external connections, and your data stays securely on your locally hosted server.'
@@ -335,7 +316,7 @@
 									<div class="flex flex-col mt-4">
 										{#if mode === 'signup'}
 											<div class="mb-2">
-												<label for="name" class="text-sm font-medium text-left mb-1 block"
+												<label for="name" class="text-sm font-normal text-left mb-1 block"
 													>{$i18n.t('Name')}</label
 												>
 												<input
@@ -352,7 +333,7 @@
 
 										{#if mode === 'ldap'}
 											<div class="mb-2">
-												<label for="username" class="text-sm font-medium text-left mb-1 block"
+												<label for="username" class="text-sm font-normal text-left mb-1 block"
 													>{$i18n.t('Username')}</label
 												>
 												<input
@@ -368,7 +349,7 @@
 											</div>
 										{:else}
 											<div class="mb-2">
-												<label for="email" class="text-sm font-medium text-left mb-1 block"
+												<label for="email" class="text-sm font-normal text-left mb-1 block"
 													>{$i18n.t('Email')}</label
 												>
 												<input
@@ -385,7 +366,7 @@
 										{/if}
 
 										<div>
-											<label for="password" class="text-sm font-medium text-left mb-1 block"
+											<label for="password" class="text-sm font-normal text-left mb-1 block"
 												>{$i18n.t('Password')}</label
 											>
 											<SensitiveInput
@@ -406,7 +387,7 @@
 											<div class="mt-2">
 												<label
 													for="confirm-password"
-													class="text-sm font-medium text-left mb-1 block"
+													class="text-sm font-normal text-left mb-1 block"
 													>{$i18n.t('Confirm Password')}</label
 												>
 												<SensitiveInput
@@ -422,36 +403,51 @@
 											</div>
 										{/if}
 									</div>
-								{/if}
-
-								{#if cfTurnstileRequired}
-									<div class="mt-4">
-										<CloudflareTurnstile
-											bind:this={cfTurnstile}
-											siteKey={$config?.features?.cf_turnstile?.site_key ?? ''}
-											bind:token={cfTurnstileToken}
-										/>
-									</div>
-								{/if}
-								<div class="mt-5">
+									{/if}
+									{#if cfTurnstileRequired}
+										<div class="mt-3 flex justify-center">
+											<CloudflareTurnstile
+												bind:this={cfTurnstile}
+												siteKey={$config?.features?.cf_turnstile?.site_key ?? ''}
+												bind:token={cfTurnstileToken}
+											/>
+										</div>
+									{/if}
+									<div class="mt-5">
 									{#if $config?.features.enable_login_form || $config?.features.enable_ldap || form}
 										{#if mode === 'ldap'}
 											<button
-												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-medium text-sm py-2.5"
+												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5 disabled:opacity-50 flex justify-center"
 												type="submit"
+												disabled={submitting}
 											>
-												{$i18n.t('Authenticate')}
+												<div class="self-center">{$i18n.t('Authenticate')}</div>
+
+												{#if submitting}
+													<div class="ml-1.5 self-center">
+														<Spinner />
+													</div>
+												{/if}
 											</button>
 										{:else}
 											<button
-												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-medium text-sm py-2.5"
+												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5 disabled:opacity-50 flex justify-center"
 												type="submit"
+												disabled={submitting}
 											>
-												{mode === 'signin'
-													? $i18n.t('Sign in')
-													: ($config?.onboarding ?? false)
-														? $i18n.t('Create Admin Account')
-														: $i18n.t('Create Account')}
+												<div class="self-center">
+													{mode === 'signin'
+														? $i18n.t('Sign in')
+														: ($config?.onboarding ?? false)
+															? $i18n.t('Create Admin Account')
+															: $i18n.t('Create Account')}
+												</div>
+
+												{#if submitting}
+													<div class="ml-1.5 self-center">
+														<Spinner />
+													</div>
+												{/if}
 											</button>
 
 											{#if $config?.features.enable_signup && !($config?.onboarding ?? false)}
@@ -461,7 +457,7 @@
 														: $i18n.t('Already have an account?')}
 
 													<button
-														class=" font-medium underline"
+														class=" font-normal underline"
 														type="button"
 														on:click={() => {
 															if (mode === 'signin') {
@@ -469,7 +465,6 @@
 															} else {
 																mode = 'signin';
 															}
-															resetCfTurnstile();
 														}}
 													>
 														{mode === 'signin' ? $i18n.t('Sign up') : $i18n.t('Sign in')}
@@ -486,7 +481,7 @@
 									<hr class="w-32 h-px my-4 border-0 dark:bg-gray-100/10 bg-gray-700/10" />
 									{#if $config?.features.enable_login_form || $config?.features.enable_ldap || form}
 										<span
-											class="px-3 text-sm font-medium text-gray-900 dark:text-white bg-transparent"
+											class="px-3 text-sm font-normal text-gray-900 dark:text-white bg-transparent"
 											>{$i18n.t('or')}</span
 										>
 									{/if}
@@ -496,7 +491,7 @@
 								<div class="flex flex-col space-y-2">
 									{#if $config?.oauth?.providers?.google}
 										<button
-											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-medium text-sm py-2.5"
+											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5"
 											on:click={() => {
 												window.location.href = `${WEBUI_BASE_URL}/oauth/google/login`;
 											}}
@@ -526,7 +521,7 @@
 									{/if}
 									{#if $config?.oauth?.providers?.microsoft}
 										<button
-											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-medium text-sm py-2.5"
+											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5"
 											on:click={() => {
 												window.location.href = `${WEBUI_BASE_URL}/oauth/microsoft/login`;
 											}}
@@ -557,7 +552,7 @@
 									{/if}
 									{#if $config?.oauth?.providers?.github}
 										<button
-											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-medium text-sm py-2.5"
+											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5"
 											on:click={() => {
 												window.location.href = `${WEBUI_BASE_URL}/oauth/github/login`;
 											}}
@@ -578,7 +573,7 @@
 									{/if}
 									{#if $config?.oauth?.providers?.oidc}
 										<button
-											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-medium text-sm py-2.5"
+											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5"
 											on:click={() => {
 												window.location.href = `${WEBUI_BASE_URL}/oauth/oidc/login`;
 											}}
@@ -608,7 +603,7 @@
 									{/if}
 									{#if $config?.oauth?.providers?.feishu}
 										<button
-											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-medium text-sm py-2.5"
+											class="flex justify-center items-center bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5"
 											on:click={() => {
 												window.location.href = `${WEBUI_BASE_URL}/oauth/feishu/login`;
 											}}

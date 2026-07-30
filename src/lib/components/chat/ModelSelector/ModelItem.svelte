@@ -23,6 +23,8 @@
 	export let item: any = {};
 	export let index: number = -1;
 	export let value: string | null = '';
+	export let selectedValues: string[] = [];
+	export let compareEnabled = false;
 
 	export let unloadModelHandler: (modelValue: string) => void = () => {};
 	export let pinModelHandler: (modelId: string) => void = () => {};
@@ -43,56 +45,24 @@
 	};
 
 	let showMenu = false;
-	let showExternal = false;
-
-	const renderPrice = (price: Object): string => {
-		// request price not null
-		if (item.model?.info?.price?.request_price) {
-			return `${$i18n.t('Price For 1M Requests')}: ${item.model?.info?.price?.request_price}`;
-		}
-		const promptPrice = item.model?.info?.price?.prompt_price || 0;
-		const promptLongCtxPrice = item.model?.info?.price?.prompt_long_ctx_price || 0;
-		const promptCachePrice = item.model?.info?.price?.prompt_cache_price || 0;
-		const promptLongCtxCachePrice = item.model?.info?.price?.prompt_long_ctx_cache_price || 0;
-		const completionPrice = item.model?.info?.price?.completion_price || 0;
-		const completionLongCtxPrice = item.model?.info?.price?.completion_long_ctx_price || 0;
-		let renderContent = `${$i18n.t('Prompt Price For 1M Tokens')}: `;
-		if (promptPrice && promptLongCtxPrice) {
-			renderContent += `${promptPrice} ~ ${promptLongCtxPrice}<br/>`;
-		} else {
-			renderContent += `${promptPrice}<br/>`;
-		}
-		renderContent += `${$i18n.t('Prompt Cache Price For 1M Tokens')}: `;
-		if (promptCachePrice && promptLongCtxCachePrice) {
-			renderContent += `${promptCachePrice} ~ ${promptLongCtxCachePrice}<br/>`;
-		} else {
-			renderContent += `${promptCachePrice}<br/>`;
-		}
-		renderContent += `${$i18n.t('Completion Price For 1M Tokens')}: `;
-		if (completionPrice && completionLongCtxPrice) {
-			renderContent += `${completionPrice} ~ ${completionLongCtxPrice}<br/>`;
-		} else {
-			renderContent += `${completionPrice}<br/>`;
-		}
-		return renderContent;
-	};
+	$: isSelected = compareEnabled ? selectedValues.includes(item.value) : value === item.value;
 </script>
 
 <button
 	role="option"
-	aria-selected={value === item.value}
+	aria-selected={isSelected}
 	aria-label={$i18n.t('Select {{modelName}} model', { modelName: item.label })}
-	class="flex group/item w-full text-left font-medium line-clamp-1 select-none items-center rounded-button py-2 pl-3 pr-1.5 text-sm text-gray-700 dark:text-gray-100 outline-hidden transition-all duration-75 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl cursor-pointer data-highlighted:bg-muted {index ===
-	selectedModelIdx
-		? 'bg-gray-100 dark:bg-gray-800 group-hover:bg-transparent'
-		: ''}"
+	class="group/item flex h-8 w-full cursor-pointer select-none items-center rounded-xl px-2 text-left text-[13px] font-normal text-gray-700 outline-hidden transition-colors duration-75 hover:bg-gray-50/40 dark:text-gray-100 dark:hover:bg-gray-800/40 {index ===
+		selectedModelIdx && !compareEnabled
+		? 'bg-gray-50/70 dark:bg-gray-800/60'
+		: ''} {isSelected ? 'bg-gray-50/70 dark:bg-gray-800/60' : ''}"
 	data-arrow-selected={index === selectedModelIdx}
 	data-value={item.value}
 	on:click={() => {
 		onClick();
 	}}
 >
-	<div class="flex flex-col flex-1 gap-1.5">
+	<div class="flex flex-1 flex-col gap-1.5 overflow-hidden">
 		<!-- {#if (item?.model?.tags ?? []).length > 0}
 			<div
 				class="flex gap-0.5 self-center items-start h-full w-full translate-y-[0.5px] overflow-x-auto scrollbar-none"
@@ -100,7 +70,7 @@
 				{#each item.model?.tags.sort((a, b) => a.name.localeCompare(b.name)) as tag}
 					<Tooltip content={tag.name} className="flex-shrink-0">
 						<div
-							class=" text-xs font-semibold px-1 rounded-sm uppercase bg-gray-500/20 text-gray-700 dark:text-gray-200"
+							class=" text-xs font-normal px-1 rounded-sm uppercase bg-gray-500/20 text-gray-700 dark:text-gray-200"
 						>
 							{tag.name}
 						</div>
@@ -109,13 +79,13 @@
 			</div>
 		{/if} -->
 
-		<div class="flex items-center gap-2">
+		<div class="flex items-center gap-2 overflow-hidden">
 			<div class="flex items-center min-w-fit">
 				<Tooltip content={$user?.role === 'admin' ? (item?.value ?? '') : ''} placement="top-start">
 					<img
 						src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${item.model.id}&lang=${$i18n.language}`}
 						alt={$i18n.t('{{modelName}} profile image', { modelName: item.label })}
-						class="rounded-full size-5 flex items-center"
+						class="flex size-4 items-center rounded-full"
 						loading="lazy"
 						on:error={(e) => {
 							e.currentTarget.src = '/favicon.png';
@@ -124,7 +94,7 @@
 				</Tooltip>
 			</div>
 
-			<div class="flex items-center">
+			<div class="flex min-w-0 items-center">
 				<Tooltip content={`${item.label} (${item.value})`} placement="top-start">
 					<div class="line-clamp-1">
 						{item.label}
@@ -132,7 +102,7 @@
 				</Tooltip>
 			</div>
 
-			<div class=" shrink-0 flex items-center gap-2">
+			<div class="flex shrink-0 items-center gap-1.5">
 				{#if item.model.owned_by === 'ollama'}
 					{#if (item.model.ollama?.details?.parameter_size ?? '') !== ''}
 						<div class="flex items-center translate-y-[0.5px]">
@@ -148,7 +118,7 @@
 								}`}
 								className="self-end"
 							>
-								<span class=" text-xs font-medium text-gray-600 dark:text-gray-400 line-clamp-1"
+								<span class="line-clamp-1 text-[11px] font-normal text-gray-500 dark:text-gray-400"
 									>{item.model.ollama?.details?.parameter_size ?? ''}</span
 								>
 							</Tooltip>
@@ -157,7 +127,7 @@
 				{/if}
 
 				{#if item.model.loaded}
-					<div class="flex items-center translate-y-[0.5px] px-0.5">
+					<div class="flex items-center px-0.5">
 						<Tooltip
 							content={item.model.ollama?.expires_at &&
 							new Date(item.model.ollama?.expires_at * 1000) > new Date()
@@ -168,11 +138,11 @@
 							className="self-end"
 						>
 							<div class=" flex items-center">
-								<span class="relative flex size-2">
+								<span class="relative flex size-1.5">
 									<span
 										class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"
 									/>
-									<span class="relative inline-flex rounded-full size-2 bg-green-500" />
+									<span class="relative inline-flex size-1.5 rounded-full bg-green-500" />
 								</span>
 							</div>
 						</Tooltip>
@@ -187,7 +157,7 @@
 							<div slot="tooltip" id="tags-{item.model.id}">
 								{#each item.model?.tags.sort((a, b) => a.name.localeCompare(b.name)) as tag}
 									<Tooltip content={tag.name} className="flex-shrink-0">
-										<div class=" text-xs font-medium rounded-sm uppercase text-white">
+										<div class=" text-xs font-normal rounded-sm uppercase text-white">
 											{tag.name}
 										</div>
 									</Tooltip>
@@ -218,7 +188,7 @@
 							</svg>
 						</div>
 					</Tooltip>
-				{:else if item.model.connection_type === 'external' && showExternal}
+				{:else if item.model.connection_type === 'external'}
 					<Tooltip content={`${$i18n.t('External')}`}>
 						<div class="translate-y-[1px]">
 							<svg
@@ -237,30 +207,6 @@
 									d="M7.086 9.975a.75.75 0 0 1-1.06 0 3.5 3.5 0 0 1 0-4.95l2-2a3.5 3.5 0 0 1 5.396 4.402.75.75 0 0 1-1.251-.827 2 2 0 0 0-3.085-2.514l-2 2a2 2 0 0 0 0 2.828.75.75 0 0 1 0 1.06Z"
 									clip-rule="evenodd"
 								/>
-							</svg>
-						</div>
-					</Tooltip>
-				{/if}
-
-				{#if item.model?.info?.price?.request_price || item.model?.info?.price?.prompt_price || item.model?.info?.price?.prompt_cache_price || item.model?.info?.price?.completion_price}
-					<Tooltip content={renderPrice(item.model?.info?.price)}>
-						<div class=" translate-y-[1px]">
-							<svg
-								class="icon"
-								viewBox="0 0 1024 1024"
-								xmlns="http://www.w3.org/2000/svg"
-								fill="currentColor"
-								width="13"
-								height="13"
-							>
-								<path
-									d="M512 0C229.23 0 0 229.23 0 512s229.23 512 512 512 512-229.23 512-512S794.77 0 512 0z m316.78 828.78a446.4 446.4 0 1 1 96-142.42 446.59 446.59 0 0 1-96 142.42z"
-									fill-rule="evenodd"
-								></path>
-								<path
-									d="M672 512a32 32 0 0 0 0-64H557.25l137.38-137.37a32 32 0 0 0-45.25-45.25L512 402.75 374.63 265.37a32 32 0 0 0-45.25 45.25L466.75 448H352a32 32 0 0 0 0 64h128v64H352a32 32 0 0 0 0 64h128v96a32 32 0 0 0 64 0v-96h128a32 32 0 0 0 0-64H544v-64h128z"
-									fill-rule="evenodd"
-								></path>
 							</svg>
 						</div>
 					</Tooltip>
@@ -294,7 +240,7 @@
 		</div>
 	</div>
 
-	<div class="ml-auto pl-2 pr-1 flex items-center gap-1.5 shrink-0">
+	<div class="ml-auto flex shrink-0 items-center gap-1.5 pl-2">
 		{#if !selectionOnly && $user?.role === 'admin' && item.model.loaded}
 			<Tooltip
 				content={`${$i18n.t('Eject')}`}
@@ -338,7 +284,7 @@
 			</ModelItemMenu>
 		{/if}
 
-		{#if value === item.value}
+		{#if isSelected}
 			<div>
 				<Check className="size-3" />
 			</div>

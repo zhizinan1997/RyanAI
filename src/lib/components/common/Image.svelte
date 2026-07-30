@@ -6,12 +6,10 @@
 	import ImagePreview from './ImagePreview.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import { getContext } from 'svelte';
-	import type { Writable } from 'svelte/store';
-	import type { i18n as I18nType } from 'i18next';
 
 	export let src = '';
 	export let alt = '';
-	export let id: string | undefined = undefined;
+	export let allowExternal = false;
 
 	export let className = ` w-full ${($settings?.highContrastMode ?? false) ? '' : 'outline-hidden focus:outline-hidden'}`;
 
@@ -20,17 +18,17 @@
 	export let dismissible = false;
 	export let onDismiss = () => {};
 
-	const i18n = getContext<Writable<I18nType>>('i18n');
+	const i18n = getContext('i18n');
 
 	let _src = '';
-	$: _src = safeImageUrl(src.startsWith('/') ? `${WEBUI_BASE_URL}${src}` : src);
+	$: _src = safeImageUrl(src.startsWith('/') ? `${WEBUI_BASE_URL}${src}` : src, allowExternal);
 
 	let showImagePreview = false;
 </script>
 
 <ImagePreview bind:show={showImagePreview} src={_src} {alt} />
 
-<div {id} class=" relative group w-fit flex items-center">
+<div class=" relative group w-fit flex items-center">
 	<button
 		class={className}
 		on:click={() => {
