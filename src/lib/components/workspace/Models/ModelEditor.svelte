@@ -76,6 +76,19 @@
 	}
 
 	let system = '';
+	const defaultModelPrice = {
+		prompt_price: 0,
+		prompt_long_ctx_tokens: 0,
+		prompt_long_ctx_price: 0,
+		prompt_cache_price: 0,
+		prompt_long_ctx_cache_price: 0,
+		completion_price: 0,
+		completion_long_ctx_tokens: 0,
+		completion_long_ctx_price: 0,
+		request_price: 0,
+		minimum_credit: 0
+	};
+
 	let info = {
 		id: '',
 		base_model_id: null,
@@ -88,7 +101,8 @@
 		},
 		params: {
 			system: ''
-		}
+		},
+		price: { ...defaultModelPrice }
 	};
 
 	let params = {
@@ -480,6 +494,7 @@
 					)
 				)
 			};
+			info.price = { ...defaultModelPrice, ...(info.price ?? {}) };
 
 			console.log(model);
 		}
@@ -860,6 +875,156 @@
 								{/if}
 							</div>
 						</section>
+
+						{#if !preset}
+							<hr class="my-2 border-gray-100/30 dark:border-gray-850/30" />
+
+							<section class="my-2.5">
+								<div class="mb-1 flex items-center justify-between gap-3">
+									<div class="text-xs text-gray-400 dark:text-gray-600">{$i18n.t('Price')}</div>
+									<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
+										{$i18n.t('Unit: 1M tokens or 1M requests')}
+									</div>
+								</div>
+								<div class="mb-3 text-[0.6875rem] text-gray-500">
+									{$i18n.t('Request price has higher priority than token price')}
+								</div>
+
+								<div class="space-y-4">
+									<div>
+										<div class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">
+											{$i18n.t('Base Configuration')}
+										</div>
+										<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Prompt Token Price')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.prompt_price}
+												/>
+											</label>
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Completion Token Price')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.completion_price}
+												/>
+											</label>
+										</div>
+									</div>
+
+									<div>
+										<div class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">
+											{$i18n.t('Long Context Configuration')}
+										</div>
+										<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Prompt Long Ctx Threshold')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="1"
+													min="0"
+													bind:value={info.price.prompt_long_ctx_tokens}
+												/>
+											</label>
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Prompt Long Ctx Token Price')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.prompt_long_ctx_price}
+												/>
+											</label>
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Completion Long Ctx Threshold')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="1"
+													min="0"
+													bind:value={info.price.completion_long_ctx_tokens}
+												/>
+											</label>
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Completion Long Ctx Token Price')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.completion_long_ctx_price}
+												/>
+											</label>
+										</div>
+									</div>
+
+									<div>
+										<div class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">
+											{$i18n.t('Prompt Cache Configuration')}
+										</div>
+										<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Prompt Token Price')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.prompt_cache_price}
+												/>
+											</label>
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Prompt Long Ctx Token Price')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.prompt_long_ctx_cache_price}
+												/>
+											</label>
+										</div>
+									</div>
+
+									<div>
+										<div class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">
+											{$i18n.t('Other Configuration')}
+										</div>
+										<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Request Price')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.request_price}
+												/>
+											</label>
+											<label class="space-y-1 text-xs text-gray-500">
+												<span>{$i18n.t('Minimum Credit Required')}</span>
+												<input
+													class="w-full rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-900 outline-hidden dark:bg-gray-850 dark:text-gray-200"
+													type="number"
+													step="0.0001"
+													min="0"
+													bind:value={info.price.minimum_credit}
+												/>
+											</label>
+										</div>
+									</div>
+								</div>
+							</section>
+						{/if}
 
 						<hr class=" border-gray-100/30 dark:border-gray-850/30 my-2" />
 
