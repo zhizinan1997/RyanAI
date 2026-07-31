@@ -4,18 +4,18 @@
 
 	import { getBackendConfig, getVersionUpdates } from '$lib/apis';
 	import { getAdminConfig, updateAdminConfig } from '$lib/apis/auths';
-	import { getBanners, setBanners } from '$lib/apis/configs';
+	import { createNotification, deleteNotification, getNotifications, updateNotification } from '$lib/apis/configs';
 	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { WEBUI_BUILD_HASH, WEBUI_VERSION } from '$lib/constants';
-	import { banners as _banners, config, showChangelog } from '$lib/stores';
-	import type { Banner } from '$lib/types';
+	import { config, notifications as _notifications, showChangelog } from '$lib/stores';
+	import type { Notification } from '$lib/types';
 	import { compareVersion } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Textarea from '$lib/components/common/Textarea.svelte';
-	import Banners from './Interface/Banners.svelte';
+	import NotificationsEditor from './Interface/Banners.svelte';
 	import Events from './Events.svelte';
 	import AdminSettingField from './AdminSettingField.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
@@ -34,7 +34,8 @@
 
 	let adminConfig: any = null;
 
-	let banners: Banner[] = [];
+	let notifications: Notification[] = [];
+	let deletedNotificationIds: string[] = [];
 	const inputClass =
 		'w-full h-7 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 	const textareaClass =
@@ -55,14 +56,47 @@
 		console.info(updateAvailable);
 	};
 
-	const updateBanners = async () => {
-		_banners.set(await setBanners(localStorage.token, banners));
+	const updateNotifications = async () => {
+		for (const id of [...deletedNotificationIds]) {
+			await deleteNotification(localStorage.token, id);
+			deletedNotificationIds = deletedNotificationIds.filter((deletedId) => deletedId !== id);
+		}
+
+		for (const notification of notifications) {
+			if (
+				notification.id.startsWith('local-') &&
+				(notification.title ?? '').trim() === '' &&
+				(notification.content ?? '').trim() === ''
+			) {
+				continue;
+			}
+
+			const payload = {
+				type: notification.type || 'info',
+				title: notification.title ?? '',
+				content: notification.content ?? '',
+				active: notification.active ?? true,
+				dismissible: notification.dismissible ?? true,
+				published_at: notification.published_at ?? null
+			};
+
+			if (notification.id.startsWith('local-')) {
+				await createNotification(localStorage.token, payload);
+			} else {
+				await updateNotification(localStorage.token, notification.id, payload);
+			}
+		}
+
+		const refreshed = await getNotifications(localStorage.token, 1, 100, true);
+		notifications = refreshed.items;
+		const activeNotifications = await getNotifications(localStorage.token, 1, 100, false);
+		_notifications.set(activeNotifications.items);
 	};
 
 	const updateHandler = async () => {
 		const res = await updateAdminConfig(localStorage.token, adminConfig);
 
-		await updateBanners();
+		await updateNotifications();
 
 		await config.set(await getBackendConfig());
 
@@ -76,7 +110,8 @@
 	onMount(async () => {
 		adminConfig = await getAdminConfig(localStorage.token);
 
-		banners = [...$_banners];
+		notifications = (await getNotifications(localStorage.token, 1, 100, true)).items;
+		deletedNotificationIds = [];
 	});
 </script>
 
@@ -183,15 +218,15 @@
 							class="mt-0.5 block text-gray-500"
 						>
 							<span class="capitalize text-black dark:text-white"
-								>{$config?.license_metadata?.type} license</span
+								>{$config?.license_metadata?.type} {$i18n.t('license')}</span
 							>
-							registered to
+							{$i18n.t('registered to')}
 							<span class="capitalize text-black dark:text-white"
 								>{$config?.license_metadata?.organization_name}</span
 							>
-							for
+							{$i18n.t('for')}
 							<span class="text-black dark:text-white"
-								>{$config?.license_metadata?.seats ?? 'Unlimited'} users.</span
+								>{$config?.license_metadata?.seats ?? $i18n.t('Unlimited')} {$i18n.t('users')}.</span
 							>
 						</a>
 						{#if $config?.license_metadata?.html}
@@ -364,7 +399,7 @@
 				<div>
 					<div class="mb-2 flex w-full items-start justify-between gap-4">
 						<div class="min-w-0">
-							<div class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('Banners')}</div>
+							<div class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('Notifications')}</div>
 							<div class="mt-1.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
 								{$i18n.t('Create announcements shown to users in the app.')}
 							</div>
@@ -373,18 +408,26 @@
 						<button
 							class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-black/5 hover:text-gray-900 dark:text-gray-600 dark:hover:bg-white/5 dark:hover:text-white"
 							type="button"
-							aria-label={$i18n.t('Add banner')}
+							aria-label={$i18n.t('Add')}
 							on:click={() => {
-								if (banners.length === 0 || banners[banners.length - 1]?.content !== '') {
-									banners = [
-										...banners,
+								const lastNotification = notifications.at(-1);
+								if (
+									notifications.length === 0 ||
+									(lastNotification?.title ?? '').trim() !== '' ||
+									(lastNotification?.content ?? '').trim() !== ''
+								) {
+									notifications = [
+										...notifications,
 										{
-											id: uuidv4(),
-											type: '',
+											id: `local-${uuidv4()}`,
+											type: 'info',
 											title: '',
 											content: '',
+											active: true,
 											dismissible: true,
-											timestamp: Math.floor(Date.now() / 1000)
+											created_at: Math.floor(Date.now() / 1000),
+											updated_at: Math.floor(Date.now() / 1000),
+											published_at: Math.floor(Date.now() / 1000)
 										}
 									];
 								}
@@ -394,7 +437,7 @@
 						</button>
 					</div>
 
-					<Banners bind:banners />
+					<NotificationsEditor bind:notifications bind:deletedNotificationIds />
 				</div>
 			</AdminSettingSection>
 		{/if}

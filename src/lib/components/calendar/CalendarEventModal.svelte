@@ -275,7 +275,7 @@
 				>
 					<option value="">{$i18n.t('No Repeat')}</option>
 					<option value="daily">{$i18n.t('Daily')}</option>
-					<option value="weekdays">{$i18n.t('Monday – Friday')}</option>
+					<option value="weekdays">{$i18n.t('Monday to Friday')}</option>
 					<option value="weekly">{$i18n.t('Weekly')}</option>
 					<option value="monthly">{$i18n.t('Monthly')}</option>
 					<option value="yearly">{$i18n.t('Yearly')}</option>

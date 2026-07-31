@@ -24,7 +24,6 @@
 		settings,
 		showSidebar,
 		WEBUI_NAME,
-		banners,
 		user,
 		socket,
 		audioQueue,
@@ -32,6 +31,7 @@
 		showCallOverlay,
 		temporaryChatEnabled,
 		mobile,
+		notifications,
 		chatTitle,
 		showArtifacts,
 		artifactContents,
@@ -97,10 +97,9 @@
 	import { uploadFile } from '$lib/apis/files';
 	import { createOpenAITextStream } from '$lib/apis/streaming';
 	import { getFunctions } from '$lib/apis/functions';
-	import { initiateOAuthRedirect } from '$lib/apis/configs';
+	import { getNotifications, initiateOAuthRedirect } from '$lib/apis/configs';
 	import { updateFolderById } from '$lib/apis/folders';
 
-	import Banner from '../common/Banner.svelte';
 	import MessageInput from '$lib/components/chat/MessageInput.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Navbar from '$lib/components/chat/Navbar.svelte';
@@ -1298,6 +1297,14 @@
 			if (p.url.pathname === '/' || p.url.pathname.startsWith('/folders/')) {
 				await tick();
 				initNewChat();
+
+				// Re-fetch notifications on navigation to homepage so newly configured items appear
+				try {
+					const res = await getNotifications(localStorage.token, 1, 100, false);
+					notifications.set(res.items);
+				} catch (e) {
+					console.error('Failed to refresh notifications:', e);
+				}
 			}
 
 			stopAudio();

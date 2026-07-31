@@ -81,7 +81,7 @@
 </script>
 
 <div
-	class="relative isolate m-auto w-full max-w-[58rem] px-2 @2xl:px-20 translate-y-6 py-24 text-center"
+	class="placeholder-root relative isolate m-auto w-full max-w-[58rem] px-2 @2xl:px-20 translate-y-6 py-24 text-center"
 >
 	{#if !$selectedFolder}
 		<div class="zero-state-glow" aria-hidden="true"></div>
@@ -367,5 +367,18 @@
 			animation: none;
 			filter: blur(var(--zero-state-glow-blur));
 		}
+	}
+
+	/* Home page input: elevated card above the glow so its edge stays visible */
+	.placeholder-root :global(#message-input-container) {
+		background-color: rgba(255, 255, 255, 0.8);
+		border-color: rgba(209, 213, 219, 0.9);
+		box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
+	}
+
+	:global(.dark) .placeholder-root :global(#message-input-container) {
+		background-color: rgba(24, 24, 27, 0.8);
+		border-color: rgba(82, 82, 91, 0.85);
+		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
 	}
 </style>

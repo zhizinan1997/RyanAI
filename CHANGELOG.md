@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.2] - 2026-07-31
+
+### Fixed
+
+- Banners created in Admin Settings > General now appear in the top-right notification bell again, instead of as banner strips (the pre-0.11.0 behavior was restored after the upstream merge).
+- The home page gradient glow no longer overlaps the chat input; the input is now rendered as a clearly visible elevated card above the glow.
+
+### Changed
+
+- Comprehensive Chinese (zh-CN) localization for the admin panel, user settings, and the rest of the interface; approximately 860 previously missing strings were translated.
+- Fixed the partially-translated weekday label in the calendar event editor.
+
 ## [0.11.0.1] - 2026-07-31
 
 ### Fixed

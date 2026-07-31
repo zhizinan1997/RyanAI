@@ -11,7 +11,7 @@
 
 	import { getModels, getToolServersData, getVersionUpdates } from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
-	import { getBanners, getNotifications } from '$lib/apis/configs';
+	import { getNotifications } from '$lib/apis/configs';
 	import { getTerminalServers } from '$lib/apis/terminal';
 	import { getUserSettings } from '$lib/apis/users';
 	import { setTextScale } from '$lib/utils/text-scale';
@@ -28,7 +28,6 @@
 		tools,
 		functions,
 		tags,
-		banners,
 		notifications,
 		showSettings,
 		showChangelog,
@@ -190,11 +189,6 @@
 		]);
 	};
 
-	const setBanners = async () => {
-		const bannersData = await getBanners(localStorage.token);
-		banners.set(bannersData);
-	};
-
 	const setNotifications = async () => {
 		const response = await getNotifications(localStorage.token, 1, 100, false);
 		notifications.set(response.items);
@@ -264,7 +258,6 @@
 		clearChatInputStorage();
 		await Promise.all([
 			checkLocalDBChats(),
-			setBanners().catch((e) => console.error('Failed to load banners:', e)),
 			setNotifications().catch((e) => console.error('Failed to load notifications:', e)),
 			setTools().catch((e) => console.error('Failed to load tools:', e)),
 			setUserSettings(async () => {
