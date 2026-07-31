@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.3] - 2026-07-31
+
+### Fixed
+
+- Resolved the Alembic "Multiple head revisions" error by adding a merge migration for the v0.11.0 migration chain, so database migrations resolve to a single head on startup.
+
 ## [0.11.0.2] - 2026-07-31
 
 ### Fixed
