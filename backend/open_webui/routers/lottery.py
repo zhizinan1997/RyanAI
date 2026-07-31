@@ -17,7 +17,6 @@ from open_webui.env import (
     REDIS_SENTINEL_PORT,
     REDIS_URL,
 )
-from open_webui.models.credits import AddCreditForm, Credits, SetCreditFormDetail
 from open_webui.models.config import Config
 from open_webui.models.lottery import LotteryDrawModel, LotteryDraws
 from open_webui.models.users import Users
@@ -97,14 +96,6 @@ def _create_draw_record(
     )
     if saved is None:
         raise HTTPException(status_code=400, detail=duplicate_detail)
-
-    Credits.add_credit_by_user_id(
-        AddCreditForm(
-            user_id=user_id,
-            amount=reward,
-            detail=SetCreditFormDetail(desc=desc, api_params={'cards': cards}),
-        )
-    )
 
     return cards, reward
 

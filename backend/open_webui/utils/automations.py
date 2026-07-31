@@ -21,7 +21,6 @@ import os
 import random
 import time
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -31,13 +30,11 @@ from dateutil.rrule import rrulestr
 from fastapi import Request
 from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.constants import ERROR_MESSAGES
-from open_webui.env import REDIS_KEY_PREFIX
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_db
 from open_webui.models.automations import AutomationModel, AutomationRuns, Automations
 from open_webui.models.chats import ChatForm, Chats
 from open_webui.models.config import Config
-from open_webui.models.credits import Credits
 from open_webui.models.folders import Folders
 from open_webui.models.users import Users
 from open_webui.utils.auth import create_token
@@ -255,12 +252,6 @@ async def scheduler_worker_loop(app) -> None:
                     await _check_calendar_alerts(app)
                 except Exception:
                     log.exception('Scheduler: calendar alert error')
-
-            if await Config.get('lottery.daily_reset.enable', False):
-                try:
-                    await _check_daily_credit_reset(app)
-                except Exception:
-                    log.exception('Scheduler: daily credit reset error')
 
         except Exception:
             log.exception('Scheduler worker error')
@@ -617,41 +608,6 @@ async def execute_automation(app, automation: AutomationModel) -> None:
 ####################
 # Internals
 ####################
-
-
-async def _check_daily_credit_reset(app) -> None:
-    config = await Config.get_many(
-        'lottery.timezone',
-        'lottery.daily_reset.credit',
-        'lottery.daily_reset.mark',
-    )
-
-    tz = _resolve_tz(config.get('lottery.timezone') or 'Asia/Shanghai')
-    today = (datetime.now(tz) if tz else datetime.now()).strftime('%Y-%m-%d')
-    if config.get('lottery.daily_reset.mark') == today:
-        return
-
-    redis = getattr(getattr(app, 'state', None), 'redis', None)
-    lock_key = f'{REDIS_KEY_PREFIX}:lottery:daily_credit_reset:{today}'
-    if redis is not None:
-        try:
-            if not await redis.set(lock_key, '1', ex=3600, nx=True):
-                return
-        except Exception:
-            log.warning('Daily credit reset: Redis lock unavailable; falling back to DB mark check')
-
-    if await Config.get('lottery.daily_reset.mark', '') == today:
-        return
-
-    try:
-        credit = Decimal(str(config.get('lottery.daily_reset.credit', '3')))
-    except Exception:
-        log.warning('Daily credit reset: invalid credit value %r', config.get('lottery.daily_reset.credit'))
-        return
-
-    affected = await asyncio.to_thread(Credits.reset_all_credits, credit)
-    await Config.upsert({'lottery.daily_reset.mark': today})
-    log.info('Daily credit reset complete: set %s credit for %s user(s)', credit, affected)
 
 
 async def _check_calendar_alerts(app) -> None:

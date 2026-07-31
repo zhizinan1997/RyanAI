@@ -62,6 +62,7 @@
 	let version;
 	let handledSettingsUrl = '';
 	let showSplashNotice = false;
+	let authNavigationInProgress = false;
 
 	const clearChatInputStorage = () => {
 		const chatInputKeys = Object.keys(localStorage).filter((key) => key.startsWith('chat-input'));
@@ -231,8 +232,17 @@
 	};
 
 	const gotoAuth = async () => {
+		if ($page.url.pathname === '/auth' || authNavigationInProgress) {
+			return;
+		}
+
+		authNavigationInProgress = true;
 		const currentUrl = `${$page.url.pathname}${$page.url.search}`;
-		await goto(`/auth?redirect=${encodeURIComponent(currentUrl)}`);
+		try {
+			await goto(`/auth?redirect=${encodeURIComponent(currentUrl)}`);
+		} finally {
+			authNavigationInProgress = false;
+		}
 	};
 
 	const navigateChat = async (direction: -1 | 1) => {

@@ -300,7 +300,7 @@
 			id: 'credit',
 			title: 'Credit',
 			route: '/admin/settings/credit',
-			keywords: ['credit', 'billing', 'payment', 'alipay']
+			keywords: ['credit', 'billing', 'payment']
 		},
 		{
 			id: 'splash-notice',

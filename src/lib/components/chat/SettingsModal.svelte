@@ -761,7 +761,7 @@
 		{
 			id: 'admin:credit',
 			title: 'Credit',
-			keywords: ['credit', 'billing', 'payment', 'alipay', 'pricing', 'cost']
+			keywords: ['credit', 'billing', 'payment', 'pricing', 'cost']
 		},
 		{
 			id: 'admin:splash-notice',

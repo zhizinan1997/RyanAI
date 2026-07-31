@@ -39,8 +39,8 @@ RyanAI 是一个可自托管的 AI 对话、知识库与运营管理平台，适
 | 工具与扩展        | 支持 OpenAPI 工具服务、函数、代码执行、终端和工作区能力。                                  |
 | 积分计费          | 支持按 Token、请求次数、Embedding、图片生成、代码执行、网页搜索和工具调用计费。            |
 | 自定义定价        | 支持模型价格、最低消费、初始积分、特性价格，以及基于请求 Body 的 JSONPath 自定义计费规则。 |
-| 充值与支付        | 支持易支付和支付宝当面付/订单码支付，可配置回调地址、金额限制和兑换比例。                  |
-| 用户运营          | 支持邮箱验证注册、邮箱域名白名单、兑换码、用户积分与消费记录管理。                         |
+| 充值与支付        | 支持易支付，可配置回调地址、金额限制和兑换比例。                                      |
+| 用户运营          | 支持邮箱验证注册、邮箱域名白名单、用户积分与消费记录管理。                             |
 | 数据报表          | 提供积分消耗、Token 使用、充值流水、模型消耗和用户维度统计。                               |
 | 品牌配置          | 支持自定义站点名称、组织名称和 Logo，详见 [docs/BRANDING.md](./docs/BRANDING.md)。         |
 
@@ -61,11 +61,9 @@ RyanAI 是一个可自托管的 AI 对话、知识库与运营管理平台，适
 | :------------------------------------: | :------------------------: |
 | ![user credit](./docs/user_credit.png) | ![usage](./docs/usage.png) |
 
-### 兑换码与注册验证
+### 注册验证
 
-|                  兑换码                   |               邮箱验证                |
-| :---------------------------------------: | :-----------------------------------: |
-| ![redemption code](./docs/redemption.png) | ![email](./docs/sign_verify_user.png) |
+![email](./docs/sign_verify_user.png)
 
 </details>
 
@@ -186,14 +184,6 @@ Windows PowerShell 激活虚拟环境：
 ```text
 https://your-domain.com/api/v1/credit/callback
 ```
-
-支付宝回调地址：
-
-```text
-https://your-domain.com/api/v1/credit/callback/alipay
-```
-
-支付宝私钥请使用 PKCS#1 格式。`ALIPAY_CALLBACK_HOST` 和 `EZFP_CALLBACK_HOST` 应填写可被支付平台公网访问的站点根地址，例如 `https://your-domain.com`，不要附加路径。
 
 ### 邮箱验证
 

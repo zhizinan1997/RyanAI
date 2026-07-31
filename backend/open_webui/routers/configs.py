@@ -77,7 +77,6 @@ MODELS_CONFIG_KEYS = {
 USAGE_CONFIG_KEYS = {
     'CREDIT_NO_CHARGE_EMPTY_RESPONSE': 'credit.no_charge_empty_response',
     'CREDIT_NO_CREDIT_MSG': 'credit.no_credit_msg',
-    'CREDIT_EXCHANGE_RATIO': 'credit.exchange.ratio',
     'CREDIT_DEFAULT_CREDIT': 'credit.default_credit',
     'USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE': 'credit.calculate.model_prefix_to_remove',
     'USAGE_DEFAULT_ENCODING_MODEL': 'credit.calculate.encoding.default_model',
@@ -90,19 +89,6 @@ USAGE_CONFIG_KEYS = {
     'USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE': 'credit.calculate.feature.tool_server_price',
     'USAGE_CALCULATE_MINIMUM_COST': 'credit.calculate.minimum_cost',
     'USAGE_CUSTOM_PRICE_CONFIG': 'credit.calculate.custom_price_config',
-    'EZFP_PAY_PRIORITY': 'credit.ezfp.pay_priority',
-    'EZFP_ENDPOINT': 'credit.ezfp.endpoint',
-    'EZFP_PID': 'credit.ezfp.pid',
-    'EZFP_KEY': 'credit.ezfp.key',
-    'EZFP_CALLBACK_HOST': 'credit.ezfp.callback_host',
-    'EZFP_AMOUNT_CONTROL': 'credit.ezfp.amount_control',
-    'ALIPAY_SERVER_URL': 'credit.alipay.server_url',
-    'ALIPAY_APP_ID': 'credit.alipay.app_id',
-    'ALIPAY_APP_PRIVATE_KEY': 'credit.alipay.app_private_key',
-    'ALIPAY_ALIPAY_PUBLIC_KEY': 'credit.alipay.alipay_public_key',
-    'ALIPAY_CALLBACK_HOST': 'credit.alipay.callback_host',
-    'ALIPAY_AMOUNT_CONTROL': 'credit.alipay.amount_control',
-    'ALIPAY_PRODUCT_CODE': 'credit.alipay.product_code',
 }
 SUBAGENTS_CONFIG_KEYS = {
     'ENABLE_SUBAGENTS': 'subagents.enable',
@@ -767,7 +753,6 @@ async def set_code_execution_config(
 class UsageConfigForm(BaseModel):
     CREDIT_NO_CHARGE_EMPTY_RESPONSE: bool = False
     CREDIT_NO_CREDIT_MSG: str = '???????? ??-?? ??'
-    CREDIT_EXCHANGE_RATIO: float = 1
     CREDIT_DEFAULT_CREDIT: float = 0
     USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE: str = ''
     USAGE_DEFAULT_ENCODING_MODEL: str = 'gpt-4o'
@@ -780,19 +765,6 @@ class UsageConfigForm(BaseModel):
     USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE: float = 0
     USAGE_CALCULATE_MINIMUM_COST: float = 0
     USAGE_CUSTOM_PRICE_CONFIG: str = '[]'
-    EZFP_PAY_PRIORITY: str = 'qrcode'
-    EZFP_ENDPOINT: str | None = None
-    EZFP_PID: str | None = None
-    EZFP_KEY: str | None = None
-    EZFP_CALLBACK_HOST: str | None = None
-    EZFP_AMOUNT_CONTROL: str | None = None
-    ALIPAY_SERVER_URL: str | None = None
-    ALIPAY_APP_ID: str | None = None
-    ALIPAY_APP_PRIVATE_KEY: str | None = None
-    ALIPAY_ALIPAY_PUBLIC_KEY: str | None = None
-    ALIPAY_CALLBACK_HOST: str | None = None
-    ALIPAY_AMOUNT_CONTROL: str | None = None
-    ALIPAY_PRODUCT_CODE: str | None = None
 
 
 @router.get('/usage', response_model=UsageConfigForm)

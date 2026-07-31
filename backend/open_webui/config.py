@@ -2168,9 +2168,8 @@ ENABLE_USER_WEBHOOKS = os.getenv('ENABLE_USER_WEBHOOKS', 'False').lower() == 'tr
 
 CREDIT_NO_CHARGE_EMPTY_RESPONSE = os.getenv('CREDIT_NO_CHARGE_EMPTY_RESPONSE', 'True').lower() == 'true'
 
-CREDIT_NO_CREDIT_MSG = os.getenv('CREDIT_NO_CREDIT_MSG', '余额不足，请前往 设置-积分 充值')
+CREDIT_NO_CREDIT_MSG = os.getenv('CREDIT_NO_CREDIT_MSG', '余额不足，请联系管理员充值')
 
-CREDIT_EXCHANGE_RATIO = os.getenv('CREDIT_EXCHANGE_RATIO', '1')
 
 CREDIT_DEFAULT_CREDIT = os.getenv('CREDIT_DEFAULT_CREDIT', '0')
 
@@ -2217,31 +2216,7 @@ USAGE_CALCULATE_MINIMUM_COST = os.getenv('USAGE_CALCULATE_MINIMUM_COST', '0')
 
 USAGE_CUSTOM_PRICE_CONFIG = os.getenv('USAGE_CUSTOM_PRICE_CONFIG', '[]')
 
-EZFP_PAY_PRIORITY = os.getenv('EZFP_PAY_PRIORITY', 'qrcode')
 
-EZFP_ENDPOINT = os.getenv('EZFP_ENDPOINT', '')
-
-EZFP_PID = os.getenv('EZFP_PID', '')
-
-EZFP_KEY = os.getenv('EZFP_KEY', '')
-
-EZFP_CALLBACK_HOST = os.getenv('EZFP_CALLBACK_HOST', '')
-
-EZFP_AMOUNT_CONTROL = os.getenv('EZFP_AMOUNT_CONTROL', '')
-
-ALIPAY_SERVER_URL = os.getenv('ALIPAY_SERVER_URL', 'https://openapi.alipay.com/gateway.do')
-
-ALIPAY_APP_ID = os.getenv('ALIPAY_APP_ID', '')
-
-ALIPAY_APP_PRIVATE_KEY = os.getenv('ALIPAY_APP_PRIVATE_KEY', '')
-
-ALIPAY_ALIPAY_PUBLIC_KEY = os.getenv('ALIPAY_ALIPAY_PUBLIC_KEY', '')
-
-ALIPAY_CALLBACK_HOST = os.getenv('ALIPAY_CALLBACK_HOST', '')
-
-ALIPAY_AMOUNT_CONTROL = os.getenv('ALIPAY_AMOUNT_CONTROL', '')
-
-ALIPAY_PRODUCT_CODE = os.getenv('ALIPAY_PRODUCT_CODE', '')
 
 # FastAPI / AnyIO settings
 THREAD_POOL_SIZE = os.getenv('THREAD_POOL_SIZE', None)
@@ -3266,7 +3241,6 @@ DEFAULT_CONFIG = {
     'ui.banners': WEBUI_BANNERS,
     'credit.no_charge_empty_response': CREDIT_NO_CHARGE_EMPTY_RESPONSE,
     'credit.no_credit_msg': CREDIT_NO_CREDIT_MSG,
-    'credit.exchange.ratio': CREDIT_EXCHANGE_RATIO,
     'credit.default_credit': CREDIT_DEFAULT_CREDIT,
     'lottery.enable': ENABLE_TAROT_LOTTERY,
     'lottery.checkin.enable': ENABLE_DAILY_CHECKIN,
@@ -3286,19 +3260,6 @@ DEFAULT_CONFIG = {
     'credit.calculate.feature.tool_server_price': USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE,
     'credit.calculate.minimum_cost': USAGE_CALCULATE_MINIMUM_COST,
     'credit.calculate.custom_price_config': USAGE_CUSTOM_PRICE_CONFIG,
-    'credit.ezfp.pay_priority': EZFP_PAY_PRIORITY,
-    'credit.ezfp.endpoint': EZFP_ENDPOINT,
-    'credit.ezfp.pid': EZFP_PID,
-    'credit.ezfp.key': EZFP_KEY,
-    'credit.ezfp.callback_host': EZFP_CALLBACK_HOST,
-    'credit.ezfp.amount_control': EZFP_AMOUNT_CONTROL,
-    'credit.alipay.server_url': ALIPAY_SERVER_URL,
-    'credit.alipay.app_id': ALIPAY_APP_ID,
-    'credit.alipay.app_private_key': ALIPAY_APP_PRIVATE_KEY,
-    'credit.alipay.alipay_public_key': ALIPAY_ALIPAY_PUBLIC_KEY,
-    'credit.alipay.callback_host': ALIPAY_CALLBACK_HOST,
-    'credit.alipay.amount_control': ALIPAY_AMOUNT_CONTROL,
-    'credit.alipay.product_code': ALIPAY_PRODUCT_CODE,
     'auth.admin.show': SHOW_ADMIN_DETAILS,
     'auth.admin.email': ADMIN_EMAIL,
     'task.model.default': TASK_MODEL,
