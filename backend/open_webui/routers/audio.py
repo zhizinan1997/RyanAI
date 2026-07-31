@@ -679,12 +679,13 @@ async def _transcribe_openai(request, file_path, filename, languages, file_dir, 
                 for key, value in payload.items():
                     form_data.add_field(key, str(value))
 
-                async def audio_chunks():
-                    async with aiofiles.open(file_path, 'rb') as audio_file:
-                        while chunk := await audio_file.read(AIOHTTP_FILE_STREAM_CHUNK_SIZE):
-                            yield chunk
+                # Read the audio into memory and send it as a regular multipart
+                # field. Streaming the upload (async generator) is rejected by
+                # some OpenAI-compatible STT gateways (e.g. SiliconFlow) with 422.
+                async with aiofiles.open(file_path, 'rb') as audio_file:
+                    audio_data = await audio_file.read()
 
-                form_data.add_field('file', audio_chunks(), filename=filename)
+                form_data.add_field('file', audio_data, filename=filename)
 
                 r = await session.post(
                     url=f'{api_base_url}/audio/transcriptions',
