@@ -169,7 +169,7 @@ class CreditDeduct:
             self._completion_long_ctx_unit_price,
             self._prompt_cache_unit_price,
             self._prompt_long_ctx_cache_unit_price,
-            self.request_unit_price,
+            self.call_price,
             _,
         ) = get_model_price(model=self.model, is_embedding=is_embedding)
         self.features = {k for k, v in (body.get('metadata', {}).get('features_for_credit', {}) or {}).items() if v}
@@ -192,7 +192,7 @@ class CreditDeduct:
                         'prompt_unit_price': float(self.prompt_unit_price),
                         'prompt_cache_unit_price': float(self.prompt_cache_unit_price),
                         'completion_unit_price': float(self.completion_unit_price),
-                        'request_unit_price': float(self.request_unit_price),
+                        'call_price': float(self.call_price),
                         'feature_price': float(self.feature_price),
                         'features': list(self.features),
                         'custom_fee': float(self.custom_price),
@@ -280,7 +280,7 @@ class CreditDeduct:
     def request_price(self) -> Decimal:
         if self.is_error or (self.is_empty_response and self.empty_no_cost):
             return Decimal(0)
-        return self.request_unit_price / 1000 / 1000
+        return self.call_price
 
     @property
     def feature_price(self) -> Decimal:
@@ -298,7 +298,7 @@ class CreditDeduct:
     def total_price(self) -> Decimal:
         if self.is_error or (self.is_empty_response and self.empty_no_cost):
             return Decimal(0)
-        if self.request_unit_price > 0:
+        if self.call_price > 0:
             total_price = self.request_price + self.feature_price + self.custom_price
         else:
             total_price = self.prompt_price + self.completion_price + self.feature_price + self.custom_price

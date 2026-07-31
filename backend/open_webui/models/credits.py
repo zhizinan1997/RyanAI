@@ -95,7 +95,7 @@ class CreditLogUsage(BaseModel):
     total_price: Optional[Decimal] = None
     prompt_unit_price: Optional[Decimal] = None
     completion_unit_price: Optional[Decimal] = None
-    request_unit_price: Optional[Decimal] = None
+    call_price: Optional[Decimal] = None
     feature_price: Optional[Decimal] = None
     completion_tokens: Optional[int] = None
     prompt_tokens: Optional[int] = None

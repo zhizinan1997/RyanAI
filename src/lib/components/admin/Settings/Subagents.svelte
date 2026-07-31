@@ -162,7 +162,9 @@
 								step="1000"
 								class="h-7 w-20 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:focus:border-blue-500"
 							/>
-							<span class="text-[0.6875rem] text-gray-400 dark:text-gray-600">chars</span>
+							<span class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
+								{$i18n.t('characters')}
+							</span>
 						</div>
 					</div>
 

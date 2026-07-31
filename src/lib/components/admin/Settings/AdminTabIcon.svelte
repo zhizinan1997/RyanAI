@@ -13,6 +13,8 @@
 	import SoundHigh from '$lib/components/icons/SoundHigh.svelte';
 	import UserCircle from '$lib/components/icons/UserCircle.svelte';
 	import WrenchAlt from '$lib/components/icons/WrenchAlt.svelte';
+	import AdjustmentsHorizontal from '$lib/components/icons/AdjustmentsHorizontal.svelte';
+	import AppNotification from '$lib/components/icons/AppNotification.svelte';
 
 	export let id: string;
 	export let className = 'size-3.5';
@@ -87,4 +89,8 @@
 	<QueueList {className} {strokeWidth} />
 {:else if id === 'db'}
 	<Database {className} {strokeWidth} />
+{:else if id === 'credit'}
+	<AdjustmentsHorizontal {className} {strokeWidth} />
+{:else if id === 'splash-notice'}
+	<AppNotification {className} {strokeWidth} />
 {/if}

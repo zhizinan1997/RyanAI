@@ -38,6 +38,9 @@
 			if (usage.total_price !== undefined && usage.total_price !== null) {
 				return `-${Math.round(usage.total_price * 1e6) / 1e6}`;
 			}
+			if (usage.call_price) {
+				return `-${usage.call_price}`;
+			}
 			if (usage.request_unit_price) {
 				return `-${usage.request_unit_price / 1e6}`;
 			}

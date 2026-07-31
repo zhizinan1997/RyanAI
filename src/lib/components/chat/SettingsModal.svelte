@@ -55,6 +55,8 @@
 	import AdminImages from '$lib/components/admin/Settings/Images.svelte';
 	import AdminPipelines from '$lib/components/admin/Settings/Pipelines.svelte';
 	import AdminDatabase from '$lib/components/admin/Settings/Database.svelte';
+	import AdminCredit from '$lib/components/admin/Settings/Credit.svelte';
+	import AdminSplashNotice from '$lib/components/admin/Settings/SplashNotice.svelte';
 
 	const i18n: Writable<any> = getContext('i18n');
 
@@ -132,7 +134,9 @@
 		'admin:interface': 'Experience',
 		'admin:audio': 'Experience',
 		'admin:images': 'Experience',
-		'admin:db': 'Data'
+		'admin:splash-notice': 'Experience',
+		'admin:db': 'Data',
+		'admin:credit': 'Billing'
 	};
 	const settingGroupTitle = (tabId: string) =>
 		(isAdminTab(tabId) ? adminSettingGroups[tabId] : personalSettingGroups[tabId]) ?? 'General';
@@ -753,6 +757,16 @@
 			id: 'admin:db',
 			title: 'Database',
 			keywords: ['database', 'export', 'import', 'backup', 'chats', 'users']
+		},
+		{
+			id: 'admin:credit',
+			title: 'Credit',
+			keywords: ['credit', 'billing', 'payment', 'alipay', 'pricing', 'cost']
+		},
+		{
+			id: 'admin:splash-notice',
+			title: 'Splash Notice',
+			keywords: ['splash', 'notice', 'announcement', 'welcome']
 		}
 	];
 	let availableSettings: SettingsTab[] = [];
@@ -1296,6 +1310,10 @@
 						toast.success($i18n.t('Settings saved successfully!'));
 					}}
 				/>
+			{:else if selectedTab === 'admin:credit'}
+				<AdminCredit saveHandler={adminConfigSaveHandler} />
+			{:else if selectedTab === 'admin:splash-notice'}
+				<AdminSplashNotice saveHandler={adminConfigSaveHandler} />
 			{/if}
 		</div>
 	</div>

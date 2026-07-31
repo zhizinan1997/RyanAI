@@ -14,10 +14,7 @@ from open_webui.config import (
     USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE,
     USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE,
     USAGE_CALCULATE_FEATURE_TOOL_SERVER_PRICE,
-    USAGE_CALCULATE_DEFAULT_TOKEN_PRICE,
-    USAGE_CALCULATE_DEFAULT_REQUEST_PRICE,
     CREDIT_NO_CREDIT_MSG,
-    USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE,
 )
 from open_webui.models.config import Config
 from open_webui.models.credits import Credits
@@ -46,30 +43,14 @@ def get_model_price(
 ]:
     """
     Returns
-    - prompt price
-    - completion price
-    - prompt long ctx threshold
-    - prompt price long ctx
-    - completion long ctx threshold
-    - completion price long ctx
-    - prompt cache price
-    - prompt cache price long ctx
-    - request price
+    - legacy token pricing fields (all zero)
+    - price per successful call
     - minimum credit
     """
-    default_embedding_price = credit_config(
-        'credit.calculate.default_embedding_price', USAGE_CALCULATE_DEFAULT_EMBEDDING_PRICE
-    )
-    default_token_price = credit_config('credit.calculate.default_token_price', USAGE_CALCULATE_DEFAULT_TOKEN_PRICE)
-    default_request_price = credit_config(
-        'credit.calculate.default_request_price', USAGE_CALCULATE_DEFAULT_REQUEST_PRICE
-    )
-
-    # embedding
-    if is_embedding:
+    # Models without saved per-call pricing are free. Pricing must be configured
+    # explicitly for each model; token defaults are deliberately not used.
+    if not model or not isinstance(model, ModelModel):
         return (
-            Decimal(default_embedding_price),
-            Decimal(0),
             Decimal(0),
             Decimal(0),
             Decimal(0),
@@ -79,20 +60,6 @@ def get_model_price(
             Decimal(0),
             Decimal(0),
         )
-    # no model provide
-    if not model or not isinstance(model, ModelModel):
-        return (
-            Decimal(default_token_price),
-            Decimal(default_token_price),
-            Decimal(0),
-            Decimal(0),
-            Decimal(0),
-            Decimal(0),
-            Decimal(0),
-            Decimal(0),
-            Decimal(default_request_price),
-            Decimal(0),
-    )
     # base model
     if model.base_model_id:
         base_model = Models.get_model_by_id_sync(model.base_model_id)
@@ -101,15 +68,15 @@ def get_model_price(
     # model price
     model_price = model.price or {}
     return (
-        Decimal(model_price.get('prompt_price', default_token_price)),
-        Decimal(model_price.get('completion_price', default_token_price)),
-        Decimal(model_price.get('prompt_long_ctx_tokens', default_token_price)),
-        Decimal(model_price.get('prompt_long_ctx_price', default_token_price)),
-        Decimal(model_price.get('completion_long_ctx_tokens', default_token_price)),
-        Decimal(model_price.get('completion_long_ctx_price', default_token_price)),
-        Decimal(model_price.get('prompt_cache_price', default_token_price)),
-        Decimal(model_price.get('prompt_long_ctx_cache_price', default_token_price)),
-        Decimal(model_price.get('request_price', default_request_price)),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+        Decimal(model_price.get('call_price', 0)),
         Decimal(model_price.get('minimum_credit', 0)),
     )
 

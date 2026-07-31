@@ -26,7 +26,8 @@
 		total_price: number;
 		prompt_unit_price: number;
 		completion_unit_price: number;
-		request_unit_price: number;
+		call_price: number;
+		request_unit_price?: number;
 		completion_tokens: number;
 		prompt_tokens: number;
 	};
@@ -186,6 +187,9 @@
 		if (usage && Object.keys(usage).length > 0) {
 			if (usage.total_price !== undefined && usage.total_price !== null) {
 				return `-${Math.round(usage.total_price * 1e6) / 1e6}`;
+			}
+			if (usage.call_price) {
+				return `-${usage.call_price}`;
 			}
 			if (usage.request_unit_price) {
 				return `-${usage.request_unit_price / 1e6}`;

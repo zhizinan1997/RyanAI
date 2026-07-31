@@ -2,7 +2,6 @@ import json
 from numbers import Number
 from uuid import uuid4
 
-from open_webui.utils.credit.usage import CreditDeduct
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import (
     openai_chat_chunk_message_template,
@@ -234,6 +233,8 @@ def convert_response_ollama_to_openai(ollama_response: dict) -> dict:
 
 
 async def convert_streaming_response_ollama_to_openai(user, model_id, form_data, ollama_streaming_response):
+    from open_webui.utils.credit.usage import CreditDeduct
+
     has_tool_calls = False
     # All chunks in a single completion must share the same id (OpenAI spec).
     completion_id = f'chatcmpl-{str(uuid4())}'
