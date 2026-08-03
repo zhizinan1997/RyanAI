@@ -134,6 +134,7 @@
 	side="right"
 	align="end"
 	sideOffset={6}
+	visualViewportAware
 	alignOffset={6}
 	onOpenChange={(state) => {
 		if (state === false) {

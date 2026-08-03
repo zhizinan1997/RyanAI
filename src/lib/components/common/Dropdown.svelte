@@ -5,10 +5,10 @@
 	/** Whether the dropdown is open */
 	export let show = false;
 
-	/** Side to open on: 'bottom' | 'top' */
+	/** Side to open on: 'bottom' | 'top' | 'right' | 'left' */
 	export let side = 'bottom';
 
-	/** Alignment: 'start' | 'end' */
+	/** Alignment: 'start' | 'end'. For left/right side menus, this controls vertical alignment. */
 	export let align = 'start';
 
 	/** Close when clicking outside */
@@ -25,6 +25,9 @@
 
 	/** Side offset in px */
 	export let sideOffset = 4;
+
+	/** Alignment offset in px. For left/right side menus, positive values move the menu down. */
+	export let alignOffset = 0;
 
 	/** Position against the visual viewport, e.g. when the mobile keyboard is open */
 	export let visualViewportAware = false;
@@ -111,13 +114,63 @@
 	function positionContentDefault() {
 		if (!triggerEl || !contentEl) return;
 		const rect = triggerEl.getBoundingClientRect();
-		resolvedMaxHeight = maxHeight;
+		const pad = 16;
+		const viewportWidth = window.innerWidth;
+		const viewportHeight = window.innerHeight;
 
+		resolvedMaxHeight = maxHeight;
 		contentEl.style.position = 'fixed';
 		contentEl.style.zIndex = '9999';
 
 		const contentHeight = naturalContentHeight();
-		const spaceBelow = window.innerHeight - rect.bottom - sideOffset;
+		const contentWidth = contentEl.offsetWidth || 0;
+
+		// Side menus are used by the integrations menu. Keep this branch explicit because
+		// treating an unsupported side as "bottom" makes a bottom-toolbar menu overflow
+		// below the viewport.
+		if (side === 'right' || side === 'left') {
+			const spaceRight = viewportWidth - rect.right - sideOffset - pad;
+			const spaceLeft = rect.left - sideOffset - pad;
+			let openLeft = side === 'left';
+			if (side === 'right' && spaceRight < contentWidth && spaceLeft > spaceRight) {
+				openLeft = true;
+			} else if (side === 'left' && spaceLeft < contentWidth && spaceRight > spaceLeft) {
+				openLeft = false;
+			}
+
+			if (openLeft) {
+				const right = Math.min(
+					viewportWidth - rect.left + sideOffset,
+					Math.max(pad, viewportWidth - contentWidth - pad)
+				);
+				contentEl.style.right = `${Math.max(pad, right)}px`;
+				contentEl.style.left = 'auto';
+			} else {
+				const left = Math.min(
+					rect.right + sideOffset,
+					Math.max(pad, viewportWidth - contentWidth - pad)
+				);
+				contentEl.style.left = `${Math.max(pad, left)}px`;
+				contentEl.style.right = 'auto';
+			}
+
+			const availableHeight = Math.max(0, viewportHeight - pad * 2);
+			const constrainedHeight = contentHeight
+				? Math.min(contentHeight, availableHeight)
+				: contentHeight;
+			const preferredTop =
+				align === 'end' ? rect.bottom - constrainedHeight + alignOffset : rect.top + alignOffset;
+			contentEl.style.top = `${Math.max(
+				pad,
+				Math.min(preferredTop, viewportHeight - pad - constrainedHeight)
+			)}px`;
+			contentEl.style.bottom = 'auto';
+			resolvedMaxHeight =
+				contentHeight > availableHeight ? `min(${maxHeight}, ${availableHeight}px)` : maxHeight;
+			return;
+		}
+
+		const spaceBelow = viewportHeight - rect.bottom - sideOffset;
 		const spaceAbove = rect.top - sideOffset;
 
 		// Auto-flip: prefer the requested side, but flip if not enough space
@@ -129,7 +182,7 @@
 		}
 
 		if (openAbove) {
-			contentEl.style.bottom = `${window.innerHeight - rect.top + sideOffset}px`;
+			contentEl.style.bottom = `${viewportHeight - rect.top + sideOffset}px`;
 			contentEl.style.top = 'auto';
 		} else {
 			contentEl.style.top = `${rect.bottom + sideOffset}px`;
@@ -137,22 +190,20 @@
 		}
 
 		if (align === 'end') {
-			let right = window.innerWidth - rect.right;
+			let right = viewportWidth - rect.right;
 			// Shift if overflowing left edge
-			const contentWidth = contentEl.offsetWidth || 0;
-			if (right + contentWidth > window.innerWidth) {
-				right = window.innerWidth - contentWidth - 16;
+			if (right + contentWidth > viewportWidth) {
+				right = viewportWidth - contentWidth - pad;
 			}
-			contentEl.style.right = `${Math.max(16, right)}px`;
+			contentEl.style.right = `${Math.max(pad, right)}px`;
 			contentEl.style.left = 'auto';
 		} else {
 			let left = rect.left;
 			// Shift if overflowing right edge
-			const contentWidth = contentEl.offsetWidth || 0;
-			if (left + contentWidth + 16 > window.innerWidth) {
-				left = window.innerWidth - contentWidth - 16;
+			if (left + contentWidth + pad > viewportWidth) {
+				left = viewportWidth - contentWidth - pad;
 			}
-			contentEl.style.left = `${Math.max(16, left)}px`;
+			contentEl.style.left = `${Math.max(pad, left)}px`;
 			contentEl.style.right = 'auto';
 		}
 	}
@@ -169,6 +220,42 @@
 		contentEl.style.zIndex = '9999';
 
 		const contentHeight = naturalContentHeight();
+		const contentWidth = contentEl.offsetWidth || 0;
+
+		if (side === 'right' || side === 'left') {
+			const spaceRight = viewportRight - rect.right - sideOffset - pad;
+			const spaceLeft = rect.left - viewport.left - sideOffset - pad;
+			let openLeft = side === 'left';
+			if (side === 'right' && spaceRight < contentWidth && spaceLeft > spaceRight) {
+				openLeft = true;
+			} else if (side === 'left' && spaceLeft < contentWidth && spaceRight > spaceLeft) {
+				openLeft = false;
+			}
+
+			const minLeft = viewport.left + pad;
+			const maxLeft = Math.max(minLeft, viewportRight - contentWidth - pad);
+			const preferredLeft = openLeft
+				? rect.left - sideOffset - contentWidth
+				: rect.right + sideOffset;
+			contentEl.style.left = `${Math.max(minLeft, Math.min(preferredLeft, maxLeft))}px`;
+			contentEl.style.right = 'auto';
+
+			const availableHeight = Math.max(0, viewport.height - pad * 2);
+			const constrainedHeight = contentHeight
+				? Math.min(contentHeight, availableHeight)
+				: contentHeight;
+			const preferredTop =
+				align === 'end' ? rect.bottom - constrainedHeight + alignOffset : rect.top + alignOffset;
+			contentEl.style.top = `${Math.max(
+				viewport.top + pad,
+				Math.min(preferredTop, viewportBottom - pad - constrainedHeight)
+			)}px`;
+			contentEl.style.bottom = 'auto';
+			resolvedMaxHeight =
+				contentHeight > availableHeight ? `min(${maxHeight}, ${availableHeight}px)` : maxHeight;
+			return;
+		}
+
 		const spaceBelow = viewportBottom - rect.bottom - sideOffset - pad;
 		const spaceAbove = rect.top - viewport.top - sideOffset - pad;
 
@@ -187,7 +274,6 @@
 		const preferredTop = openAbove
 			? rect.top - constrainedHeight - sideOffset
 			: rect.bottom + sideOffset;
-		const contentWidth = contentEl.offsetWidth || 0;
 		const preferredLeft = align === 'end' && contentWidth ? rect.right - contentWidth : rect.left;
 		const maxLeft = contentWidth ? viewportRight - contentWidth - pad : preferredLeft;
 
