@@ -2174,25 +2174,23 @@ CREDIT_NO_CREDIT_MSG = os.getenv('CREDIT_NO_CREDIT_MSG', '余额不足，请联�
 CREDIT_DEFAULT_CREDIT = os.getenv('CREDIT_DEFAULT_CREDIT', '0')
 
 ####################################
-# Tarot Lottery / Daily Reset
+# Daily Check-in / Credit Reset
 ####################################
-
-ENABLE_TAROT_LOTTERY = os.getenv('ENABLE_TAROT_LOTTERY', 'False').lower() == 'true'
 
 ENABLE_DAILY_CHECKIN = os.getenv('ENABLE_DAILY_CHECKIN', 'False').lower() == 'true'
 
-TAROT_REWARD_CONFIG = os.getenv(
-    'TAROT_REWARD_CONFIG',
+DAILY_CHECKIN_REWARD_CONFIG = os.getenv(
+    'DAILY_CHECKIN_REWARD_CONFIG',
     '[{"amount":3,"weight":45},{"amount":5,"weight":30},{"amount":10,"weight":18},{"amount":20,"weight":6},{"amount":66,"weight":1}]',
 )
 
-LOTTERY_TIMEZONE = os.getenv('LOTTERY_TIMEZONE', 'Asia/Shanghai')
+CHECKIN_TIMEZONE = os.getenv('CHECKIN_TIMEZONE', 'Asia/Shanghai')
 
 ENABLE_DAILY_CREDIT_RESET = os.getenv('ENABLE_DAILY_CREDIT_RESET', 'False').lower() == 'true'
 
 DAILY_RESET_CREDIT = os.getenv('DAILY_RESET_CREDIT', '3')
 
-LOTTERY_DAILY_RESET_MARK = os.getenv('LOTTERY_DAILY_RESET_MARK', '')
+DAILY_RESET_MARK = os.getenv('DAILY_RESET_MARK', '')
 
 USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE = os.getenv('USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE', '')
 
@@ -3242,13 +3240,12 @@ DEFAULT_CONFIG = {
     'credit.no_charge_empty_response': CREDIT_NO_CHARGE_EMPTY_RESPONSE,
     'credit.no_credit_msg': CREDIT_NO_CREDIT_MSG,
     'credit.default_credit': CREDIT_DEFAULT_CREDIT,
-    'lottery.enable': ENABLE_TAROT_LOTTERY,
     'lottery.checkin.enable': ENABLE_DAILY_CHECKIN,
-    'lottery.reward_config': TAROT_REWARD_CONFIG,
-    'lottery.timezone': LOTTERY_TIMEZONE,
+    'lottery.reward_config': DAILY_CHECKIN_REWARD_CONFIG,
+    'lottery.timezone': CHECKIN_TIMEZONE,
     'lottery.daily_reset.enable': ENABLE_DAILY_CREDIT_RESET,
     'lottery.daily_reset.credit': DAILY_RESET_CREDIT,
-    'lottery.daily_reset.mark': LOTTERY_DAILY_RESET_MARK,
+    'lottery.daily_reset.mark': DAILY_RESET_MARK,
     'credit.calculate.model_prefix_to_remove': USAGE_CALCULATE_MODEL_PREFIX_TO_REMOVE,
     'credit.calculate.encoding.default_model': USAGE_DEFAULT_ENCODING_MODEL,
     'credit.calculate.default_request_price': USAGE_CALCULATE_DEFAULT_REQUEST_PRICE,

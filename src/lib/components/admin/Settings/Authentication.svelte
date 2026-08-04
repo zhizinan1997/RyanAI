@@ -109,6 +109,22 @@
 		await Promise.all([
 			(async () => {
 				adminConfig = await getAdminConfig(localStorage.token);
+				adminConfig = {
+					ENABLE_SIGNUP_VERIFY: false,
+					SIGNUP_EMAIL_DOMAIN_WHITELIST: '',
+					ENABLE_CF_TURNSTILE: false,
+					CF_TURNSTILE_SITE_KEY: '',
+					CF_TURNSTILE_SECRET_KEY: '',
+					SMTP_HOST: '',
+					SMTP_PORT: '465',
+					SMTP_USERNAME: '',
+					SMTP_PASSWORD: '',
+					SMTP_SENT_FROM: '',
+					ENABLE_AI_ERROR_EMAIL_NOTIFICATION: false,
+					AI_ERROR_EMAIL_COOLDOWN_SECONDS: 600,
+					AI_ERROR_EMAIL_RECIPIENT_MODE: 'admin',
+					...adminConfig
+				};
 			})(),
 			(async () => {
 				groups = await getGroups(localStorage.token);
@@ -238,6 +254,164 @@
 						</a>
 					{/if}
 				</AdminSettingField>
+			</AdminSettingSection>
+
+			<AdminSettingSection title={$i18n.t('Email & Notifications')}>
+				<AdminSettingRow
+					label={$i18n.t('Enable Sign Up Verify')}
+					description={$i18n.t(
+						'Require users to verify their email address before accessing the app.'
+					)}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_SIGNUP_VERIFY} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+
+				<AdminSettingField
+					label={$i18n.t('Sign Up Email Domain Whitelist')}
+					description={$i18n.t('Comma-separated email domains allowed for new registrations.')}
+				>
+					<input
+						class={inputClass}
+						placeholder="e.g. outlook.com,gmail.com"
+						bind:value={adminConfig.SIGNUP_EMAIL_DOMAIN_WHITELIST}
+					/>
+				</AdminSettingField>
+
+				<AdminSettingRow
+					label={$i18n.t('Enable AI Error Email Notifications')}
+					description={$i18n.t('Send email notifications when an AI request fails.')}
+					let:labelId
+				>
+					<Switch
+						bind:state={adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
+						ariaLabelledbyId={labelId}
+					/>
+				</AdminSettingRow>
+
+				{#if adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
+					<AdminSettingField
+						label={$i18n.t('AI Error Email Recipients')}
+						description={$i18n.t(
+							'Choose whether only admins receive AI error emails, or both admins and the affected user.'
+						)}
+					>
+						<SettingsSelect bind:value={adminConfig.AI_ERROR_EMAIL_RECIPIENT_MODE}>
+							<option value="admin">{$i18n.t('Admin only')}</option>
+							<option value="admin_and_user">{$i18n.t('Admin and user')}</option>
+						</SettingsSelect>
+					</AdminSettingField>
+
+					<AdminSettingField
+						label={$i18n.t('AI Error Email Cooldown Seconds')}
+						description={$i18n.t(
+							'Repeated errors of the same type are suppressed during this period.'
+						)}
+					>
+						<input
+							class={inputClass}
+							type="number"
+							min="1"
+							required
+							bind:value={adminConfig.AI_ERROR_EMAIL_COOLDOWN_SECONDS}
+						/>
+					</AdminSettingField>
+				{/if}
+
+				{#if adminConfig.ENABLE_SIGNUP_VERIFY || adminConfig.ENABLE_AI_ERROR_EMAIL_NOTIFICATION}
+					<div class="grid grid-cols-1 gap-x-3 gap-y-2.5 sm:grid-cols-2">
+						<AdminSettingField
+							label={$i18n.t('SMTP Host')}
+							description={$i18n.t('SMTP server hostname.')}
+						>
+							<input class={inputClass} type="text" required bind:value={adminConfig.SMTP_HOST} />
+						</AdminSettingField>
+
+						<AdminSettingField
+							label={$i18n.t('SMTP Port')}
+							description={$i18n.t('SMTP server port.')}
+						>
+							<input class={inputClass} type="text" required bind:value={adminConfig.SMTP_PORT} />
+						</AdminSettingField>
+
+						<AdminSettingField
+							label={$i18n.t('SMTP Username')}
+							description={$i18n.t('SMTP authentication username.')}
+						>
+							<input
+								class={inputClass}
+								type="text"
+								required
+								bind:value={adminConfig.SMTP_USERNAME}
+							/>
+						</AdminSettingField>
+
+						<AdminSettingField
+							label={$i18n.t('SMTP Password')}
+							description={$i18n.t('SMTP authentication password.')}
+						>
+							<div
+								class="flex h-7 items-center rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 dark:border-white/[0.04] dark:bg-white/[0.03]"
+							>
+								<SensitiveInput
+									class="w-full text-xs"
+									required
+									bind:value={adminConfig.SMTP_PASSWORD}
+								/>
+							</div>
+						</AdminSettingField>
+
+						<AdminSettingField
+							label={$i18n.t('SMTP Sent From')}
+							description={$i18n.t('If empty, will use username as the from address')}
+						>
+							<input class={inputClass} type="email" bind:value={adminConfig.SMTP_SENT_FROM} />
+						</AdminSettingField>
+					</div>
+				{/if}
+			</AdminSettingSection>
+
+			<AdminSettingSection title={$i18n.t('Cloudflare Turnstile')}>
+				<AdminSettingRow
+					label={$i18n.t('Enable Cloudflare Verification')}
+					description={$i18n.t(
+						'Require Cloudflare Turnstile verification during sign in and sign up.'
+					)}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_CF_TURNSTILE} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+
+				{#if adminConfig.ENABLE_CF_TURNSTILE}
+					<div class="grid grid-cols-1 gap-x-3 gap-y-2.5 sm:grid-cols-2">
+						<AdminSettingField
+							label={$i18n.t('Site Key')}
+							description={$i18n.t('Cloudflare Turnstile site key.')}
+						>
+							<input
+								class={inputClass}
+								placeholder={$i18n.t('Enter Site Key')}
+								required
+								bind:value={adminConfig.CF_TURNSTILE_SITE_KEY}
+							/>
+						</AdminSettingField>
+
+						<AdminSettingField
+							label={$i18n.t('Secret Key')}
+							description={$i18n.t('Cloudflare Turnstile secret key.')}
+						>
+							<div
+								class="flex h-7 items-center rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 dark:border-white/[0.04] dark:bg-white/[0.03]"
+							>
+								<SensitiveInput
+									class="w-full text-xs"
+									required
+									bind:value={adminConfig.CF_TURNSTILE_SECRET_KEY}
+								/>
+							</div>
+						</AdminSettingField>
+					</div>
+				{/if}
 			</AdminSettingSection>
 
 			<AdminSettingSection title={$i18n.t('Pending Accounts')}>

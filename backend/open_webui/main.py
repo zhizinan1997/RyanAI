@@ -154,7 +154,7 @@ from open_webui.routers import (
     groups,
     images,
     knowledge,
-    lottery,
+    checkin,
     memories,
     models,
     notifications,
@@ -802,7 +802,7 @@ app.include_router(configs.router, prefix='/api/v1/configs', tags=['configs'])
 app.include_router(auths.router, prefix='/api/v1/auths', tags=['auths'])
 app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 app.include_router(credit.router, prefix='/api/v1/credit', tags=['credit'])
-app.include_router(lottery.router, prefix='/api/v1/lottery', tags=['lottery'])
+app.include_router(checkin.router, prefix='/api/v1/checkin', tags=['checkin'])
 
 
 app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])

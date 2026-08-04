@@ -12,7 +12,7 @@
 	import Groups from './Users/Groups.svelte';
 	import Credit from './Users/Credit.svelte';
 	import CreditLog from './Users/CreditLog.svelte';
-	import Lottery from './Users/Lottery.svelte';
+	import Checkin from './Users/Checkin.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -20,9 +20,7 @@
 	$: {
 		const pathParts = $page.url.pathname.split('/');
 		const tabFromPath = pathParts[pathParts.length - 1];
-		selectedTab = ['overview', 'groups', 'credit', 'creditLog', 'lottery'].includes(
-			tabFromPath
-		)
+		selectedTab = ['overview', 'groups', 'credit', 'creditLog', 'checkin'].includes(tabFromPath)
 			? tabFromPath
 			: 'overview';
 	}
@@ -128,11 +126,7 @@
 				{/if}
 			</a>
 
-			{#each [
-				{ id: 'credit', label: 'Credit Statistics' },
-				{ id: 'creditLog', label: 'Credit Log' },
-				{ id: 'lottery', label: 'Lottery' }
-			] as tab}
+			{#each [{ id: 'credit', label: 'Credit Statistics' }, { id: 'creditLog', label: 'Credit Log' }, { id: 'checkin', label: 'Daily Check-in' }] as tab}
 				<a
 					id={tab.id}
 					href="/admin/users/{tab.id}"
@@ -156,8 +150,8 @@
 				<Credit />
 			{:else if selectedTab === 'creditLog'}
 				<CreditLog />
-			{:else if selectedTab === 'lottery'}
-				<Lottery />
+			{:else if selectedTab === 'checkin'}
+				<Checkin />
 			{/if}
 		</div>
 	</div>

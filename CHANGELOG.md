@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.5] - 2026-08-04
+
+### Added
+
+- Replaced the Tarot module with the daily check-in module while preserving weighted credit rewards, reset settings, and usage rankings.
+- Restored the administrator authentication settings for signup email verification, SMTP, Cloudflare Turnstile, and AI error email notifications.
+
+### Changed
+
+- Restored the existing administrator notification editor and localized the restored authentication settings in English and Simplified Chinese.
+
 ## [0.11.0.3] - 2026-07-31
 
 ### Fixed

@@ -62,7 +62,7 @@
 	import { user } from '$lib/stores';
 	import { getSessionUser } from '$lib/apis/auths';
 	import { getMyUsageSummary } from '$lib/apis/credit';
-	import { checkinLottery, getLotteryConfig } from '$lib/apis/lottery';
+	import { checkin as submitCheckin, getCheckinConfig } from '$lib/apis/checkin';
 	import { WEBUI_BASE_URL } from '$lib/constants';
 
 	import Calendar from '$lib/components/icons/Calendar.svelte';
@@ -181,7 +181,7 @@
 			return;
 		}
 
-		const cfg = await getLotteryConfig(localStorage.token).catch(() => null);
+		const cfg = await getCheckinConfig(localStorage.token).catch(() => null);
 		if (cfg) {
 			checkinEnabled = !!cfg.checkin_enabled;
 			checkedInToday = !!cfg.checked_in_today;
@@ -195,7 +195,7 @@
 		if (checkinLoading || checkedInToday) return;
 
 		checkinLoading = true;
-		const res = await checkinLottery(localStorage.token).catch((err) => {
+		const res = await submitCheckin(localStorage.token).catch((err) => {
 			toast.error(`${err}`);
 			return null;
 		});

@@ -49,7 +49,6 @@
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
 	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
-	import TarotFloatingButton from '$lib/components/lottery/TarotFloatingButton.svelte';
 	import SplashNoticeOverlay from '$lib/components/layout/Overlay/SplashNotice.svelte';
 	import { loadKeybindings, matchKeybinding, Shortcut } from '$lib/shortcuts';
 
@@ -535,7 +534,6 @@
 				{/if}
 
 				<Sidebar />
-				<TarotFloatingButton />
 
 				{#if loaded}
 					<main id="main-content" class="contents">
