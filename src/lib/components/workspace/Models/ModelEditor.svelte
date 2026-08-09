@@ -685,6 +685,16 @@
 											required
 										/>
 									</div>
+									<div>
+										<input
+											class="block w-full bg-transparent py-0.5 text-xs text-gray-500 outline-hidden placeholder:text-gray-300 dark:text-gray-500 dark:placeholder:text-gray-700"
+											placeholder={$i18n.t('Model Logo URL')}
+											aria-label={$i18n.t('Model Logo URL')}
+											inputmode="url"
+											autocomplete="off"
+											bind:value={info.meta.profile_image_url}
+										/>
+									</div>
 								</div>
 							</div>
 
