@@ -230,12 +230,7 @@ def is_free_request(model_price: list, form_data: dict) -> bool:
     is_free_model = sum(float(price) for price in model_price) <= 0
 
     metadata = form_data.get('metadata') or {}
-    features = (
-        form_data.get('features')
-        or metadata.get('features')
-        or metadata.get('features_for_credit')
-        or {}
-    )
+    features = form_data.get('features') or metadata.get('features') or metadata.get('features_for_credit') or {}
     is_feature_free = get_feature_price({k for k, v in features.items() if v}) <= 0
     is_custom_fee_free = get_custom_price(form_data) <= 0
 
@@ -285,12 +280,7 @@ def check_credit_by_user_id(user_id: str, form_data: dict, is_embedding: bool = 
         or metadata_for_features.get('features')
         or {}
     )
-    feature_price = get_feature_price(
-        {
-            key for key, enabled in feature_flags.items()
-            if enabled
-        }
-    )
+    feature_price = get_feature_price({key for key, enabled in feature_flags.items() if enabled})
     custom_price = get_custom_price(form_data)
     estimated_cost = max(
         (request_price if request_price > 0 else Decimal(0)) + feature_price + custom_price,

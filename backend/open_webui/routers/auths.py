@@ -1395,9 +1395,7 @@ async def get_admin_details(
 @router.get('/admin/config')
 async def get_admin_config(request: Request, user=Depends(get_admin_user)):
     config = await get_config_values(ADMIN_CONFIG_KEYS)
-    config['SPLASH_NOTICE_MEDIA_URL'] = get_splash_notice_media_url(
-        await Config.get('ui.splash_notice_media', '')
-    )
+    config['SPLASH_NOTICE_MEDIA_URL'] = get_splash_notice_media_url(await Config.get('ui.splash_notice_media', ''))
     return config
 
 
@@ -1464,9 +1462,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     updates['automations.min_interval'] = (
         int(form_data.AUTOMATION_MIN_INTERVAL) if form_data.AUTOMATION_MIN_INTERVAL else ''
     )
-    updates['notifications.ai_error_email.cooldown_seconds'] = max(
-        1, int(form_data.AI_ERROR_EMAIL_COOLDOWN_SECONDS)
-    )
+    updates['notifications.ai_error_email.cooldown_seconds'] = max(1, int(form_data.AI_ERROR_EMAIL_COOLDOWN_SECONDS))
     recipient_mode = str(form_data.AI_ERROR_EMAIL_RECIPIENT_MODE or 'admin').strip().lower().replace('-', '_')
     if recipient_mode in {'admin_only', 'admin'}:
         updates['notifications.ai_error_email.recipient_mode'] = 'admin'
@@ -1489,9 +1485,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
 
     await Config.upsert(updates)
     config = await get_config_values(ADMIN_CONFIG_KEYS)
-    config['SPLASH_NOTICE_MEDIA_URL'] = get_splash_notice_media_url(
-        await Config.get('ui.splash_notice_media', '')
-    )
+    config['SPLASH_NOTICE_MEDIA_URL'] = get_splash_notice_media_url(await Config.get('ui.splash_notice_media', ''))
     return config
 
 

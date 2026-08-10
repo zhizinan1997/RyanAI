@@ -50,9 +50,7 @@ def _parse_rewards() -> list[tuple[Decimal, float]]:
     try:
         data = json.loads(raw)
         rewards = [
-            (Decimal(str(item['amount'])), float(item['weight']))
-            for item in data
-            if float(item.get('weight', 0)) > 0
+            (Decimal(str(item['amount'])), float(item['weight'])) for item in data if float(item.get('weight', 0)) > 0
         ]
         return rewards or [(Decimal('1'), 1.0)]
     except Exception:
@@ -73,9 +71,7 @@ def _weighted_pick(rewards: list[tuple[Decimal, float]]) -> Decimal:
     return rewards[0][0]
 
 
-def _create_checkin_record(
-    request: Request, user_id: str, today: str, duplicate_detail: str
-) -> Decimal:
+def _create_checkin_record(request: Request, user_id: str, today: str, duplicate_detail: str) -> Decimal:
     reward = _weighted_pick(_parse_rewards())
     now = int(time.time())
     detail = {
@@ -218,9 +214,7 @@ async def get_admin_checkin_config(user=Depends(get_admin_user)):
 
 
 @router.post('/admin/config')
-async def set_admin_checkin_config(
-    form: CheckinAdminConfigForm, user=Depends(get_admin_user)
-):
+async def set_admin_checkin_config(form: CheckinAdminConfigForm, user=Depends(get_admin_user)):
     try:
         data = json.loads(form.DAILY_CHECKIN_REWARD_CONFIG or '[]')
         assert isinstance(data, list) and len(data) > 0
