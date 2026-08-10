@@ -293,6 +293,9 @@
 							{/if}
 						</button>
 					</th>
+					<th scope="col" class="font-normal select-none" aria-sort="none">
+						<div class="px-2.5 py-1.5">{$i18n.t('Credit')}</div>
+					</th>
 
 					<th scope="col" class="font-normal select-none" aria-sort={sortState('last_active_at')}>
 						<button
@@ -387,6 +390,7 @@
 							</button>
 						</td>
 						<td class=" px-3 py-1 max-w-48 truncate"> {user.email} </td>
+						<td class="px-3 py-1 tabular-nums">{user.credit ?? 0}</td>
 
 						<td class=" px-3 py-1">
 							{dayjs(user.last_active_at * 1000).fromNow()}

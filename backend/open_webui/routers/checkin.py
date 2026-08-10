@@ -17,6 +17,7 @@ from open_webui.env import (
 )
 from open_webui.models.config import Config
 from open_webui.models.checkin import CheckinRecordModel, CheckinRecords
+from open_webui.models.credits import AddCreditForm, Credits, SetCreditFormDetail
 from open_webui.models.users import Users
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.redis import get_redis_connection, get_sentinels_from_env
@@ -77,6 +78,17 @@ def _create_checkin_record(
     )
     if saved is None:
         raise HTTPException(status_code=400, detail=duplicate_detail)
+
+    Credits.add_credit_by_user_id(
+        AddCreditForm(
+            user_id=user_id,
+            amount=reward,
+            detail=SetCreditFormDetail(
+                desc='daily check-in reward',
+                api_params={'checkin_date': today},
+            ),
+        )
+    )
     return reward
 
 
@@ -182,7 +194,9 @@ async def set_admin_checkin_config(
         raise HTTPException(status_code=400, detail='Invalid timezone')
 
     try:
-        Decimal(str(form.DAILY_RESET_CREDIT))
+        reset_credit = Decimal(str(form.DAILY_RESET_CREDIT))
+        if reset_credit < 0:
+            raise ValueError('daily reset credit must be non-negative')
     except Exception:
         raise HTTPException(status_code=400, detail='Invalid daily reset credit')
 

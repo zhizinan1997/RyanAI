@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from open_webui.config import (
+    USAGE_CALCULATE_MINIMUM_COST,
     USAGE_CALCULATE_FEATURE_IMAGE_GEN_PRICE,
     USAGE_CALCULATE_FEATURE_CODE_EXECUTE_PRICE,
     USAGE_CALCULATE_FEATURE_WEB_SEARCH_PRICE,
@@ -51,6 +52,8 @@ def get_model_price(
     # explicitly for each model; token defaults are deliberately not used.
     if not model or not isinstance(model, ModelModel):
         return (
+            Decimal(0),
+            Decimal(0),
             Decimal(0),
             Decimal(0),
             Decimal(0),
@@ -176,8 +179,29 @@ def check_credit_by_user_id(user_id: str, form_data: dict, is_embedding: bool = 
     # load credit
     metadata = form_data.get('metadata') or form_data
     credit = Credits.init_credit_by_user_id(user_id=user_id)
-    # check for credit
-    if credit is None or credit.credit <= 0 or credit.credit < minimum_credit:
+    # A fixed call price is known before the upstream request. Require enough
+    # balance for that call (and any enabled feature fee) instead of checking
+    # only the optional minimum-credit threshold.
+    metadata_for_features = form_data.get('metadata') or {}
+    feature_flags = (
+        form_data.get('features')
+        or metadata_for_features.get('features_for_credit')
+        or metadata_for_features.get('features')
+        or {}
+    )
+    feature_price = get_feature_price(
+        {
+            key for key, enabled in feature_flags.items()
+            if enabled
+        }
+    )
+    estimated_cost = max(
+        request_price + feature_price if request_price > 0 else feature_price,
+        Decimal(credit_config('credit.calculate.minimum_cost', USAGE_CALCULATE_MINIMUM_COST)),
+    )
+    required_credit = max(minimum_credit, estimated_cost)
+
+    if credit is None or credit.credit < required_credit:
         no_credit_msg = credit_config('credit.no_credit_msg', CREDIT_NO_CREDIT_MSG)
         if isinstance(metadata, dict) and metadata:
             chat_id = metadata.get('chat_id')
