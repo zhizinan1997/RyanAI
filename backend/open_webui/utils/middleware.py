@@ -1450,11 +1450,16 @@ async def chat_web_search_handler(request: Request, form_data: dict, extra_param
     )
 
     try:
-        results = await process_web_search(
-            request,
-            SearchForm(queries=queries),
-            user=user,
-        )
+        previous_skip_feature_credit = getattr(request.state, 'skip_standalone_feature_credit', False)
+        request.state.skip_standalone_feature_credit = True
+        try:
+            results = await process_web_search(
+                request,
+                SearchForm(queries=queries),
+                user=user,
+            )
+        finally:
+            request.state.skip_standalone_feature_credit = previous_skip_feature_credit
 
         if results:
             files = form_data.get('files', [])

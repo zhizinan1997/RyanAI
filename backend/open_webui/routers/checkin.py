@@ -1,5 +1,7 @@
 import json
 import logging
+import time
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -7,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 
 from open_webui.env import (
     GLOBAL_LOG_LEVEL,
@@ -15,9 +18,10 @@ from open_webui.env import (
     REDIS_SENTINEL_PORT,
     REDIS_URL,
 )
+from open_webui.internal.db import get_db
+from open_webui.models.checkin import CheckinRecord, CheckinRecords
 from open_webui.models.config import Config
-from open_webui.models.checkin import CheckinRecordModel, CheckinRecords
-from open_webui.models.credits import AddCreditForm, Credits, SetCreditFormDetail
+from open_webui.models.credits import Credit, CreditLog
 from open_webui.models.users import Users
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.redis import get_redis_connection, get_sentinels_from_env
@@ -73,22 +77,64 @@ def _create_checkin_record(
     request: Request, user_id: str, today: str, duplicate_detail: str
 ) -> Decimal:
     reward = _weighted_pick(_parse_rewards())
-    saved = CheckinRecords.insert(
-        CheckinRecordModel(user_id=user_id, checkin_date=today, reward=reward)
-    )
-    if saved is None:
-        raise HTTPException(status_code=400, detail=duplicate_detail)
+    now = int(time.time())
+    detail = {
+        'api_path': '',
+        'api_params': {'checkin_date': today},
+        'desc': 'daily check-in reward',
+        'usage': {},
+    }
 
-    Credits.add_credit_by_user_id(
-        AddCreditForm(
-            user_id=user_id,
-            amount=reward,
-            detail=SetCreditFormDetail(
-                desc='daily check-in reward',
-                api_params={'checkin_date': today},
-            ),
-        )
-    )
+    # Keep the check-in row, balance update, and credit log in one transaction.
+    # Otherwise a failed balance update could consume the user's daily check-in.
+    try:
+        with get_db() as db:
+            db.add(
+                CheckinRecord(
+                    id=uuid.uuid4().hex,
+                    user_id=user_id,
+                    checkin_date=today,
+                    reward=reward,
+                    created_at=now,
+                )
+            )
+            db.flush()
+
+            credit_row = db.query(Credit).filter(Credit.user_id == user_id).first()
+            if credit_row is None:
+                default_credit = Decimal(str(Config.get_sync('credit.default_credit', '0')))
+                credit_row = Credit(
+                    id=uuid.uuid4().hex,
+                    user_id=user_id,
+                    credit=default_credit,
+                    updated_at=now,
+                    created_at=now,
+                )
+                db.add(credit_row)
+                db.flush()
+
+            current_credit = Decimal(str(credit_row.credit or 0))
+            new_credit = current_credit + reward
+            db.query(Credit).filter(Credit.user_id == user_id).update(
+                {'credit': new_credit, 'updated_at': now},
+                synchronize_session=False,
+            )
+            db.add(
+                CreditLog(
+                    id=uuid.uuid4().hex,
+                    user_id=user_id,
+                    credit=new_credit,
+                    detail=detail,
+                    created_at=now,
+                )
+            )
+            db.commit()
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail=duplicate_detail)
+    except Exception:
+        log.exception('Failed to award daily check-in reward for user %s', user_id)
+        raise HTTPException(status_code=500, detail='Failed to award check-in reward')
+
     return reward
 
 

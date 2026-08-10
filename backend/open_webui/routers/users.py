@@ -69,7 +69,7 @@ PAGE_ITEM_COUNT = 30
 
 def _get_credit_map(user_ids: list[str]) -> dict[str, str]:
     return {
-        credit.user_id: '%.4f' % credit.credit
+        credit.user_id: str(credit.credit)
         for credit in Credits.list_credits_by_user_id(user_ids=user_ids)
     }
 

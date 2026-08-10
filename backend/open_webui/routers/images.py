@@ -34,6 +34,7 @@ from open_webui.retrieval.web.utils import get_ssrf_safe_session, validate_url
 from open_webui.routers.files import get_file_content_by_id, upload_file_handler
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.credit.utils import charge_feature_by_user_id, check_feature_credit_by_user_id
 from open_webui.utils.headers import include_user_info_headers
 from open_webui.utils.images.comfyui import (
     ComfyUICreateImageForm,
@@ -572,7 +573,10 @@ async def generate_images(request: Request, form_data: CreateImageForm, user=Dep
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    check_feature_credit_by_user_id(user.id, 'image_generation', form_data.model)
     result = await image_generations(request, form_data, user=user)
+    if result:
+        charge_feature_by_user_id(user.id, 'image_generation', form_data.model)
     await publish_event(
         request,
         EVENTS.IMAGE_GENERATED,
@@ -870,7 +874,10 @@ async def edit_images(request: Request, form_data: EditImageForm, user=Depends(g
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    check_feature_credit_by_user_id(user.id, 'image_generation', form_data.model)
     result = await image_edits(request, form_data, user=user)
+    if result:
+        charge_feature_by_user_id(user.id, 'image_generation', form_data.model)
     await publish_event(
         request,
         EVENTS.IMAGE_EDITED,
