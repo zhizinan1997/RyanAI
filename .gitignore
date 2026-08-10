@@ -2,6 +2,8 @@ x.py
 yarn.lock
 .DS_Store
 node_modules
+/backend/open_webui/static/user-import.csv
+/bot-gateway/.smoke-openclaw-*/
 /build
 /.svelte-kit
 /package

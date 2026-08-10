@@ -78,6 +78,8 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+The WeChat/QQ gateway is pulled from GHCR automatically. To refresh it explicitly, run `docker compose pull ryanai-bot-gateway` before starting the stack.
+
 启动后访问 `http://localhost:3000`。Compose 默认会同时启动 Ollama，并把 RyanAI 的容器内 `8080` 端口映射到宿主机 `3000`。
 
 Windows PowerShell 可用：

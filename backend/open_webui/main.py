@@ -142,6 +142,7 @@ from open_webui.routers import (
     audio,
     auths,
     automations,
+    bot_gateway,
     calendar,
     channels,
     chats,
@@ -803,6 +804,8 @@ app.include_router(auths.router, prefix='/api/v1/auths', tags=['auths'])
 app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 app.include_router(credit.router, prefix='/api/v1/credit', tags=['credit'])
 app.include_router(checkin.router, prefix='/api/v1/checkin', tags=['checkin'])
+app.include_router(bot_gateway.router, prefix='/api/v1', tags=['bot-gateway'])
+app.include_router(bot_gateway.internal_router, prefix='/api/v1', tags=['bot-gateway-internal'])
 
 
 app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])

@@ -21,7 +21,7 @@ from open_webui.env import (
 from open_webui.internal.db import get_db
 from open_webui.models.checkin import CheckinRecord, CheckinRecords
 from open_webui.models.config import Config
-from open_webui.models.credits import Credit, CreditLog
+from open_webui.models.credits import Credit
 from open_webui.models.users import Users
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.redis import get_redis_connection, get_sentinels_from_env
@@ -74,14 +74,7 @@ def _weighted_pick(rewards: list[tuple[Decimal, float]]) -> Decimal:
 def _create_checkin_record(request: Request, user_id: str, today: str, duplicate_detail: str) -> Decimal:
     reward = _weighted_pick(_parse_rewards())
     now = int(time.time())
-    detail = {
-        'api_path': '',
-        'api_params': {'checkin_date': today},
-        'desc': 'daily check-in reward',
-        'usage': {},
-    }
-
-    # Keep the check-in row, balance update, and credit log in one transaction.
+    # Keep the check-in row and balance update in one transaction.
     # Otherwise a failed balance update could consume the user's daily check-in.
     try:
         with get_db() as db:
@@ -114,15 +107,6 @@ def _create_checkin_record(request: Request, user_id: str, today: str, duplicate
             db.query(Credit).filter(Credit.user_id == user_id).update(
                 {'credit': new_credit, 'updated_at': now},
                 synchronize_session=False,
-            )
-            db.add(
-                CreditLog(
-                    id=uuid.uuid4().hex,
-                    user_id=user_id,
-                    credit=new_credit,
-                    detail=detail,
-                    created_at=now,
-                )
             )
             db.commit()
     except IntegrityError:

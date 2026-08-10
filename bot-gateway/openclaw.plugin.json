@@ -1,0 +1,14 @@
+{
+	"id": "ryanai-bridge",
+	"name": "RyanAI Bridge",
+	"description": "Fail-closed message bridge that always short-circuits OpenClaw agent execution and delegates replies to RyanAI.",
+	"version": "0.1.0",
+	"activation": {
+		"onStartup": true
+	},
+	"configSchema": {
+		"type": "object",
+		"additionalProperties": false,
+		"properties": {}
+	}
+}

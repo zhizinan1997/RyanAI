@@ -1,0 +1,76 @@
+name: Build and publish RyanAI Bot Gateway image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bot-gateway/**"
+      - ".github/workflows/bot-gateway.yaml"
+      - "docker-compose.yaml"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Additional image tag (for example v0.11.0.5)"
+        required: false
+        default: "manual"
+        type: string
+
+concurrency:
+  group: bot-gateway-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ryanai-bot-gateway
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve image tag
+        id: image
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [ "$EVENT_NAME" = "release" ] && [ -n "$RELEASE_TAG" ]; then
+            tag="$RELEASE_TAG"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="main"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push bot gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./bot-gateway
+          file: ./bot-gateway/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
+          cache-from: type=gha,scope=bot-gateway
+          cache-to: type=gha,mode=max,scope=bot-gateway

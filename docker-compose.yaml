@@ -1,5 +1,6 @@
 services:
   ollama:
+    profiles: [ollama]
     volumes:
       - ollama:/root/.ollama
     container_name: ollama
@@ -18,23 +19,51 @@ services:
     container_name: ryanai
     volumes:
       - ryanai:/app/backend/data
-    depends_on:
-      - ollama
     ports:
       - ${OPEN_WEBUI_PORT-3000}:8080
     environment:
-      - 'OLLAMA_BASE_URL=http://ollama:11434'
+      - 'OLLAMA_BASE_URL=${OLLAMA_BASE_URL-}'
+      - 'OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL-}'
+      - 'OPENAI_API_KEY=${OPENAI_API_KEY-}'
       - 'RYANAI_DISABLE_LOCAL_EMBEDDING_MODELS=true'
       - 'RAG_EMBEDDING_ENGINE=${RAG_EMBEDDING_ENGINE-openai}'
       - 'RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL-text-embedding-3-small}'
       - 'RAG_EMBEDDING_MODEL_AUTO_UPDATE=false'
       - 'RAG_OPENAI_API_BASE_URL=${RAG_OPENAI_API_BASE_URL-}'
       - 'RAG_OPENAI_API_KEY=${RAG_OPENAI_API_KEY-}'
+      # The sidecar transport is always available; the product feature and
+      # channel policy are controlled from the RyanAI admin panel/database.
+      - 'BOT_GATEWAY_ENABLED=true'
+      - 'BOT_GATEWAY_INTERNAL_URL=http://ryanai-bot-gateway:${BOT_GATEWAY_INTERNAL_PORT:-8787}'
+      - 'BOT_GATEWAY_HMAC_SECRET=${BOT_GATEWAY_HMAC_SECRET-}'
       - 'WEBUI_SECRET_KEY='
     extra_hosts:
       - host.docker.internal:host-gateway
     restart: unless-stopped
 
+  ryanai-bot-gateway:
+    image: ${BOT_GATEWAY_IMAGE-ghcr.io/zhizinan1997/ryanai-bot-gateway}:${BOT_GATEWAY_DOCKER_TAG-latest}
+    container_name: ryanai-bot-gateway
+    depends_on:
+      ryanai:
+        condition: service_healthy
+    expose:
+      - '${BOT_GATEWAY_INTERNAL_PORT:-8787}'
+    environment:
+      - 'NODE_ENV=production'
+      - 'BOT_GATEWAY_ENABLED=${BOT_GATEWAY_ENABLED:-false}'
+      - 'BOT_GATEWAY_INTERNAL_PORT=${BOT_GATEWAY_INTERNAL_PORT:-8787}'
+      - 'BOT_GATEWAY_HMAC_SECRET=${BOT_GATEWAY_HMAC_SECRET-}'
+      - 'BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY=${BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY-}'
+      - 'BOT_GATEWAY_DATA_DIR=/data'
+      - 'BOT_GATEWAY_OPENCLAW_STATE_DIR=${BOT_GATEWAY_OPENCLAW_STATE_DIR-/tmp/ryanai-openclaw/state}'
+      - 'BOT_GATEWAY_OPENCLAW_HOME_DIR=${BOT_GATEWAY_OPENCLAW_HOME_DIR-/tmp/ryanai-openclaw/home}'
+      - 'RYANAI_BASE_URL=http://ryanai:8080'
+    volumes:
+      - ryanai-bot-gateway:/data
+    restart: unless-stopped
+
 volumes:
   ollama: {}
   ryanai: {}
+  ryanai-bot-gateway: {}

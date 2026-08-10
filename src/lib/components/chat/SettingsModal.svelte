@@ -24,6 +24,7 @@
 	import Search from '../icons/Search.svelte';
 	import Connections from './Settings/Connections.svelte';
 	import Integrations from './Settings/Integrations.svelte';
+	import BotBindings from './Settings/BotBindings.svelte';
 	import DatabaseSettings from '../icons/DatabaseSettings.svelte';
 	import SettingsAlt from '../icons/SettingsAlt.svelte';
 	import Link from '../icons/Link.svelte';
@@ -110,6 +111,7 @@
 		shortcuts: 'Basics',
 		connections: 'Services',
 		tools: 'Services',
+		bot_bindings: 'Services',
 		personalization: 'Preferences',
 		audio: 'Preferences',
 		data_controls: 'Data',
@@ -371,6 +373,11 @@
 				'terminal',
 				'settings'
 			]
+		},
+		{
+			id: 'bot_bindings',
+			title: 'WeChat / QQ',
+			keywords: ['bot', 'bind', 'binding', 'gateway', 'wechat', 'qq', '微信', '机器人', '绑定']
 		},
 
 		{
@@ -1040,6 +1047,19 @@
 								<span>{$i18n.t('Integrations')}</span>
 							</button>
 						{/if}
+					{:else if tabId === 'bot_bindings'}
+						<button
+							role="tab"
+							aria-controls="tab-bot-bindings"
+							aria-selected={selectedTab === 'bot_bindings'}
+							class={tabButtonClass(selectedTab === 'bot_bindings')}
+							on:click={() => {
+								selectedTab = 'bot_bindings';
+							}}
+						>
+							<Link className="size-3.5" strokeWidth="2" />
+							<span>{$i18n.t('WeChat / QQ')}</span>
+						</button>
 					{:else if tabId === 'personalization'}
 						<button
 							role="tab"
@@ -1224,6 +1244,8 @@
 						toast.success($i18n.t('Settings saved successfully!'));
 					}}
 				/>
+			{:else if selectedTab === 'bot_bindings'}
+				<BotBindings />
 			{:else if selectedTab === 'personalization'}
 				<Personalization
 					{saveSettings}
