@@ -43,6 +43,7 @@
 			toast.error(`${error}`);
 			return null;
 		});
+		if (!data) return;
 		if (data.length === 0) {
 			hasMore = false;
 		}

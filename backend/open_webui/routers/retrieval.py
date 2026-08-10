@@ -120,6 +120,7 @@ from open_webui.storage.provider import Storage
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.credit.utils import charge_feature_by_user_id, check_feature_credit_by_user_id
 from open_webui.utils.misc import (
     calculate_sha256_string,
     sanitize_text_for_db,
@@ -2574,6 +2575,9 @@ async def process_web_search(request: Request, form_data: SearchForm, user=Depen
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
+    charge_credit = not getattr(request.state, 'skip_standalone_feature_credit', False)
+    if charge_credit:
+        check_feature_credit_by_user_id(user.id, 'web_search')
     urls = []
     result_items = []
 
@@ -2670,7 +2674,7 @@ async def process_web_search(request: Request, form_data: SearchForm, user=Depen
         ]  # only keep the search results that have been loaded
 
         if config.BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL:
-            return {
+            result = {
                 'status': True,
                 'collection_name': None,
                 'filenames': urls,
@@ -2684,6 +2688,9 @@ async def process_web_search(request: Request, form_data: SearchForm, user=Depen
                 ],
                 'loaded_count': len(docs),
             }
+            if charge_credit:
+                charge_feature_by_user_id(user.id, 'web_search')
+            return result
         else:
             # Create a single collection for all documents
             # Bind the ephemeral collection to its owner so filter_accessible_collections can scope it per-user.
@@ -2707,13 +2714,16 @@ async def process_web_search(request: Request, form_data: SearchForm, user=Depen
                     detail='Failed to embed and store the retrieved web pages. Check the embedding configuration in Admin Settings > Documents.',
                 )
 
-            return {
+            result = {
                 'status': True,
                 'collection_names': [collection_name],
                 'items': result_items,
                 'filenames': urls,
                 'loaded_count': len(docs),
             }
+            if charge_credit:
+                charge_feature_by_user_id(user.id, 'web_search')
+            return result
     except HTTPException:
         raise
     except Exception as e:

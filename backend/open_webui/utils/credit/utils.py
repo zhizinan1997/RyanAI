@@ -1,10 +1,12 @@
 import base64
+import json
 import math
 from decimal import Decimal
 from io import BytesIO
 from typing import Optional, Union, Tuple
 
 import httpx
+from jsonpath_ng import parse as jsonpath_parse
 from PIL import Image
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -18,7 +20,7 @@ from open_webui.config import (
     CREDIT_NO_CREDIT_MSG,
 )
 from open_webui.models.config import Config
-from open_webui.models.credits import Credits
+from open_webui.models.credits import AddCreditForm, Credits, SetCreditFormDetail
 from open_webui.models.models import Models, ModelModel
 
 
@@ -137,13 +139,102 @@ def get_feature_price(features: Union[set, list]) -> Decimal:
     return price
 
 
+def check_feature_credit_by_user_id(
+    user_id: str,
+    feature: str,
+    model_id: str | None = None,
+) -> None:
+    """Check balance before a standalone feature operation."""
+    check_credit_by_user_id(
+        user_id=user_id,
+        form_data={
+            'model': model_id or '',
+            'messages': [{'role': 'user', 'content': feature}],
+            'metadata': {'features_for_credit': {feature: True}},
+        },
+    )
+
+
+def charge_feature_by_user_id(
+    user_id: str,
+    feature: str,
+    model_id: str | None = None,
+) -> Decimal:
+    """Charge one successful standalone feature operation and log it."""
+    amount = get_feature_price({feature})
+    if amount <= 0:
+        return Decimal(0)
+
+    Credits.add_credit_by_user_id(
+        AddCreditForm(
+            user_id=user_id,
+            amount=-amount,
+            detail=SetCreditFormDetail(
+                desc=f'updated by standalone {feature}',
+                api_params={
+                    'model': {
+                        'id': model_id or feature,
+                        'name': model_id or feature,
+                    }
+                },
+                usage={
+                    'total_price': float(amount),
+                    'feature_price': float(amount),
+                    'features': [feature],
+                    'is_calculate': True,
+                },
+            ),
+        )
+    )
+    return amount
+
+
+def get_custom_price(body: dict) -> Decimal:
+    """Calculate configured JSONPath-based fees before an upstream call."""
+    custom_config = credit_config('credit.calculate.custom_price_config', '[]')
+    if not custom_config or custom_config == '[]' or not isinstance(body, dict):
+        return Decimal(0)
+
+    try:
+        configs = json.loads(custom_config)
+    except Exception:
+        return Decimal(0)
+
+    if not isinstance(configs, list):
+        return Decimal(0)
+
+    total = 0
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        try:
+            path = config['path']
+            cost = int(config['cost'])
+            exists_check = bool(config['exists'])
+            value = config.get('value')
+            if not path or cost <= 0:
+                continue
+
+            matches = jsonpath_parse(path).find(body)
+            if exists_check and matches:
+                total += cost
+            elif not exists_check and any(match.value == value for match in matches):
+                total += cost
+        except Exception:
+            continue
+
+    return Decimal(total) / 1000 / 1000
+
+
 def is_free_request(model_price: list, form_data: dict) -> bool:
     is_free_model = sum(float(price) for price in model_price) <= 0
 
-    features = form_data.get('features') or (form_data.get('metadata') or {}).get('features') or {}
+    metadata = form_data.get('metadata') or {}
+    features = form_data.get('features') or metadata.get('features') or metadata.get('features_for_credit') or {}
     is_feature_free = get_feature_price({k for k, v in features.items() if v}) <= 0
+    is_custom_fee_free = get_custom_price(form_data) <= 0
 
-    return is_free_model and is_feature_free
+    return is_free_model and is_feature_free and is_custom_fee_free
 
 
 def check_credit_by_user_id(user_id: str, form_data: dict, is_embedding: bool = False) -> None:
@@ -189,14 +280,10 @@ def check_credit_by_user_id(user_id: str, form_data: dict, is_embedding: bool = 
         or metadata_for_features.get('features')
         or {}
     )
-    feature_price = get_feature_price(
-        {
-            key for key, enabled in feature_flags.items()
-            if enabled
-        }
-    )
+    feature_price = get_feature_price({key for key, enabled in feature_flags.items() if enabled})
+    custom_price = get_custom_price(form_data)
     estimated_cost = max(
-        request_price + feature_price if request_price > 0 else feature_price,
+        (request_price if request_price > 0 else Decimal(0)) + feature_price + custom_price,
         Decimal(credit_config('credit.calculate.minimum_cost', USAGE_CALCULATE_MINIMUM_COST)),
     )
     required_credit = max(minimum_credit, estimated_cost)

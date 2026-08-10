@@ -172,7 +172,18 @@ class CreditDeduct:
             self.call_price,
             _,
         ) = get_model_price(model=self.model, is_embedding=is_embedding)
-        self.features = {k for k, v in (body.get('metadata', {}).get('features_for_credit', {}) or {}).items() if v}
+        metadata = body.get('metadata') or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        feature_flags = {}
+        for source in (
+            body.get('features'),
+            metadata.get('features'),
+            metadata.get('features_for_credit'),
+        ):
+            if isinstance(source, dict):
+                feature_flags.update(source)
+        self.features = {k for k, v in feature_flags.items() if v}
         self.custom_fees = self.build_custom_fees(body)
         self.is_official_usage = False
 
