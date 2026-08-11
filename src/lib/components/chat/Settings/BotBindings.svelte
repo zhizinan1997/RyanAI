@@ -37,7 +37,9 @@
 	let loginSession: BotGatewayLoginSession | null = null;
 	let showLogin = false;
 	let loginPoll: ReturnType<typeof setInterval> | null = null;
+	let qqStatusPoll: ReturnType<typeof setInterval> | null = null;
 	let loginPollInFlight = false;
+	let qqStatusPollInFlight = false;
 	let busyChannel: BotGatewayChannel | null = null;
 
 	$: qqConnection = connections.find((item) => item.channel === 'qq');
@@ -76,11 +78,44 @@
 		try {
 			await setBotGatewayUserQQCredentials(localStorage.token, { app_id: qqAppId.trim(), app_secret: qqAppSecret });
 			connections = await getBotGatewayUserConnections(localStorage.token);
+			startQQStatusPolling();
 			qqAppSecret = '';
 			showQQ = false;
 			toast.success($i18n.t('Your QQ bot credentials were saved.'));
 		} catch (error) { toast.error(error instanceof Error ? error.message : $i18n.t('Failed to save QQ credentials.')); }
 		finally { busyChannel = null; }
+	};
+
+	const stopQQStatusPolling = () => {
+		if (qqStatusPoll) clearInterval(qqStatusPoll);
+		qqStatusPoll = null;
+	};
+	const pollQQStatus = async () => {
+		if (qqStatusPollInFlight) return;
+		qqStatusPollInFlight = true;
+		try {
+			connections = await getBotGatewayUserConnections(localStorage.token);
+			const connection = connections.find((item) => item.channel === 'qq');
+			if (!connection?.configured || ['connected', 'degraded', 'unavailable'].includes(connection.status)) {
+				stopQQStatusPolling();
+			}
+		} catch {
+			// A later poll can recover from a transient status refresh failure.
+		} finally {
+			qqStatusPollInFlight = false;
+		}
+	};
+	const startQQStatusPolling = () => {
+		stopQQStatusPolling();
+		let attempts = 0;
+		qqStatusPoll = setInterval(() => {
+			attempts += 1;
+			if (attempts >= 60) {
+				stopQQStatusPolling();
+				return;
+			}
+			void pollQQStatus();
+		}, 1000);
 	};
 
 	const stopPolling = () => { if (loginPoll) clearInterval(loginPoll); loginPoll = null; };
@@ -132,7 +167,10 @@
 
 	onMount(load);
 	$: if (!showLogin) stopPolling();
-	onDestroy(stopPolling);
+	onDestroy(() => {
+		stopPolling();
+		stopQQStatusPolling();
+	});
 </script>
 
 <Modal bind:show={showQQ} size="sm">

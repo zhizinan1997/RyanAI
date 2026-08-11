@@ -325,13 +325,21 @@ export class OpenClawHost {
 				accountId: text(account?.accountId) || text(summary?.accountId),
 				lastError
 			};
-		} catch (error) {
-			this.logger.warn('OpenClaw channel status probe failed', {
-				channel,
-				...safeErrorFields(error)
-			});
-			return { configured, running: false, connected: false };
-		}
+			} catch (error) {
+				this.logger.warn('OpenClaw channel status probe failed', {
+					channel,
+					...safeErrorFields(error)
+				});
+				const running = this.isRunning();
+				// The WeChat plugin is a long-poll monitor. A busy monitor can time out
+				// the CLI probe while it is still receiving messages, so do not turn a
+				// live process into a false disconnected status on one transient probe.
+				return {
+					configured,
+					running,
+					connected: channel === 'wechat' && running
+				};
+			}
 	}
 
 	private async verifyPackages(): Promise<Record<string, PackageInfo>> {

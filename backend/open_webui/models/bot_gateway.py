@@ -560,6 +560,8 @@ class BotGatewayTable:
         connection_id: str,
         values: dict[str, Any],
         db: AsyncSession | None = None,
+        *,
+        touch_updated_at: bool = True,
     ) -> BotGatewayConnectionModel | None:
         allowed = {
             'enabled',
@@ -579,7 +581,8 @@ class BotGatewayTable:
             for key, value in values.items():
                 if key in allowed:
                     setattr(item, key, value)
-            item.updated_at = int(time.time())
+            if touch_updated_at:
+                item.updated_at = int(time.time())
             await session.commit()
             return BotGatewayConnectionModel.model_validate(item)
 

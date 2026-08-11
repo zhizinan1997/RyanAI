@@ -672,7 +672,15 @@ async def _sync_connection(connection: BotGatewayConnectionModel, remote: dict[s
             values['credentials_configured'] = configured
     if 'detail' in remote and 'last_error' not in remote:
         values['last_error'] = remote.get('detail')
-    return await BotGateway.update_connection(connection.id, values) if values else connection
+    return (
+        await BotGateway.update_connection(
+            connection.id,
+            values,
+            touch_updated_at=False,
+        )
+        if values
+        else connection
+    )
 
 
 @router.get('/admin/connections')

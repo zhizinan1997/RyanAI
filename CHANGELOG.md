@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.9] - 2026-08-11
+
+### Fixed
+
+- Kept QQ background login completion authoritative when status refreshes occur during startup, so the user bot page updates from configured to connected reliably.
+- Added short-lived QQ status polling after credentials are saved instead of leaving the page on its initial pre-login state.
+- Replaced OpenClaw's generic QQ account label `default` with the configured QQ AppID in user and administrator bot listings.
+- Preserved a live WeChat connection when its busy long-poll process transiently times out the OpenClaw status probe.
+
 ## [0.11.0.8] - 2026-08-11
 
 ### Fixed

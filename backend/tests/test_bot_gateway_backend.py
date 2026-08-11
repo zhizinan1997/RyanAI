@@ -743,7 +743,42 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
 
         values = update_connection.await_args.args[1]
         self.assertTrue(values['credentials_configured'])
+        self.assertFalse(update_connection.await_args.kwargs['touch_updated_at'])
         self.assertTrue(self.gateway_router._connection_response(result, remote)['configured'])
+
+    async def test_status_refresh_does_not_cancel_background_qq_login(self):
+        now = int(time.time())
+        connection = BotGatewayConnectionModel(
+            id='bot-qq-user-1',
+            channel='qq',
+            name='QQ',
+            enabled=True,
+            status='logged_out',
+            credentials_configured=True,
+            created_at=now,
+            updated_at=now,
+        )
+        connected = connection.model_copy(update={'status': 'connected'})
+        with (
+            patch.object(
+                self.gateway_router,
+                '_sidecar_request',
+                AsyncMock(return_value={'version': '1.0', 'connection': {'status': 'connected'}}),
+            ),
+            patch.object(
+                self.gateway_router.BotGateway,
+                'get_connection',
+                AsyncMock(return_value=connection),
+            ),
+            patch.object(
+                self.gateway_router,
+                '_sync_connection',
+                AsyncMock(return_value=connected),
+            ) as sync_connection,
+        ):
+            await self.gateway_router._finish_background_login(connection.id, now)
+
+        sync_connection.assert_awaited_once_with(connection, {'status': 'connected'})
 
     async def test_admin_connections_include_owner_identity_for_saved_user_bot(self):
         now = int(time.time())

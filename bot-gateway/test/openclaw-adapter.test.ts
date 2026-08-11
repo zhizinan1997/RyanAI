@@ -172,6 +172,30 @@ test('OpenClaw adapter restores encrypted QQ credentials and stays healthy witho
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('OpenClaw adapter replaces the generic QQ account id with the configured app id', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
+	await Promise.all([state.initialize(), vault.initialize()]);
+	await vault.put('qq-default', { app_id: 'qq-app-1', app_secret: 'secret-1' });
+	const host = new FakeOpenClawHost();
+	host.status = async (channel: Channel) => ({
+		configured: channel === 'qq',
+		running: channel === 'qq',
+		connected: channel === 'qq',
+		accountId: 'default'
+	});
+	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), { host });
+
+	await adapter.start();
+	await waitFor(() => state.getConnection('qq-default')?.status === 'connected');
+
+	assert.equal(state.getConnection('qq-default')?.accountLabel, 'qq-app-1');
+	await adapter.stop();
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('OpenClaw adapter persists an official WeChat QR result and removes it on logout', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir, { adapterMode: 'openclaw' });

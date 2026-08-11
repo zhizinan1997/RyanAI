@@ -482,7 +482,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 		if (!runtime.credentials) { runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured'); return; }
 		const status = await runtime.host.status(runtime.snapshot.channel);
 		const detail = status.lastError || (status.connected ? 'Channel is connected' : 'Credentials are configured but channel is not connected');
-		runtime.snapshot = await this.setStatus(runtime, status.connected ? 'connected' : 'degraded', detail, status.accountId || this.accountLabel(runtime.credentials));
+		const probedAccountId = status.accountId?.trim();
+		const accountLabel = probedAccountId && probedAccountId.toLowerCase() !== 'default'
+			? probedAccountId
+			: this.accountLabel(runtime.credentials);
+		runtime.snapshot = await this.setStatus(runtime, status.connected ? 'connected' : 'degraded', detail, accountLabel);
 	}
 
 	private async completeLogin(runtime: RuntimeConnection, pending: OfficialLogin, credential: Credential): Promise<void> {
