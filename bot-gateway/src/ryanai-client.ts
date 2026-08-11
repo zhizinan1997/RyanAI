@@ -14,8 +14,8 @@ export interface RyanAiTransport {
 export class RyanAiTransportError extends Error {
 	readonly retryable: boolean;
 
-	constructor(readonly code: string) {
-		super(code);
+	constructor(readonly code: string, cause?: unknown) {
+		super(code, cause === undefined ? undefined : { cause });
 		this.name = 'RyanAiTransportError';
 		const status = /^http_(\d{3})$/.exec(code)?.[1];
 		const statusCode = status ? Number(status) : undefined;
@@ -110,7 +110,6 @@ export class RyanAiClient implements RyanAiTransport {
 				headers: {
 					...signed,
 					'content-type': multipart.contentType,
-					'content-length': multipart.body.length.toString(),
 					'idempotency-key': event.eventId,
 					'x-ryanai-event-id': event.eventId,
 					accept: 'application/json'
@@ -120,7 +119,7 @@ export class RyanAiClient implements RyanAiTransport {
 			});
 		} catch (error) {
 			if (controller.signal.aborted) throw new RyanAiTransportError('timeout');
-			throw new RyanAiTransportError('network_error');
+			throw new RyanAiTransportError('network_error', error);
 		} finally {
 			clearTimeout(timer);
 		}

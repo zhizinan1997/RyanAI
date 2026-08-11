@@ -7,8 +7,10 @@ import {
 	deleteBotGatewayBinding,
 	getAdminBotGatewayBindings,
 	getBotGatewayLoginState,
+	getBotGatewayUserLoginState,
 	logoutBotGateway,
 	setQQBotCredentials,
+	setBotGatewayUserQQCredentials,
 	unblockAdminBotGatewayBinding
 } from './index';
 
@@ -74,6 +76,37 @@ describe('bot gateway API contract', () => {
 			['/api/v1/bot-gateway/admin/connections/wechat-default/login', 'POST'],
 			['/api/v1/bot-gateway/admin/connections/wechat-default/login', 'GET']
 		]);
+	});
+
+	it('normalizes nested QR payloads without turning them into [object Object]', async () => {
+		const fetchMock = vi.fn().mockImplementation(async () =>
+			jsonResponse({
+				state: 'awaiting_scan',
+				qr_code: { dataUrl: 'https://liteapp.weixin.qq.com/q/example?qrcode=abc' }
+			})
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const session = await getBotGatewayLoginState('token', 'wechat-default');
+		const userSession = await getBotGatewayUserLoginState('token');
+
+		expect(session.qr_code).toBe('https://liteapp.weixin.qq.com/q/example?qrcode=abc');
+		expect(userSession.qr_code).toBe('https://liteapp.weixin.qq.com/q/example?qrcode=abc');
+	});
+
+	it('normalizes user QQ credential responses and keeps the user endpoint contract', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			jsonResponse({ channel: 'qq', configured: true, status: 'degraded' })
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const connection = await setBotGatewayUserQQCredentials('token', {
+			app_id: '123',
+			app_secret: 'submitted-once'
+		});
+
+		expect(connection).toMatchObject({ channel: 'qq', configured: true, status: 'degraded' });
+		expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/bot-gateway\/user\/connections\/qq\/credentials$/);
 	});
 
 	it('returns complete admin binding state while dropping undeclared fields', async () => {

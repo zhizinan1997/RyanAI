@@ -1546,7 +1546,7 @@
 
 									{#if messageQueue.length}
 										<div class="flex min-h-5 items-center gap-3 text-gray-600 dark:text-gray-400">
-											<span class="min-w-0 flex-1 truncate">Queued messages</span>
+											<span class="min-w-0 flex-1 truncate">{$i18n.t('Queued messages')}</span>
 											<span class="font-mono text-[0.625rem] text-gray-400 dark:text-gray-600">
 												{messageQueue.length}
 											</span>
@@ -1555,7 +1555,7 @@
 
 									{#if chatTasks.length}
 										<div class="flex min-h-5 items-center gap-3 text-gray-600 dark:text-gray-400">
-											<span class="min-w-0 flex-1 truncate">Tasks</span>
+											<span class="min-w-0 flex-1 truncate">{$i18n.t('Tasks')}</span>
 											<span class="font-mono text-[0.625rem] text-gray-400 dark:text-gray-600">
 												{chatTasks.length}
 											</span>
@@ -1563,7 +1563,7 @@
 									{/if}
 
 									<div class="flex min-h-5 items-center gap-3 text-gray-600 dark:text-gray-400">
-										<span class="min-w-0 flex-1 truncate">Chat ID</span>
+										<span class="min-w-0 flex-1 truncate">{$i18n.t('Chat ID')}</span>
 										{#if chatId}
 											<button
 												type="button"

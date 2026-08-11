@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { rm } from 'node:fs/promises';
 import test from 'node:test';
 
+import { OpenClawBridgeClient } from '../src/openclaw/bridge-client.js';
+import { parseOpenClawBridgeEvent } from '../src/openclaw/bridge-server.js';
+import { buildEventMultipart } from '../src/ryanai-client.js';
 import { RyanAiClient } from '../src/ryanai-client.js';
 import { verifyRequest } from '../src/security/hmac.js';
 import { inboundEvent, tempDataDir, testConfig } from './helpers.js';
@@ -64,4 +68,68 @@ test('RyanAI client sends signed multipart metadata and attachment bytes', async
 	await new Promise<void>((resolve, reject) =>
 		server.close((error) => (error ? reject(error) : resolve()))
 	);
+});
+
+test('OpenClaw bridge client lets undici calculate content length', async () => {
+	const dataDir = await tempDataDir();
+	let requestHeaders: HeadersInit | undefined;
+	const fetchImpl: typeof fetch = async (_input, init) => {
+		requestHeaders = init?.headers;
+		return new Response(
+			JSON.stringify({
+				version: '1.0',
+				reply: {
+					handled: true,
+					eventId: 'bridge-event',
+					chunks: ['bridge reply'],
+					isError: false,
+					replayed: false,
+					reason: 'ryanai'
+				}
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } }
+		);
+	};
+	const client = new OpenClawBridgeClient(testConfig(dataDir), fetchImpl);
+	const result = await client.forward(inboundEvent({ eventId: 'bridge-event' }));
+	assert.deepEqual(result.chunks, ['bridge reply']);
+	assert.ok(requestHeaders);
+	const normalized = new Headers(requestHeaders);
+	assert.equal(normalized.has('content-length'), false);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('OpenClaw bridge multipart round-trips multiple binary files and Unicode names', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir);
+	const event = inboundEvent({
+		eventId: 'bridge-attachments',
+		attachments: [
+			{
+				id: 'image-1',
+				fileName: '微信图片.png',
+				contentType: 'image/png',
+				bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3])
+			},
+			{
+				id: 'file-1',
+				fileName: '实验记录.docx',
+				contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+				bytes: Buffer.from([0x50, 0x4b, 0x03, 0x04, 4, 3, 2, 1])
+			}
+		]
+	});
+	const multipart = buildEventMultipart(event);
+	const parsed = await parseOpenClawBridgeEvent(multipart.body, multipart.contentType, config);
+
+	assert.deepEqual(
+		parsed.attachments.map(({ id, fileName, contentType, bytes }) => ({
+			id,
+			fileName,
+			contentType,
+			bytes
+		})),
+		event.attachments
+	);
+	await rm(dataDir, { recursive: true, force: true });
 });

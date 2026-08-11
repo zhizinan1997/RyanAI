@@ -36,6 +36,7 @@ interface OpenClawHostController {
 	healthDetail(): string;
 	start(credentials: OpenClawCredentialSet, channelEnabled: Record<Channel, boolean>): Promise<void>;
 	stop(): Promise<void>;
+	clearCredentials?(): Promise<void>;
 	restart(credentials?: OpenClawCredentialSet, channelEnabled?: Record<Channel, boolean>): Promise<void>;
 	status(channel: Channel): Promise<OpenClawAccountStatus>;
 }
@@ -172,7 +173,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 
 	health(): AdapterHealth {
 		const active = [...this.runtimes.values()].filter((entry) => entry.snapshot.id);
-		const ready = this.started && active.every((entry) => entry.host.isRunning());
+		const ready = this.started && active.every((entry) => !entry.credentials || entry.host.isRunning());
 		return { mode: this.mode, ready, detail: ready ? this.detail : 'One or more OpenClaw connection hosts are not running' };
 	}
 
@@ -219,10 +220,15 @@ export class OpenClawAdapter implements ChannelAdapter {
 			runtime.snapshot = runtime.snapshot;
 			try {
 				if (enabled) {
-					await runtime.host.start(this.credentialsFor(runtime), this.channelFlags(runtime.snapshot));
-					await this.refresh(runtime);
+					if (runtime.credentials) {
+						if (!runtime.host.isRunning()) await runtime.host.start(this.credentialsFor(runtime), this.channelFlags(runtime.snapshot));
+						await this.refresh(runtime);
+					} else {
+						if (runtime.host.isRunning()) await runtime.host.stop();
+						runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured');
+					}
 				} else {
-					await runtime.host.stop();
+					if (runtime.host.isRunning()) await runtime.host.stop();
 				}
 			} catch (error) {
 				this.logger.error('Per-connection state change failed', { connection_id: connectionId, ...safeErrorFields(error) });
@@ -279,7 +285,14 @@ export class OpenClawAdapter implements ChannelAdapter {
 			runtime.pending?.cancel(); runtime.pending = undefined; runtime.qrCode = undefined;
 			runtime.credentials = undefined;
 			await this.vault.delete(connectionId);
-			await runtime.host.restart({}, this.channelFlags(runtime.snapshot));
+			if (runtime.host.clearCredentials) {
+				await runtime.host.clearCredentials();
+			} else {
+				// Keep injected legacy hosts compatible while ensuring their in-memory
+				// credentials are cleared before the connection becomes logged out.
+				await runtime.host.restart({}, this.channelFlags(runtime.snapshot));
+				await runtime.host.stop();
+			}
 			return this.setStatus(runtime, runtime.snapshot.enabled ? 'logged_out' : 'disabled', 'Official channel credentials were removed');
 		});
 	}
@@ -305,6 +318,10 @@ export class OpenClawAdapter implements ChannelAdapter {
 		const raw = await this.vault.get(snapshot.id);
 		runtime.credentials = snapshot.channel === 'qq' ? parseQqCredential(raw) : parseWeixinCredential(raw);
 		if (!snapshot.enabled) return runtime;
+		if (!runtime.credentials) {
+			runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured');
+			return runtime;
+		}
 		try {
 			if (!host.isRunning()) await host.start(this.credentialsFor(runtime), this.channelFlags(snapshot));
 			await this.refresh(runtime);
@@ -322,6 +339,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	private async restartRuntime(runtime: RuntimeConnection): Promise<void> {
+		if (!runtime.credentials) {
+			if (runtime.host.isRunning()) await runtime.host.stop();
+			runtime.snapshot = await this.setStatus(runtime, runtime.snapshot.enabled ? 'logged_out' : 'disabled', 'Credentials are not configured');
+			return;
+		}
 		await runtime.host.restart(this.credentialsFor(runtime), this.channelFlags(runtime.snapshot));
 		await this.refresh(runtime);
 	}
@@ -330,7 +352,8 @@ export class OpenClawAdapter implements ChannelAdapter {
 		if (!runtime.snapshot.enabled) { runtime.snapshot = await this.setStatus(runtime, 'disabled', 'Connection is disabled'); return; }
 		if (!runtime.credentials) { runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured'); return; }
 		const status = await runtime.host.status(runtime.snapshot.channel);
-		runtime.snapshot = await this.setStatus(runtime, status.connected ? 'connected' : 'degraded', status.lastError || 'Credentials are configured but channel is not connected', status.accountId || this.accountLabel(runtime.credentials));
+		const detail = status.lastError || (status.connected ? 'Channel is connected' : 'Credentials are configured but channel is not connected');
+		runtime.snapshot = await this.setStatus(runtime, status.connected ? 'connected' : 'degraded', detail, status.accountId || this.accountLabel(runtime.credentials));
 	}
 
 	private async completeLogin(runtime: RuntimeConnection, pending: OfficialLogin, credential: Credential): Promise<void> {
@@ -355,7 +378,26 @@ export class OpenClawAdapter implements ChannelAdapter {
 
 	private connectionConfig(snapshot: ConnectionSnapshot): GatewayConfig {
 		const offset = Math.abs(hashCode(snapshot.id)) % 10_000;
-		return { ...this.config, enabledChannels: new Set<Channel>([snapshot.channel]), openClawConnectionId: snapshot.id, openClawPort: Math.min(65_000, this.config.openClawPort + offset), openClawStateDir: path.join(this.config.openClawStateDir, snapshot.id, 'state'), openClawHomeDir: path.join(this.config.openClawHomeDir, snapshot.id, 'home') };
+		const openClawStateDir = path.join(this.config.openClawStateDir, snapshot.id, 'state');
+		const openClawHomeDir = path.join(this.config.openClawHomeDir, snapshot.id, 'home');
+		const parentGeneratedRoots = new Set([
+			path.join(this.config.openClawStateDir, 'media'),
+			path.join(this.config.openClawHomeDir, '.openclaw', 'media')
+		]);
+		const attachmentRoots = [
+			...this.config.attachmentRoots.filter((root) => !parentGeneratedRoots.has(root)),
+			path.join(openClawStateDir, 'media'),
+			path.join(openClawHomeDir, '.openclaw', 'media')
+		];
+		return {
+			...this.config,
+			enabledChannels: new Set<Channel>([snapshot.channel]),
+			openClawConnectionId: snapshot.id,
+			openClawPort: Math.min(65_000, this.config.openClawPort + offset),
+			openClawStateDir,
+			openClawHomeDir,
+			attachmentRoots: [...new Set(attachmentRoots)]
+		};
 	}
 
 	private async setStatus(runtime: RuntimeConnection, status: ConnectionStatus, detail: string, accountLabel?: string): Promise<ConnectionSnapshot> {

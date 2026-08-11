@@ -25,26 +25,76 @@ if (packageJson.version !== expectedVersion) {
 	);
 }
 
-const source = fs.readFileSync(bundlePath, 'utf8');
-const original =
+let source = fs.readFileSync(bundlePath, 'utf8');
+let changed = false;
+
+const slashOriginal =
 	'  const slash = slashCommand({ commands: buildCommandList(account, { getRuntime: opts.getRuntime }) });\n' +
 	'  bot.use(slash.middleware);';
-const replacement =
+const slashReplacement =
 	"  // RyanAI gateway hardening: the official plugin's management slash commands\n" +
 	'  // must not bypass ryanai-bridge or mutate the embedded host at runtime.\n' +
 	'  // This exact-version postinstall patch intentionally leaves ordinary messages intact.';
 
-if (source.includes(replacement)) {
-	process.stdout.write('QQBot hardening already applied\n');
-	process.exit(0);
+if (!source.includes(slashReplacement)) {
+	const occurrences = source.split(slashOriginal).length - 1;
+	if (occurrences !== 1) {
+		throw new Error(
+			`QQBot hardening refused unexpected ${occurrences} middleware matches in ${bundlePath}`
+		);
+	}
+	source = source.replace(slashOriginal, slashReplacement);
+	changed = true;
 }
 
-const occurrences = source.split(original).length - 1;
-if (occurrences !== 1) {
-	throw new Error(
-		`QQBot hardening refused unexpected ${occurrences} middleware matches in ${bundlePath}`
-	);
+const mediaOriginal =
+	'      maxBytes: 500 * 1024 * 1024,\n' +
+	'      timeoutMs: 12e4\n' +
+	'    });';
+const legacyMediaReplacement =
+	'      maxBytes: 500 * 1024 * 1024,\n' +
+	'      timeoutMs: 12e4,\n' +
+	'      // RyanAI gateway hardening: QQ official media may resolve through a\n' +
+	'      // private-range proxy address. Permit that only for this exact HTTPS host.\n' +
+	'      ...(new URL(url).hostname.toLowerCase() === "multimedia.nt.qq.com.cn" ? {\n' +
+	'        ssrfPolicy: {\n' +
+	'          hostnameAllowlist: ["multimedia.nt.qq.com.cn"],\n' +
+	'          dangerouslyAllowPrivateNetwork: true\n' +
+	'        }\n' +
+	'      } : {})\n' +
+	'    });';
+const mediaReplacement =
+	'      maxBytes: 500 * 1024 * 1024,\n' +
+	'      timeoutMs: 12e4,\n' +
+	'      // RyanAI gateway hardening: QQ official media may resolve through a\n' +
+	'      // private-range proxy address. Permit only the exact host for known QQ media URLs.\n' +
+	'      ...(["multimedia.nt.qq.com.cn", "grouptalk.c2c.qq.com"].includes(\n' +
+	'        new URL(url).hostname.toLowerCase()\n' +
+	'      ) ? {\n' +
+	'        ssrfPolicy: {\n' +
+	'          hostnameAllowlist: [new URL(url).hostname.toLowerCase()],\n' +
+	'          dangerouslyAllowPrivateNetwork: true\n' +
+	'        }\n' +
+	'      } : {})\n' +
+	'    });';
+
+if (source.includes(legacyMediaReplacement)) {
+	source = source.replace(legacyMediaReplacement, mediaReplacement);
+	changed = true;
+} else if (!source.includes(mediaReplacement)) {
+	const occurrences = source.split(mediaOriginal).length - 1;
+	if (occurrences !== 1) {
+		throw new Error(
+			`QQBot hardening refused unexpected ${occurrences} media downloader matches in ${bundlePath}`
+		);
+	}
+	source = source.replace(mediaOriginal, mediaReplacement);
+	changed = true;
 }
 
-fs.writeFileSync(bundlePath, source.replace(original, replacement), 'utf8');
-process.stdout.write('QQBot built-in slash commands disabled for RyanAI gateway\n');
+if (changed) fs.writeFileSync(bundlePath, source, 'utf8');
+process.stdout.write(
+	changed
+		? 'QQBot slash commands disabled and official media download policy hardened\n'
+		: 'QQBot hardening already applied\n'
+);

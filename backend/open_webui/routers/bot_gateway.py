@@ -59,9 +59,39 @@ BOT_GATEWAY_HMAC_VERSION = 'v1'
 BOT_GATEWAY_EVENT_LEASE_SECONDS = 3 * 60
 BOT_GATEWAY_EVENT_HEARTBEAT_SECONDS = 30
 BOT_GATEWAY_NONCE_RETENTION_SECONDS = 2 * BOT_GATEWAY_SIGNATURE_MAX_SKEW + 60
+BOT_GATEWAY_CHAT_TIMEZONE = dt.timezone(dt.timedelta(hours=8), name='Asia/Shanghai')
 
+_COMMAND_ALIASES = {
+    '绑定': 'bind',
+    '解绑': 'unbind',
+    '新建': 'new',
+    '新对话': 'new',
+    '模型': 'model',
+    '状态': 'status',
+    '帮助': 'help',
+    '指令': 'help',
+    '命令': 'help',
+    '积分': 'points',
+    '模型列表': 'models',
+    '可用模型': 'models',
+    '历史': 'history',
+    '会话': 'conversation',
+}
+_COMMAND_NAMES = (
+    'bind',
+    'unbind',
+    'new',
+    'model',
+    'status',
+    'help',
+    'points',
+    'models',
+    'history',
+    'conversation',
+    *_COMMAND_ALIASES.keys(),
+)
 _COMMAND_PATTERN = re.compile(
-    r'(?:^|\s)/(bind|unbind|new|model|status|help|points|models|history|conversation)(?:\s+(.+?))?\s*$',
+    rf'(?:^|\s)/({"|".join(re.escape(name) for name in sorted(_COMMAND_NAMES, key=len, reverse=True))})(?:\s+(.+?))?\s*$',
     re.IGNORECASE,
 )
 
@@ -73,6 +103,7 @@ class _ConversationLockEntry:
 
 
 _conversation_locks: dict[str, _ConversationLockEntry] = {}
+_background_login_tasks: set[asyncio.Task[None]] = set()
 
 
 @asynccontextmanager
@@ -129,6 +160,18 @@ def _hmac_secret() -> str:
             detail='BOT_GATEWAY_HMAC_SECRET is not configured',
         )
     return secret
+
+
+def format_bot_chat_title(channel: BotGatewayChannel, created_at: int, sequence: int) -> str:
+    label = '微信' if channel == 'wechat' else 'QQ'
+    date = dt.datetime.fromtimestamp(created_at, BOT_GATEWAY_CHAT_TIMEZONE).strftime('%Y%m%d')
+    return f'🤖{label}-{date}-{sequence:03d}'
+
+
+def _bot_chat_day_bounds(created_at: int) -> tuple[int, int]:
+    local_time = dt.datetime.fromtimestamp(created_at, BOT_GATEWAY_CHAT_TIMEZONE)
+    day_start = local_time.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(day_start.timestamp()), int((day_start + dt.timedelta(days=1)).timestamp())
 
 
 def _require_enabled() -> None:
@@ -399,7 +442,14 @@ def parse_bot_gateway_command(text: str) -> tuple[str, str | None] | None:
     match = _COMMAND_PATTERN.search(text.strip())
     if not match:
         return None
-    return match.group(1).lower(), match.group(2).strip() if match.group(2) else None
+    raw_command = match.group(1).lower()
+    command = _COMMAND_ALIASES.get(raw_command, raw_command)
+    argument = match.group(2).strip() if match.group(2) else None
+    if command == 'unbind' and argument == '确认':
+        argument = 'confirm'
+    elif command == 'model' and argument == '默认':
+        argument = 'default'
+    return command, argument
 
 
 def _normalize_binding_code(value: str) -> str:
@@ -534,18 +584,43 @@ async def set_credentials(connection_id: str, form_data: CredentialsForm, user=D
     return _connection_response(connection, remote)
 
 
+def _qr_code_value(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    if not isinstance(value, dict):
+        return None
+    for key in (
+        'data_url',
+        'dataUrl',
+        'qr_code',
+        'qrCode',
+        'qrcode',
+        'qrcode_url',
+        'qrcodeUrl',
+        'qrcode_img_content',
+        'url',
+        'text',
+        'content',
+        'value',
+    ):
+        result = _qr_code_value(value.get(key))
+        if result:
+            return result
+    return None
+
+
 def _login_response(payload: Any) -> dict:
     value = payload if isinstance(payload, dict) else {}
     connection = value.get('connection') if isinstance(value.get('connection'), dict) else value
     qr_code = value.get('qr_code') or value.get('qrCode')
-    if isinstance(qr_code, dict):
-        qr_code_value = (
-            qr_code.get('data_url') or qr_code.get('dataUrl') or qr_code.get('qr_code') or qr_code.get('qrCode')
-        )
-        expires_at = qr_code.get('expires_at') or qr_code.get('expiresAt')
-    else:
-        qr_code_value = qr_code
-        expires_at = None
+    qr_code_value = _qr_code_value(qr_code) or _qr_code_value(
+        value.get('qr_code_data_url') or value.get('dataUrl') or value.get('qrcodeUrl')
+    )
+    expires_at = (
+        qr_code.get('expires_at') or qr_code.get('expiresAt')
+        if isinstance(qr_code, dict)
+        else None
+    )
     return {
         'state': str(
             connection.get('status')
@@ -826,6 +901,31 @@ async def _ensure_sidecar_connection(connection: BotGatewayConnectionModel) -> N
             raise
 
 
+async def _finish_background_login(connection_id: str, expected_updated_at: int) -> None:
+    try:
+        remote = await _sidecar_request('POST', f'/v1/connections/{quote(connection_id, safe="")}/login')
+        current = await BotGateway.get_connection(connection_id)
+        if current is None or not current.credentials_configured or current.updated_at != expected_updated_at:
+            return
+        remote_connection = _remote_object(remote, 'connection')
+        if remote_connection:
+            await _sync_connection(current, remote_connection)
+    except Exception:
+        log.exception('QQ login could not start in the background for user bot %s', connection_id)
+        current = await BotGateway.get_connection(connection_id)
+        if current is not None and current.credentials_configured and current.updated_at == expected_updated_at:
+            await BotGateway.update_connection(
+                connection_id,
+                {'status': 'degraded', 'last_error': 'Bot gateway login could not start'},
+            )
+
+
+def _schedule_background_login(connection_id: str, expected_updated_at: int) -> None:
+    task = asyncio.create_task(_finish_background_login(connection_id, expected_updated_at))
+    _background_login_tasks.add(task)
+    task.add_done_callback(_background_login_tasks.discard)
+
+
 def _user_connection_response(connection: BotGatewayConnectionModel) -> dict[str, Any]:
     return _connection_response(connection)
 
@@ -869,13 +969,7 @@ async def set_user_qq_credentials(form_data: UserBotCredentialsForm, user=Depend
         {'app_id': form_data.app_id, 'app_secret': form_data.app_secret},
     )
     connection = await BotGateway.update_connection(connection.id, {'credentials_configured': True}) or connection
-    try:
-        remote = await _sidecar_request('POST', f'/v1/connections/{quote(connection.id, safe="")}/login')
-        remote_connection = _remote_object(remote, 'connection')
-        connection = await _sync_connection(connection, remote_connection)
-    except HTTPException:
-        # Credentials are stored even if the external service needs a retry.
-        log.exception('QQ login could not start for user bot %s', connection.id)
+    _schedule_background_login(connection.id, connection.updated_at)
     await BotGateway.add_binding_history(channel='qq', action='credentials_saved', user_id=user.id, connection_id=connection.id, actor_user_id=user.id)
     return _user_connection_response(connection)
 
@@ -955,9 +1049,22 @@ async def delete_binding(binding_id: str, user=Depends(get_verified_user)):
 
 
 @router.get('/admin/bindings')
-async def get_admin_bindings(user=Depends(get_admin_user)):
+async def get_admin_bindings(user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)):
     _require_enabled()
-    return [item.model_dump() for item in await BotGateway.list_bindings(include_disabled=True)]
+    bindings = await BotGateway.list_bindings(include_disabled=True)
+    response = []
+    for item in bindings:
+        owner = await Users.get_user_by_id(item.user_id, db=db)
+        payload = item.model_dump()
+        payload.update(
+            {
+                'user_name': owner.name if owner else None,
+                'user_username': owner.username if owner else None,
+                'user_email': owner.email if owner else None,
+            }
+        )
+        response.append(payload)
+    return response
 
 
 @router.delete('/admin/bindings/{binding_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -1097,17 +1204,67 @@ async def _import_attachments(
         file_id = uploaded.id if hasattr(uploaded, 'id') else uploaded['id']
         meta = uploaded.meta if hasattr(uploaded, 'meta') else uploaded.get('meta', {})
         content_type = (meta or {}).get('content_type') or descriptor.content_type
+        is_image = content_type.startswith('image/')
         result.append(
             {
-                'type': 'image' if content_type.startswith('image/') else 'file',
+                'type': 'image' if is_image else 'file',
                 'id': file_id,
                 'url': file_id,
                 'name': descriptor.file_name,
                 'content_type': content_type,
                 'size': descriptor.size,
                 'status': 'uploaded',
+                **({'context': 'full'} if not is_image else {}),
             }
         )
+    return result
+
+
+def _is_document_attachment(file: Any) -> bool:
+    if not isinstance(file, dict):
+        return False
+    content_type = str(file.get('content_type') or '').lower()
+    return file.get('type') != 'image' and not content_type.startswith('image/')
+
+
+def _conversation_context_files(
+    message_list: list[dict[str, Any]],
+    current_files: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized_current = []
+    has_current_document = False
+    for file in current_files:
+        if not isinstance(file, dict):
+            continue
+        item = dict(file)
+        if _is_document_attachment(item):
+            item['context'] = 'full'
+            has_current_document = True
+        normalized_current.append(item)
+
+    if has_current_document:
+        return normalized_current
+
+    inherited_documents = []
+    for message in reversed(message_list):
+        if message.get('role') != 'user':
+            continue
+        inherited_documents = [
+            {**file, 'context': 'full'}
+            for file in message.get('files', [])
+            if _is_document_attachment(file)
+        ]
+        if inherited_documents:
+            break
+
+    seen = set()
+    result = []
+    for file in [*normalized_current, *inherited_documents]:
+        identity = file.get('id') or file.get('url') or json.dumps(file, sort_keys=True)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(file)
     return result
 
 
@@ -1147,34 +1304,43 @@ async def _prepare_chat(
             'model': model_id,
             'timestamp': int(time.time()),
         }
-        title_channel = '微信' if event.channel == 'wechat' else 'QQ'
-        chat = await Chats.insert_new_chat(
-            chat_id,
-            user.id,
-            ChatForm(
-                chat={
-                    'id': chat_id,
-                    'title': f'{title_channel} - {event.sender.name or event.sender.id}'[:120],
-                    'models': [model_id],
-                    'history': {
-                        'currentId': assistant_message_id,
-                        'messages': {
-                            user_message_id: user_message,
-                            assistant_message_id: assistant_message,
+        created_at = int(time.time())
+        day_start, day_end = _bot_chat_day_bounds(created_at)
+        title_lock_key = f'bot-chat-title:{user.id}:{event.channel}:{day_start}'
+        async with _conversation_lock(title_lock_key):
+            sequence = await Chats.get_next_bot_chat_sequence(
+                user.id,
+                event.channel,
+                day_start,
+                day_end,
+            )
+            chat = await Chats.insert_new_chat(
+                chat_id,
+                user.id,
+                ChatForm(
+                    chat={
+                        'id': chat_id,
+                        'title': format_bot_chat_title(event.channel, created_at, sequence),
+                        'models': [model_id],
+                        'history': {
+                            'currentId': assistant_message_id,
+                            'messages': {
+                                user_message_id: user_message,
+                                assistant_message_id: assistant_message,
+                            },
                         },
+                        'messages': [{'role': 'user', 'content': event.message.text}],
+                        'files': files,
+                        'tags': [],
+                        'timestamp': int(time.time() * 1000),
                     },
-                    'messages': [{'role': 'user', 'content': event.message.text}],
-                    'files': files,
-                    'tags': [],
-                    'timestamp': int(time.time() * 1000),
-                }
-            ),
-            internal_meta={
-                'source': 'bot_gateway',
-                'channel': event.channel,
-                'connection_id': event.connection_id,
-            },
-        )
+                ),
+                internal_meta={
+                    'source': 'bot_gateway',
+                    'channel': event.channel,
+                    'connection_id': event.connection_id,
+                },
+            )
         if chat is None:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Failed to create chat')
         conversation = await BotGateway.update_conversation(conversation.id, {'chat_id': chat_id}) or conversation
@@ -1251,9 +1417,10 @@ async def _run_chat(  # noqa: C901
         'timestamp': int(time.time()),
         'meta': {'source': 'bot_gateway', 'channel': event.channel, 'event_id': event.event_id},
     }
+    context_files = _conversation_context_files(message_list, files)
     form_data: dict[str, Any] = {
         'model': model_id,
-        'messages': [*message_list, {'role': 'user', 'content': prompt}],
+        'messages': [*message_list, dict(user_message)],
         'stream': True,
         'chat_id': chat_id,
         'id': assistant_message_id,
@@ -1261,7 +1428,7 @@ async def _run_chat(  # noqa: C901
         'user_message': user_message,
         'session_id': f'bot-gateway:{conversation.id}',
         'background_tasks': {},
-        'files': files or None,
+        'files': context_files or None,
     }
     if tool_ids:
         form_data['tool_ids'] = tool_ids
@@ -1307,20 +1474,17 @@ async def _handle_command(  # noqa: C901
 ) -> str:
     if command == 'help':
         return (
-            '/help 帮助\n'
-            '/points 查询积分\n'
-            '/status 查看当前机器人和模型\n'
-            '/models 查看可用模型\n'
-            '/model [模型ID] 查看或切换模型\n'
-            '/history 查看历史对话\n'
-            '/conversation <ID> 继续指定对话\n'
-            '/new 新建对话\n/unbind 解绑机器人'
-        )
-    if command == 'help':
-        return (
-            'Ryan AI 机器人命令：\n'
-            '/bind <绑定码> 绑定账号\n/unbind 解绑账号\n/new 新建会话\n'
-            '/model [模型ID] 查看或切换模型\n/status 查看状态\n/help 查看帮助'
+            'Ryan AI 机器人常用指令：\n'
+            '/帮助 或 /help 查看帮助\n'
+            '/状态 或 /status 查看机器人和模型\n'
+            '/积分 或 /points 查询积分\n'
+            '/模型列表 或 /models 查看可用模型\n'
+            '/模型 [模型ID] 查看或切换模型\n'
+            '/历史 或 /history 查看历史对话\n'
+            '/会话 <ID> 继续指定对话\n'
+            '/新建 或 /new 新建对话\n'
+            '/绑定 <绑定码> 绑定账号\n'
+            '/解绑 解绑账号'
         )
     if command == 'status' and binding is None:
         return '当前微信/QQ账号尚未绑定 Ryan AI。请先在 Ryan AI 设置中生成绑定码，再发送 /bind <绑定码>。'

@@ -38,6 +38,9 @@ export type BotGatewayBinding = {
 	channel: BotGatewayChannel;
 	connection_id: string;
 	user_id: string;
+	user_name?: string | null;
+	user_username?: string | null;
+	user_email?: string | null;
 	external_user_id: string;
 	display_name: string | null;
 	status: string;
@@ -178,12 +181,31 @@ const sanitizeConnection = (value: any): BotGatewayConnection => ({
 	updated_at: value?.updated_at ?? value?.updatedAt ?? null
 });
 
+const extractQrCodeValue = (value: unknown, depth = 0): string | null => {
+	if (typeof value === 'string' && value.trim()) return value;
+	if (!value || typeof value !== 'object' || depth > 4) return null;
+	for (const key of [
+		'data_url',
+		'dataUrl',
+		'qr_code',
+		'qrCode',
+		'qrcode',
+		'qrcode_url',
+		'qrcodeUrl',
+		'url',
+		'text',
+		'content',
+		'value'
+	]) {
+		const result = extractQrCodeValue((value as Record<string, unknown>)[key], depth + 1);
+		if (result) return result;
+	}
+	return null;
+};
+
 const sanitizeLoginSession = (value: any): BotGatewayLoginSession => ({
 	state: String(value?.state ?? value?.status ?? 'pending'),
-	qr_code:
-		value?.qr_code == null && value?.qr_code_data_url == null && value?.dataUrl == null
-			? null
-			: String(value?.qr_code ?? value?.qr_code_data_url ?? value?.dataUrl),
+	qr_code: extractQrCodeValue(value?.qr_code ?? value?.qr_code_data_url ?? value?.dataUrl),
 	expires_at: value?.expires_at ?? value?.expiresAt ?? null,
 	message:
 		value?.message == null && value?.detail == null ? null : String(value?.message ?? value?.detail)
@@ -206,6 +228,9 @@ const sanitizeBinding = (value: any): BotGatewayBinding => ({
 	channel: asChannel(value?.channel),
 	connection_id: String(value?.connection_id ?? value?.connectionId ?? ''),
 	user_id: String(value?.user_id ?? value?.userId ?? ''),
+	user_name: value?.user_name == null && value?.userName == null ? null : String(value?.user_name ?? value?.userName),
+	user_username: value?.user_username == null && value?.userUsername == null ? null : String(value?.user_username ?? value?.userUsername),
+	user_email: value?.user_email == null && value?.userEmail == null ? null : String(value?.user_email ?? value?.userEmail),
 	external_user_id: String(value?.external_user_id ?? value?.externalUserId ?? ''),
 	display_name:
 		value?.display_name == null && value?.displayName == null

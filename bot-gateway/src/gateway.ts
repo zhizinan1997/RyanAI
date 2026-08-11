@@ -60,10 +60,6 @@ export class RyanAiGateway {
 	}
 
 	private async handleSerial(event: GatewayInboundEvent): Promise<GatewayReply> {
-		if (!this.config.enabledChannels.has(event.channel)) {
-			return this.ignored(event.eventId);
-		}
-
 		if (event.conversation.type === 'group') {
 			await this.state.upsertGroup({
 				channel: event.channel,

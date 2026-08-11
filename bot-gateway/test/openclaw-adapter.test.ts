@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import test from 'node:test';
 
 import { OpenClawAdapter } from '../src/adapters/openclaw.js';
+import type { GatewayConfig } from '../src/config.js';
 import type { OpenClawCredentialSet } from '../src/openclaw/host.js';
 import type {
 	PendingOfficialLogin,
@@ -10,8 +13,10 @@ import type {
 } from '../src/openclaw/official-login.js';
 import { CredentialVault } from '../src/security/vault.js';
 import { GatewayStateStore } from '../src/state.js';
-import type { Channel } from '../src/types.js';
+import type { Channel, ConnectionSnapshot } from '../src/types.js';
 import { quietLogger, tempDataDir, testConfig } from './helpers.js';
+
+const require = createRequire(import.meta.url);
 
 class FakeOpenClawHost {
 	running = false;
@@ -70,6 +75,59 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
 }
+
+test('installed QQBot bundle narrowly allows the official image and file download hosts', async () => {
+	const bundle = await readFile(require.resolve('@tencent-connect/openclaw-qqbot'), 'utf8');
+	assert.match(
+		bundle,
+		/\["multimedia\.nt\.qq\.com\.cn", "grouptalk\.c2c\.qq\.com"\]\.includes/
+	);
+	assert.match(bundle, /hostnameAllowlist: \[new URL\(url\)\.hostname\.toLowerCase\(\)\]/);
+	assert.match(bundle, /dangerouslyAllowPrivateNetwork: true/);
+});
+
+test('per-connection hosts trust their own media directories without trusting sibling hosts', async () => {
+	const dataDir = await tempDataDir();
+	const customRoot = path.join(dataDir, 'custom-attachments');
+	const config = testConfig(dataDir, {
+		adapterMode: 'openclaw',
+		attachmentRoots: [
+			customRoot,
+			path.join(dataDir, 'openclaw-state', 'media'),
+			path.join(dataDir, 'openclaw-home', '.openclaw', 'media')
+		]
+	});
+	const adapter = new OpenClawAdapter(
+		config,
+		new GatewayStateStore(dataDir, config.replayTtlMs),
+		new CredentialVault(dataDir, config.credentialsEncryptionKey),
+		quietLogger()
+	);
+	const snapshot: ConnectionSnapshot = {
+		id: 'bot-wechat-user-1',
+		channel: 'wechat',
+		ownerUserId: 'user-1',
+		enabled: true,
+		status: 'connected',
+		updatedAt: new Date().toISOString()
+	};
+	const childConfig = (
+		adapter as unknown as {
+			connectionConfig(snapshot: ConnectionSnapshot): GatewayConfig;
+		}
+	).connectionConfig(snapshot);
+
+	assert.deepEqual(new Set(childConfig.attachmentRoots), new Set([
+		customRoot,
+		path.join(childConfig.openClawStateDir, 'media'),
+		path.join(childConfig.openClawHomeDir, '.openclaw', 'media')
+	]));
+	assert.equal(
+		childConfig.attachmentRoots.includes(path.join(config.openClawStateDir, 'media')),
+		false
+	);
+	await rm(dataDir, { recursive: true, force: true });
+});
 
 test('OpenClaw adapter restores encrypted QQ credentials and stays healthy without WeChat login', async () => {
 	const dataDir = await tempDataDir();

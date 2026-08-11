@@ -69,7 +69,31 @@ export class Logger {
 
 export function safeErrorFields(error: unknown): Record<string, unknown> {
 	if (error instanceof Error) {
-		return { error_name: error.name, error_code: 'code' in error ? error.code : undefined };
+		const rawCode = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+		const errorCode = rawCode && /^[a-z][a-z0-9_.-]{0,127}$/.test(rawCode) ? rawCode : undefined;
+		const describeCause = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
+			if (!(value instanceof Error) || depth > 2) return undefined;
+			const causeCode = 'code' in value && typeof value.code === 'string' ? value.code : undefined;
+			const nested = describeCause(value.cause, depth + 1);
+			return {
+				name: value.name,
+				...(causeCode ? { code: causeCode.slice(0, 128) } : {}),
+				...(value.message.trim() ? { message: value.message.trim().slice(0, 240) } : {}),
+				...(nested ? { cause: nested } : {})
+			};
+		};
+		const cause = describeCause(error.cause);
+		const message = error.name === 'RyanAiTransportError' ? error.message.trim().slice(0, 240) : '';
+		return {
+			error_name: error.name,
+			...(errorCode ? { error_code: errorCode } : {}),
+			...(message ? { error_message: message } : {}),
+			...(cause
+				? {
+						error_cause: cause
+					}
+				: {})
+		};
 	}
 	return { error_name: 'UnknownError' };
 }

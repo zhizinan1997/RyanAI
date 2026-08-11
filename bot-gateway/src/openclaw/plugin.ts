@@ -135,17 +135,22 @@ async function handleReplyDispatch(
 }> {
 	let replyText = fallbackErrorMessage();
 	let isError = true;
+	let errorPhase = 'runtime';
 	try {
 		const active = await runtime;
+		errorPhase = 'normalize';
 		const inbound = await normalizeReplyDispatch(
 			event as ReplyDispatchHookLike & { ctx: FinalizedMessageContextLike },
 			active.config
 		);
+		errorPhase = 'forward';
 		const reply = await active.client.forward(inbound);
 		replyText = reply.chunks.join('');
 		isError = reply.isError;
 	} catch (error) {
-		logger.error?.(`RyanAI reply bridge failed closed: ${JSON.stringify(safeErrorFields(error))}`);
+		logger.error?.(
+			`RyanAI reply bridge failed closed: ${JSON.stringify({ phase: errorPhase, ...safeErrorFields(error) })}`
+		);
 	}
 
 	let queuedFinal = false;

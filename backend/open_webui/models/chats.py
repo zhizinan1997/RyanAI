@@ -468,6 +468,29 @@ class ChatTable:
 
             return ChatModel.model_validate(chat_item) if chat_item else None
 
+    async def get_next_bot_chat_sequence(
+        self,
+        user_id: str,
+        channel: str,
+        day_start: int,
+        day_end: int,
+        db: AsyncSession | None = None,
+    ) -> int:
+        """Return the next daily sequence for a user's bot-created chats."""
+        async with get_async_db_context(db) as session:
+            count = await session.scalar(
+                select(func.count())
+                .select_from(Chat)
+                .where(
+                    Chat.user_id == user_id,
+                    Chat.created_at >= day_start,
+                    Chat.created_at < day_end,
+                    Chat.meta['source'].as_string() == 'bot_gateway',
+                    Chat.meta['channel'].as_string() == channel,
+                )
+            )
+            return int(count or 0) + 1
+
     async def get_internal_chat_ids_by_parent_id(self, parent_chat_id: str, user_id: str) -> list[str]:
         async with get_async_db_context() as session:
             result = await session.execute(

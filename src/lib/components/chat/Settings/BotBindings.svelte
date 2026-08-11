@@ -17,6 +17,7 @@
 		type BotGatewayUserConnection
 	} from '$lib/apis/bot-gateway';
 	import Modal from '$lib/components/common/Modal.svelte';
+	import QRCode from '$lib/components/common/QRCode.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import UserSettingSection from './UserSettingSection.svelte';
 
@@ -36,21 +37,17 @@
 	let loginSession: BotGatewayLoginSession | null = null;
 	let showLogin = false;
 	let loginPoll: ReturnType<typeof setInterval> | null = null;
+	let loginPollInFlight = false;
 	let busyChannel: BotGatewayChannel | null = null;
 
 	$: qqConnection = connections.find((item) => item.channel === 'qq');
 	$: wechatConnection = connections.find((item) => item.channel === 'wechat');
 	$: availableModels = $models ?? [];
 
-	const label = (channel: BotGatewayChannel) => channel === 'qq' ? 'QQ' : $i18n.t('WeChat');
-	const qrSource = (value: string | null) => {
-		if (!value) return '';
-		if (/^(data:image\/|blob:|https?:\/\/)/i.test(value)) return value;
-		if (value.trimStart().startsWith('<svg')) return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(value)}`;
-		return `data:image/png;base64,${value}`;
-	};
 	const statusText = (item?: BotGatewayUserConnection) =>
 		item?.status === 'connected' ? $i18n.t('Connected') : item?.configured ? $i18n.t('Configured') : $i18n.t('Not configured');
+	const loginFinished = (state?: string) =>
+		['connected', 'confirmed', 'success', 'expired', 'error', 'failed', 'cancelled', 'logged_out', 'degraded', 'unavailable'].includes(state ?? '');
 
 	const load = async () => {
 		loading = true;
@@ -74,11 +71,11 @@
 	};
 
 	const saveQQ = async () => {
-		if (!qqAppId.trim() || !qqAppSecret) return;
+		if (!qqAppId.trim() || !qqAppSecret.trim()) return;
 		busyChannel = 'qq';
 		try {
-			const connection = await setBotGatewayUserQQCredentials(localStorage.token, { app_id: qqAppId.trim(), app_secret: qqAppSecret });
-			connections = connections.map((item) => item.channel === 'qq' ? connection : item);
+			await setBotGatewayUserQQCredentials(localStorage.token, { app_id: qqAppId.trim(), app_secret: qqAppSecret });
+			connections = await getBotGatewayUserConnections(localStorage.token);
 			qqAppSecret = '';
 			showQQ = false;
 			toast.success($i18n.t('Your QQ bot credentials were saved.'));
@@ -88,20 +85,27 @@
 
 	const stopPolling = () => { if (loginPoll) clearInterval(loginPoll); loginPoll = null; };
 	const pollLogin = async () => {
+		if (loginPollInFlight || !showLogin) return;
+		loginPollInFlight = true;
 		try {
-			loginSession = await getBotGatewayUserLoginState(localStorage.token);
-			if (['connected', 'confirmed', 'success', 'expired', 'error', 'failed'].includes(loginSession.state)) {
+			const session = await getBotGatewayUserLoginState(localStorage.token);
+			if (!showLogin) return;
+			loginSession = session;
+			if (loginFinished(loginSession.state)) {
 				stopPolling();
 				connections = await getBotGatewayUserConnections(localStorage.token);
 			}
 		} catch { /* keep the QR visible during transient polling errors */ }
+		finally { loginPollInFlight = false; }
 	};
 	const loginWeChat = async () => {
+		stopPolling();
+		loginSession = null;
 		busyChannel = 'wechat';
 		showLogin = true;
 		try {
 			loginSession = await beginBotGatewayUserLogin(localStorage.token);
-			if (loginSession.state === 'pending') loginPoll = setInterval(pollLogin, 2000);
+			if (!loginFinished(loginSession.state)) loginPoll = setInterval(pollLogin, 2000);
 		} catch (error) {
 			showLogin = false;
 			toast.error(error instanceof Error ? error.message : $i18n.t('Failed to request WeChat QR code.'));
@@ -117,21 +121,24 @@
 	};
 
 	onMount(load);
+	$: if (!showLogin) stopPolling();
 	onDestroy(stopPolling);
 </script>
 
 <Modal bind:show={showQQ} size="sm">
 	<form class="flex flex-col gap-4 p-5" on:submit|preventDefault={saveQQ}>
-		<div><h3 class="text-base font-medium text-gray-900 dark:text-white">{$i18n.t('Bind your QQ bot')}</h3><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{$i18n.t('These credentials belong to your own QQ bot and are encrypted by the server.')}</p></div>
+		<div><h3 class="text-base font-medium text-gray-900 dark:text-white">{$i18n.t('Bind your QQ bot')}</h3><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{$i18n.t('Open the QQ Bot Platform first, create a bot, and copy its AppID and AppSecret here.')}</p></div>
 		<label class="text-xs text-gray-600 dark:text-gray-400">AppID<input class={inputClass} bind:value={qqAppId} required autocomplete="off" /></label>
 		<label class="text-xs text-gray-600 dark:text-gray-400">AppSecret<input class={inputClass} type="password" bind:value={qqAppSecret} required autocomplete="new-password" /></label>
-		<div class="flex justify-end gap-2"><button type="button" class={buttonClass} on:click={() => showQQ = false}>{$i18n.t('Cancel')}</button><button type="submit" class="rounded-lg bg-gray-900 px-3 py-1.5 text-xs text-white dark:bg-white dark:text-black" disabled={busyChannel === 'qq'}>{$i18n.t('Save')}</button></div>
+		<a class="text-xs text-blue-600 hover:underline dark:text-blue-400" href="https://q.qq.com/qqbot/" target="_blank" rel="noreferrer">{$i18n.t('Open QQ Bot Platform to apply for AppID and AppSecret')} ↗</a>
+		<div class="flex justify-end gap-2"><button type="button" class={buttonClass} on:click={() => showQQ = false}>{$i18n.t('Cancel')}</button><button type="submit" class="rounded-lg bg-gray-900 px-3 py-1.5 text-xs text-white dark:bg-white dark:text-black" disabled={busyChannel === 'qq'} aria-busy={busyChannel === 'qq'}>{busyChannel === 'qq' ? $i18n.t('Saving…') : $i18n.t('Save')}</button></div>
 	</form>
 </Modal>
 
-<Modal bind:show={showLogin} size="sm" on:close={() => stopPolling()}>
+<Modal bind:show={showLogin} size="sm">
 	<div class="flex flex-col items-center gap-3 p-5 text-center"><h3 class="text-base font-medium text-gray-900 dark:text-white">{$i18n.t('Bind your WeChat bot')}</h3>
-		{#if loginSession?.qr_code}<img class="size-56 rounded-lg border border-gray-100 object-contain dark:border-white/10" src={qrSource(loginSession.qr_code)} alt={$i18n.t('WeChat login QR code')} />{:else}<Spinner className="my-20 size-6" />{/if}
+		<p class="max-w-xs text-xs leading-5 text-gray-500 dark:text-gray-400">{$i18n.t('In WeChat, open Settings → Plugins, enable WeChat ClawBot, then scan the QR code below.')}</p>
+		{#if loginSession?.qr_code}<div class="size-56 rounded-lg border border-gray-100 bg-white p-2 dark:border-white/10"><QRCode value={loginSession.qr_code} alt={$i18n.t('WeChat login QR code')} size={208} /></div>{:else if loginSession && loginFinished(loginSession.state)}<div class="flex size-56 items-center justify-center rounded-lg border border-gray-100 bg-gray-50 px-5 text-xs text-gray-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-gray-400">{loginSession.message || $i18n.t('WeChat login did not complete.')}</div>{:else}<Spinner className="my-20 size-6" />{/if}
 		<p class="text-xs text-gray-500 dark:text-gray-400">{loginSession?.message || $i18n.t('Scan this QR code with the WeChat account that owns your bot.')}</p>
 		{#if loginSession?.state === 'connected'}<p class="text-xs text-emerald-600">{$i18n.t('Connected successfully.')}</p>{/if}
 	</div>
@@ -149,12 +156,38 @@
 				</select>
 				<div class="flex justify-end"><button type="submit" class="rounded-lg bg-gray-900 px-3 py-1.5 text-xs text-white dark:bg-white dark:text-black" disabled={saving || !settings.available}>{$i18n.t('Save')}</button></div>
 			</UserSettingSection>
+			<UserSettingSection title={$i18n.t('Common commands')}>
+				<p class="text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600">{$i18n.t('Open the chat with your connected WeChat or QQ bot and send a command directly. Chinese and English commands are both supported.')}</p>
+				<div class="border-y border-gray-100/80 text-xs dark:border-white/[0.06]">
+					{#each [
+						['/帮助 · /help', $i18n.t('Show command help')],
+						['/状态 · /status', $i18n.t('Show bot connection and current model')],
+						['/积分 · /points', $i18n.t('Check your current points')],
+						['/模型列表 · /models', $i18n.t('List available models')],
+						['/模型 [模型ID] · /model [ID]', $i18n.t('View or switch the current model')],
+						['/模型 默认 · /model default', $i18n.t('Restore the default model')],
+						['/新建 · /new', $i18n.t('Start a new conversation')],
+						['/历史 · /history', $i18n.t('List recent bot conversations')],
+						['/会话 [ID] · /conversation [ID]', $i18n.t('Continue a selected conversation')],
+						['/绑定 [绑定码] · /bind [code]', $i18n.t('Bind a messaging account with a code')],
+						['/解绑 · /unbind', $i18n.t('Request to disconnect the current messaging account')],
+						['/解绑 确认 · /unbind confirm', $i18n.t('Confirm the disconnect request')]
+					] as command}
+						<div class="grid grid-cols-1 gap-1 border-b border-gray-100/80 py-2 last:border-b-0 sm:grid-cols-[minmax(13rem,auto)_1fr] sm:items-center sm:gap-4 dark:border-white/[0.06]">
+							<code class="break-words text-[0.6875rem] text-gray-700 dark:text-gray-300">{command[0]}</code>
+							<span class="text-[0.6875rem] text-gray-500 dark:text-gray-500">{command[1]}</span>
+						</div>
+					{/each}
+				</div>
+				<p class="text-[0.6875rem] leading-5 text-gray-500 dark:text-gray-500">{$i18n.t('Example: send /状态 to check the bot, or send /模型 模型ID to switch models. Normal questions, images, and files can be sent without commands.')}</p>
+			</UserSettingSection>
 			<UserSettingSection title={$i18n.t('Your QQ bot')}>
-				<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600">{$i18n.t('Each Ryan AI user connects their own QQ bot with its AppID and AppSecret.')}</p>
+				<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600">{$i18n.t('Create a bot on the QQ Bot Platform, then enter its AppID and AppSecret to bind it.')}</p>
+				<a class="mb-2 inline-block text-[0.6875rem] text-blue-600 hover:underline dark:text-blue-400" href="https://q.qq.com/qqbot/" target="_blank" rel="noreferrer">{$i18n.t('Go to QQ Bot Platform to apply for credentials')} ↗</a>
 				<div class="flex items-center justify-between rounded-xl border border-gray-100/80 p-3 dark:border-white/[0.06]"><div><div class="text-xs text-gray-700 dark:text-gray-300">QQ <span class="ml-1 text-[0.6875rem] text-gray-400">{statusText(qqConnection)}</span></div>{#if qqConnection?.account_name}<div class="mt-1 text-[0.6875rem] text-gray-400">{qqConnection.account_name}</div>{/if}</div><div class="flex gap-1.5"><button type="button" class={buttonClass} on:click={() => showQQ = true} disabled={!settings.qq_enabled}>{qqConnection?.configured ? $i18n.t('Replace credentials') : $i18n.t('Bind QQ bot')}</button>{#if qqConnection?.configured}<button type="button" class={buttonClass} on:click={() => logout('qq')} disabled={busyChannel === 'qq'}>{$i18n.t('Disconnect')}</button>{/if}</div></div>
 			</UserSettingSection>
 			<UserSettingSection title={$i18n.t('Your WeChat bot')}>
-				<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600">{$i18n.t('Scan the QR code to connect the personal WeChat account that owns your bot.')}</p>
+				<p class="text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600">{$i18n.t('First open WeChat → Settings → Plugins and enable WeChat ClawBot. Then click the button below and scan the QR code in WeChat.')}</p>
 				<div class="flex items-center justify-between rounded-xl border border-gray-100/80 p-3 dark:border-white/[0.06]"><div><div class="text-xs text-gray-700 dark:text-gray-300">{$i18n.t('WeChat')} <span class="ml-1 text-[0.6875rem] text-gray-400">{statusText(wechatConnection)}</span></div>{#if wechatConnection?.account_name}<div class="mt-1 text-[0.6875rem] text-gray-400">{wechatConnection.account_name}</div>{/if}</div><div class="flex gap-1.5"><button type="button" class={buttonClass} on:click={loginWeChat} disabled={!settings.wechat_enabled || busyChannel === 'wechat'}>{$i18n.t('Scan QR to bind')}</button>{#if wechatConnection?.configured}<button type="button" class={buttonClass} on:click={() => logout('wechat')} disabled={busyChannel === 'wechat'}>{$i18n.t('Disconnect')}</button>{/if}</div></div>
 			</UserSettingSection>
 			{#if !settings.available}<div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">{$i18n.t('Messaging bots are disabled by the administrator.')}</div>{/if}

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from open_webui.internal.db import Base
 from open_webui.models import bot_gateway as gateway_models
+from open_webui.models import chats as chat_models
 from open_webui.models.bot_gateway import (
     BotGatewayBinding,
     BotGatewayBindingCode,
@@ -24,7 +25,7 @@ from open_webui.models.bot_gateway import (
     BotGatewayRequestNonce,
     BotGatewayTable,
 )
-from open_webui.models.chats import Chat
+from open_webui.models.chats import Chat, Chats
 from open_webui.models.users import User
 from sqlalchemy import Column, String, Table, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -59,10 +60,13 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
 
         self.context_patcher = patch.object(gateway_models, 'get_async_db_context', test_db_context)
         self.context_patcher.start()
+        self.chat_context_patcher = patch.object(chat_models, 'get_async_db_context', test_db_context)
+        self.chat_context_patcher.start()
         self.gateway = BotGatewayTable()
         await self._seed_identity()
 
     async def asyncTearDown(self):
+        self.chat_context_patcher.stop()
         self.context_patcher.stop()
         await self.engine.dispose()
         self.temp_dir.cleanup()
@@ -266,6 +270,55 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
         self.assertEqual(deleted['nonces'], 1)
         self.assertEqual(deleted['events'], 1)
 
+    async def test_bot_chat_sequence_is_scoped_by_user_channel_and_shanghai_day(self):
+        timezone = dt.timezone(dt.timedelta(hours=8))
+        day_start = int(dt.datetime(2026, 8, 11, tzinfo=timezone).timestamp())
+        day_end = int(dt.datetime(2026, 8, 12, tzinfo=timezone).timestamp())
+        async with self.sessions() as session:
+            session.add_all(
+                [
+                    Chat(
+                        id='qq-chat-1', user_id='user-1', title='old', chat={'title': 'old'},
+                        meta={'source': 'bot_gateway', 'channel': 'qq'},
+                        created_at=day_start + 1, updated_at=day_start + 1,
+                    ),
+                    Chat(
+                        id='qq-chat-2', user_id='user-1', title='old', chat={'title': 'old'},
+                        meta={'source': 'bot_gateway', 'channel': 'qq'},
+                        created_at=day_start + 2, updated_at=day_start + 2,
+                    ),
+                    Chat(
+                        id='wechat-chat-1', user_id='user-1', title='old', chat={'title': 'old'},
+                        meta={'source': 'bot_gateway', 'channel': 'wechat'},
+                        created_at=day_start + 3, updated_at=day_start + 3,
+                    ),
+                    Chat(
+                        id='other-user-chat', user_id='user-2', title='old', chat={'title': 'old'},
+                        meta={'source': 'bot_gateway', 'channel': 'qq'},
+                        created_at=day_start + 4, updated_at=day_start + 4,
+                    ),
+                    Chat(
+                        id='previous-day-chat', user_id='user-1', title='old', chat={'title': 'old'},
+                        meta={'source': 'bot_gateway', 'channel': 'qq'},
+                        created_at=day_start - 1, updated_at=day_start - 1,
+                    ),
+                    Chat(
+                        id='normal-chat', user_id='user-1', title='normal', chat={'title': 'normal'},
+                        meta={}, created_at=day_start + 5, updated_at=day_start + 5,
+                    ),
+                ]
+            )
+            await session.commit()
+
+            self.assertEqual(
+                await Chats.get_next_bot_chat_sequence('user-1', 'qq', day_start, day_end, db=session),
+                3,
+            )
+            self.assertEqual(
+                await Chats.get_next_bot_chat_sequence('user-1', 'wechat', day_start, day_end, db=session),
+                2,
+            )
+
 
 class BotGatewayMigrationTests(TestCase):
     def test_fresh_sqlite_schema_has_nonce_uniqueness_block_state_and_cleanup_index(self):
@@ -310,6 +363,75 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
 
         self.gateway_router = gateway_router
         self.gateway_router._conversation_locks.clear()
+
+    def test_bot_chat_title_uses_channel_date_and_zero_padded_sequence(self):
+        timezone = dt.timezone(dt.timedelta(hours=8))
+        created_at = int(dt.datetime(2026, 8, 11, 9, 30, tzinfo=timezone).timestamp())
+        self.assertEqual(
+            self.gateway_router.format_bot_chat_title('wechat', created_at, 1),
+            '🤖微信-20260811-001',
+        )
+        self.assertEqual(
+            self.gateway_router.format_bot_chat_title('qq', created_at, 2),
+            '🤖QQ-20260811-002',
+        )
+
+    def test_bot_commands_accept_chinese_aliases_and_arguments(self):
+        cases = {
+            '/帮助': ('help', None),
+            '/指令': ('help', None),
+            '/状态': ('status', None),
+            '/积分': ('points', None),
+            '/模型列表': ('models', None),
+            '/模型 gpt-test': ('model', 'gpt-test'),
+            '/模型 默认': ('model', 'default'),
+            '/新对话': ('new', None),
+            '/历史': ('history', None),
+            '/会话 conversation-id': ('conversation', 'conversation-id'),
+            '/绑定 ABC123': ('bind', 'ABC123'),
+            '/解绑 确认': ('unbind', 'confirm'),
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(self.gateway_router.parse_bot_gateway_command(text), expected)
+
+    def test_bot_conversation_inherits_latest_document_as_full_context(self):
+        old_pdf = {
+            'type': 'file',
+            'id': 'old-pdf',
+            'url': 'old-pdf',
+            'name': 'old.pdf',
+            'content_type': 'application/pdf',
+        }
+        latest_pdf = {
+            'type': 'file',
+            'id': 'latest-pdf',
+            'url': 'latest-pdf',
+            'name': 'latest.pdf',
+            'content_type': 'application/pdf',
+        }
+        image = {
+            'type': 'image',
+            'id': 'current-image',
+            'url': 'current-image',
+            'name': 'current.png',
+            'content_type': 'image/png',
+        }
+        history = [
+            {'role': 'user', 'content': 'first file', 'files': [old_pdf]},
+            {'role': 'assistant', 'content': 'received'},
+            {'role': 'user', 'content': 'replacement file', 'files': [latest_pdf]},
+            {'role': 'assistant', 'content': 'received'},
+        ]
+
+        inherited = self.gateway_router._conversation_context_files(history, [image])
+        self.assertEqual([item['id'] for item in inherited], ['current-image', 'latest-pdf'])
+        self.assertNotIn('context', inherited[0])
+        self.assertEqual(inherited[1]['context'], 'full')
+
+        replacement = self.gateway_router._conversation_context_files(history, [old_pdf])
+        self.assertEqual([item['id'] for item in replacement], ['old-pdf'])
+        self.assertEqual(replacement[0]['context'], 'full')
 
     async def test_duplicate_nonce_returns_409_before_payload_parsing(self):
         request = SimpleNamespace(form=AsyncMock())

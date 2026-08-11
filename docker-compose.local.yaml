@@ -1,0 +1,34 @@
+services:
+  ryanai:
+    image: ryanai:local
+    ports:
+      - "3000:8080"
+    volumes:
+      - ryanai_ryanai:/app/backend/data
+    environment:
+      BOT_GATEWAY_ENABLED: "true"
+      BOT_GATEWAY_INTERNAL_URL: "http://ryanai-bot-gateway:8787"
+      BOT_GATEWAY_HMAC_SECRET: "${BOT_GATEWAY_HMAC_SECRET-}"
+
+  ryanai-bot-gateway:
+    build:
+      context: ./bot-gateway
+      dockerfile: Dockerfile
+    image: ryanai-bot-gateway:local
+    environment:
+      BOT_GATEWAY_ENABLED: "true"
+      BOT_GATEWAY_INTERNAL_PORT: "${BOT_GATEWAY_INTERNAL_PORT:-8787}"
+      BOT_GATEWAY_HMAC_SECRET: "${BOT_GATEWAY_HMAC_SECRET-}"
+      BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY: "${BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY-}"
+      BOT_GATEWAY_DATA_DIR: "/data"
+      BOT_GATEWAY_OPENCLAW_STATE_DIR: "${BOT_GATEWAY_OPENCLAW_STATE_DIR:-/tmp/ryanai-openclaw/state}"
+      BOT_GATEWAY_OPENCLAW_HOME_DIR: "${BOT_GATEWAY_OPENCLAW_HOME_DIR:-/tmp/ryanai-openclaw/home}"
+      RYANAI_BASE_URL: "http://ryanai:8080"
+    volumes:
+      - ryanai_ryanai-bot-gateway:/data
+
+volumes:
+  ryanai_ryanai:
+    external: true
+  ryanai_ryanai-bot-gateway:
+    external: true

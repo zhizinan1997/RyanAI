@@ -18,11 +18,15 @@ def _columns(table: str) -> set[str]:
 def upgrade() -> None:
     tables = set(get_existing_tables())
     if 'bot_gateway_connection' in tables and 'owner_user_id' not in _columns('bot_gateway_connection'):
-        op.add_column('bot_gateway_connection', sa.Column('owner_user_id', sa.String(), nullable=True))
-        op.create_foreign_key(
-            'fk_bot_gateway_connection_owner_user', 'bot_gateway_connection', 'user',
-            ['owner_user_id'], ['id'], ondelete='CASCADE'
-        )
+        # SQLite cannot add a foreign-key constraint with ALTER TABLE. Batch
+        # mode rebuilds the table on SQLite and remains a normal ALTER on other
+        # databases.
+        with op.batch_alter_table('bot_gateway_connection') as batch_op:
+            batch_op.add_column(sa.Column('owner_user_id', sa.String(), nullable=True))
+            batch_op.create_foreign_key(
+                'fk_bot_gateway_connection_owner_user', 'user',
+                ['owner_user_id'], ['id'], ondelete='CASCADE'
+            )
 
     if 'bot_gateway_user_setting' not in tables:
         op.create_table(
@@ -62,5 +66,6 @@ def downgrade() -> None:
     if 'bot_gateway_user_setting' in tables:
         op.drop_table('bot_gateway_user_setting')
     if 'bot_gateway_connection' in tables and 'owner_user_id' in _columns('bot_gateway_connection'):
-        op.drop_constraint('fk_bot_gateway_connection_owner_user', 'bot_gateway_connection', type_='foreignkey')
-        op.drop_column('bot_gateway_connection', 'owner_user_id')
+        with op.batch_alter_table('bot_gateway_connection') as batch_op:
+            batch_op.drop_constraint('fk_bot_gateway_connection_owner_user', type_='foreignkey')
+            batch_op.drop_column('owner_user_id')

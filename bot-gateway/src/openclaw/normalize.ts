@@ -124,6 +124,107 @@ interface AttachmentCandidate {
 	contentType?: string;
 }
 
+const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+	'.aac': 'audio/aac',
+	'.avi': 'video/x-msvideo',
+	'.avif': 'image/avif',
+	'.bmp': 'image/bmp',
+	'.csv': 'text/csv',
+	'.doc': 'application/msword',
+	'.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	'.flac': 'audio/flac',
+	'.gif': 'image/gif',
+	'.gz': 'application/gzip',
+	'.heic': 'image/heic',
+	'.heif': 'image/heif',
+	'.html': 'text/html',
+	'.jpeg': 'image/jpeg',
+	'.jpg': 'image/jpeg',
+	'.json': 'application/json',
+	'.m4a': 'audio/mp4',
+	'.md': 'text/markdown',
+	'.mkv': 'video/x-matroska',
+	'.mov': 'video/quicktime',
+	'.mp3': 'audio/mpeg',
+	'.mp4': 'video/mp4',
+	'.mpeg': 'video/mpeg',
+	'.mpg': 'video/mpeg',
+	'.ogg': 'audio/ogg',
+	'.opus': 'audio/ogg',
+	'.pdf': 'application/pdf',
+	'.png': 'image/png',
+	'.ppt': 'application/vnd.ms-powerpoint',
+	'.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+	'.rar': 'application/vnd.rar',
+	'.rtf': 'application/rtf',
+	'.svg': 'image/svg+xml',
+	'.tar': 'application/x-tar',
+	'.tif': 'image/tiff',
+	'.tiff': 'image/tiff',
+	'.tsv': 'text/tab-separated-values',
+	'.txt': 'text/plain',
+	'.wav': 'audio/wav',
+	'.webm': 'video/webm',
+	'.webp': 'image/webp',
+	'.xls': 'application/vnd.ms-excel',
+	'.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	'.xml': 'application/xml',
+	'.zip': 'application/zip',
+	'.7z': 'application/x-7z-compressed'
+};
+
+function startsWithBytes(bytes: Buffer, signature: readonly number[]): boolean {
+	return signature.every((value, index) => bytes[index] === value);
+}
+
+function detectedContentType(bytes: Buffer): string | undefined {
+	if (startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+		return 'image/png';
+	}
+	if (startsWithBytes(bytes, [0xff, 0xd8, 0xff])) return 'image/jpeg';
+	if (bytes.subarray(0, 6).toString('ascii') === 'GIF87a') return 'image/gif';
+	if (bytes.subarray(0, 6).toString('ascii') === 'GIF89a') return 'image/gif';
+	if (
+		bytes.subarray(0, 4).toString('ascii') === 'RIFF' &&
+		bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+	) {
+		return 'image/webp';
+	}
+	if (bytes.subarray(0, 5).toString('ascii') === '%PDF-') return 'application/pdf';
+	return undefined;
+}
+
+function inferAttachmentContentType(
+	declared: string | undefined,
+	fileName: string,
+	bytes: Buffer
+): string {
+	const normalized = declared?.trim().toLowerCase();
+	const concreteMime =
+		normalized &&
+		/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+(?:;[\x20-\x7E]*)?$/.test(normalized) &&
+		!normalized.split(';', 1)[0]?.endsWith('/*') &&
+		normalized !== 'application/octet-stream'
+			? normalized
+			: undefined;
+	if (concreteMime) return concreteMime;
+
+	const detected = detectedContentType(bytes);
+	if (detected) return detected;
+
+	const extensionType = MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()];
+	if (extensionType) return extensionType;
+
+	if (
+		startsWithBytes(bytes, [0x50, 0x4b, 0x03, 0x04]) ||
+		startsWithBytes(bytes, [0x50, 0x4b, 0x05, 0x06]) ||
+		startsWithBytes(bytes, [0x50, 0x4b, 0x07, 0x08])
+	) {
+		return 'application/zip';
+	}
+	return 'application/octet-stream';
+}
+
 // A process hosts at most one official account for each RyanAI connection.
 // A second account must not be silently merged into the same backend identity.
 const observedOpenClawAccounts = new Map<Channel, string>();
@@ -181,7 +282,18 @@ function resolveOpenClawChannel(candidates: readonly unknown[]): Channel {
 /** Resolve the connection that owns this OpenClaw host's account. */
 export function mapOpenClawConnectionId(channel: Channel): string {
 	const configured = process.env.BOT_GATEWAY_OPENCLAW_CONNECTION_ID?.trim();
-	if (configured && configured.startsWith(`${channel}-`)) return configured;
+	if (configured) {
+		if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(configured)) {
+			throw new EventValidationError(
+				'invalid_openclaw_connection',
+				'Configured OpenClaw connection id is invalid'
+			);
+		}
+		// The parent adapter creates one isolated OpenClaw process per connection.
+		// Its trusted environment value is therefore authoritative; connection ids
+		// may be bot-wechat-*, bot-qq-*, or a caller-supplied custom id.
+		return configured;
+	}
 	return `${channel}-default`;
 }
 
@@ -343,11 +455,13 @@ async function loadAttachments(
 		if (total > config.maxTotalAttachmentBytes) {
 			throw new EventValidationError('attachments_too_large', 'OpenClaw attachments are too large');
 		}
+		const bytes = await readFile(resolved);
+		const fileName = candidate.fileName || path.basename(resolved);
 		attachments.push({
 			id: candidate.id || `attachment-${attachments.length + 1}`,
-			fileName: candidate.fileName || path.basename(resolved),
-			contentType: candidate.contentType || 'application/octet-stream',
-			bytes: await readFile(resolved)
+			fileName,
+			contentType: inferAttachmentContentType(candidate.contentType, fileName, bytes),
+			bytes
 		});
 	}
 	return attachments;
@@ -357,6 +471,15 @@ function stableEventId(parts: readonly (string | number | undefined)[]): string 
 	return `openclaw-${createHash('sha256')
 		.update(parts.map((part) => String(part ?? '')).join('\u0000'))
 		.digest('hex')}`;
+}
+
+function normalizedEventId(
+	candidate: unknown,
+	fallbackParts: readonly (string | number | undefined)[]
+): string {
+	const value = text(candidate);
+	if (value && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(value)) return value;
+	return stableEventId(value ? [...fallbackParts, value] : fallbackParts);
 }
 
 function channelContextFacts(ctx: AgentContextLike): {
@@ -491,13 +614,13 @@ export async function normalizeMessageHook(
 	}
 
 	const occurredAt = event.timestamp || Date.now();
-	const eventId =
+	const rawEventId =
 		event.messageId ||
 		text(metadata.messageId) ||
 		text(metadata.message_id) ||
 		ctx.runId ||
-		event.runId ||
-		stableEventId([
+		event.runId;
+	const eventId = normalizedEventId(rawEventId, [
 			channel,
 			event.accountId || ctx.accountId,
 			conversationId,
@@ -694,8 +817,13 @@ export function normalizeBeforeAgentReply(
 	}
 
 	return {
-		eventId:
-			ctx.runId || stableEventId([channel, ctx.accountId, conversationId, senderId, cleanedBody]),
+		eventId: normalizedEventId(ctx.runId, [
+			channel,
+			ctx.accountId,
+			conversationId,
+			senderId,
+			cleanedBody
+		]),
 		occurredAt: Date.now(),
 		channel,
 		connectionId: mapOpenClawConnectionId(channel),

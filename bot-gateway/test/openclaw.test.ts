@@ -9,7 +9,7 @@ import type {
 	PluginHookInboundClaimEvent
 } from 'openclaw/plugin-sdk/plugin-entry';
 
-import { EventValidationError } from '../src/event.js';
+import { EventValidationError, validateEvent } from '../src/event.js';
 import { PendingMessageCache } from '../src/openclaw/cache.js';
 import {
 	mapOpenClawChannel,
@@ -97,9 +97,31 @@ test('OpenClaw channel aliases normalize to the unified channel values', () => {
 	assert.throws(() => mapOpenClawChannel('telegram'));
 });
 
-test('all official accounts map to the two fixed RyanAI connections', () => {
+test('official accounts use defaults when no isolated connection id is configured', () => {
 	assert.equal(mapOpenClawConnectionId('wechat'), 'wechat-default');
 	assert.equal(mapOpenClawConnectionId('qq'), 'qq-default');
+});
+
+test('isolated OpenClaw hosts preserve their authoritative RyanAI connection id', (t) => {
+	const previous = process.env.BOT_GATEWAY_OPENCLAW_CONNECTION_ID;
+	t.after(() => {
+		if (previous === undefined) delete process.env.BOT_GATEWAY_OPENCLAW_CONNECTION_ID;
+		else process.env.BOT_GATEWAY_OPENCLAW_CONNECTION_ID = previous;
+	});
+
+	process.env.BOT_GATEWAY_OPENCLAW_CONNECTION_ID =
+		'bot-wechat-7eb5523c-7ab2-4c58-82dc-129600bada86';
+	assert.equal(
+		mapOpenClawConnectionId('wechat'),
+		'bot-wechat-7eb5523c-7ab2-4c58-82dc-129600bada86'
+	);
+
+	process.env.BOT_GATEWAY_OPENCLAW_CONNECTION_ID =
+		'bot-qq-7eb5523c-7ab2-4c58-82dc-129600bada86';
+	assert.equal(
+		mapOpenClawConnectionId('qq'),
+		'bot-qq-7eb5523c-7ab2-4c58-82dc-129600bada86'
+	);
 });
 
 test('typed inbound_claim preserves QQ group and mention facts before whitelist checks', async () => {
@@ -153,6 +175,31 @@ test('global reply_dispatch normalizes ordinary QQ group turns before model reso
 	assert.equal(normalized.conversation.id, 'group-openid-42');
 	assert.equal(normalized.sender.id, 'member-openid-7');
 	assert.equal(normalized.message.mentionsBot, true);
+});
+
+test('global reply_dispatch hashes official QQ message ids with unsupported punctuation', async () => {
+	const officialId =
+		'ROBOT1.0_zV-VTDQEqwsknqVuqde01yLgOsrRfyg-FHU8tVRvECETboV7o0V9pt83vhnx.t7luWZIUQq2KSh4TpFW61yjLr3ngGb.Wl-sLP-ZQpRmBmM!';
+	const input = {
+		ctx: {
+			Provider: 'qqbot',
+			Surface: 'qqbot',
+			AccountId: 'default',
+			ChatType: 'private',
+			SenderId: 'member-openid-7',
+			RawBody: '真实 QQ 私聊消息',
+			MessageSid: officialId,
+			Timestamp: 1_786_285_200_000
+		}
+	};
+	const config = testConfig('unused');
+	const first = await normalizeReplyDispatch(input, config);
+	const second = await normalizeReplyDispatch(input, config);
+
+	assert.notEqual(first.eventId, officialId);
+	assert.match(first.eventId, /^openclaw-[a-f0-9]{64}$/);
+	assert.equal(second.eventId, first.eventId);
+	assert.doesNotThrow(() => validateEvent(first, config, first.occurredAt));
 });
 
 test('typed WeChat claim with a real non-default bot account still maps to wechat-default', async () => {
@@ -212,6 +259,74 @@ test('typed inbound_claim reads trusted standard mediaPath and rejects an untrus
 		(error: unknown) =>
 			error instanceof EventValidationError && error.code === 'untrusted_attachment_path'
 	);
+});
+
+test('typed WeChat image wildcard is replaced with the concrete MIME from file bytes', async (t) => {
+	const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'ryanai-openclaw-wechat-image-'));
+	t.after(async () => rm(fixtureRoot, { recursive: true, force: true }));
+	const imagePath = path.join(fixtureRoot, 'downloaded-image.png');
+	const png = Buffer.from([
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d
+	]);
+	await writeFile(imagePath, png);
+
+	const normalized = await normalizeInboundClaim(
+		{
+			...WECHAT_PRIVATE_CLAIM,
+			content: '',
+			messageId: 'weixin-message-image-wildcard',
+			metadata: {
+				...WECHAT_PRIVATE_CLAIM.metadata,
+				mediaPath: imagePath,
+				mediaType: 'image/*'
+			}
+		},
+		{ ...WECHAT_PRIVATE_CONTEXT, messageId: 'weixin-message-image-wildcard' },
+		testConfig(fixtureRoot, { attachmentRoots: [fixtureRoot] })
+	);
+
+	assert.equal(normalized.attachments.length, 1);
+	assert.equal(normalized.attachments[0]?.contentType, 'image/png');
+	assert.deepEqual(normalized.attachments[0]?.bytes, png);
+	assert.doesNotThrow(() => validateEvent(normalized, testConfig(fixtureRoot), normalized.occurredAt));
+});
+
+test('OpenClaw ordinary files infer concrete document types and preserve unknown binaries', async (t) => {
+	const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'ryanai-openclaw-files-'));
+	t.after(async () => rm(fixtureRoot, { recursive: true, force: true }));
+	const pdfPath = path.join(fixtureRoot, 'report.pdf');
+	const docxPath = path.join(fixtureRoot, 'minutes.docx');
+	const binaryPath = path.join(fixtureRoot, 'archive.bin');
+	await Promise.all([
+		writeFile(pdfPath, Buffer.from('%PDF-1.7\nfixture')),
+		writeFile(docxPath, Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2, 3])),
+		writeFile(binaryPath, Buffer.from([0, 1, 2, 3]))
+	]);
+
+	const normalized = await normalizeMessageHook(
+		{
+			...WECHAT_PRIVATE_CLAIM,
+			content: '请处理这些文件',
+			messageId: 'weixin-message-files',
+			mediaPaths: [pdfPath, docxPath, binaryPath],
+			mediaTypes: ['application/octet-stream', 'application/*']
+		},
+		WECHAT_PRIVATE_CONTEXT,
+		testConfig(fixtureRoot, { attachmentRoots: [fixtureRoot] })
+	);
+
+	assert.deepEqual(
+		normalized.attachments.map(({ fileName, contentType }) => ({ fileName, contentType })),
+		[
+			{ fileName: 'report.pdf', contentType: 'application/pdf' },
+			{
+				fileName: 'minutes.docx',
+				contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+			},
+			{ fileName: 'archive.bin', contentType: 'application/octet-stream' }
+		]
+	);
+	assert.doesNotThrow(() => validateEvent(normalized, testConfig(fixtureRoot), normalized.occurredAt));
 });
 
 test('message_received fallback recognizes QQ group targets and standard media arrays', async (t) => {

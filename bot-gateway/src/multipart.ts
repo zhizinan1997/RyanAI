@@ -16,9 +16,8 @@ function quote(value: string): string {
 	return value.replace(/["\\\r\n]/g, '_');
 }
 
-function asciiFileName(value: string): string {
-	const fallback = value.replace(/[^\x20-\x7E]/g, '_').slice(0, 160);
-	return quote(fallback || 'attachment.bin');
+function multipartFileName(value: string): string {
+	return quote(Array.from(value).slice(0, 160).join('') || 'attachment.bin');
 }
 
 export function buildMultipartBody(
@@ -38,10 +37,9 @@ export function buildMultipartBody(
 	append('\r\n');
 
 	for (const file of files) {
-		const encodedName = encodeURIComponent(file.fileName);
 		append(`--${boundary}\r\n`);
 		append(
-			`Content-Disposition: form-data; name="${quote(file.fieldName)}"; filename="${asciiFileName(file.fileName)}"; filename*=UTF-8''${encodedName}\r\n`
+			`Content-Disposition: form-data; name="${quote(file.fieldName)}"; filename="${multipartFileName(file.fileName)}"\r\n`
 		);
 		append(`Content-Type: ${file.contentType.replace(/[\r\n]/g, '')}\r\n`);
 		append('Content-Transfer-Encoding: binary\r\n\r\n');

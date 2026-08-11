@@ -38,7 +38,6 @@ export class OpenClawBridgeClient {
 				headers: {
 					...signed,
 					'content-type': multipart.contentType,
-					'content-length': multipart.body.length.toString(),
 					'x-ryanai-event-id': event.eventId,
 					accept: 'application/json'
 				},

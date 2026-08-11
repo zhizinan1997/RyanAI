@@ -204,7 +204,8 @@ export class OpenClawHost {
 				'--port',
 				String(this.config.openClawPort),
 				'--auth',
-				'none'
+				'none',
+				'--allow-unconfigured'
 			],
 			{
 				cwd: appRoot(),
@@ -250,9 +251,9 @@ export class OpenClawHost {
 	}
 
 	async stop(): Promise<void> {
-		const child = this.child;
-		this.child = undefined;
-		if (!child || child.exitCode !== null) return;
+			const child = this.child;
+			this.child = undefined;
+			if (!child || child.exitCode !== null) return;
 		child.kill('SIGTERM');
 		const exited = new Promise<boolean>((resolve) => {
 			child.once('exit', () => resolve(true));
@@ -261,7 +262,15 @@ export class OpenClawHost {
 			child.kill('SIGKILL');
 			await Promise.race([exited, wait(2_000)]);
 		}
-		this.detail = 'OpenClaw host is stopped';
+			this.detail = 'OpenClaw host is stopped';
+	}
+
+	async clearCredentials(): Promise<void> {
+		await this.stop();
+		this.credentials = {};
+		this.channelEnabled = { wechat: false, qq: false };
+		this.packageRoots = undefined;
+		this.detail = 'OpenClaw host credentials are cleared';
 	}
 
 	async restart(
@@ -300,13 +309,20 @@ export class OpenClawHost {
 			const summaryByChannel = firstRecord(payload.channels);
 			const summary = firstRecord(summaryByChannel?.[channelId]);
 			const running = bool(account?.running) || bool(summary?.running);
-			const connected = bool(account?.connected) || bool(summary?.connected) || running;
+			const lastError = text(account?.lastError) || text(summary?.lastError);
+			// The WeChat plugin exposes a long-poll monitor as `running` and does not
+			// include a separate `connected` flag. QQ exposes both fields, so retain
+			// its explicit probe while treating a healthy WeChat monitor as connected.
+			const connected =
+				bool(account?.connected) ||
+				bool(summary?.connected) ||
+				(channel === 'wechat' && running && !lastError);
 			return {
 				configured: bool(account?.configured) || bool(summary?.configured) || configured,
 				running,
 				connected,
 				accountId: text(account?.accountId) || text(summary?.accountId),
-				lastError: text(account?.lastError) || text(summary?.lastError)
+				lastError
 			};
 		} catch (error) {
 			this.logger.warn('OpenClaw channel status probe failed', {

@@ -44,6 +44,7 @@
 	import Connection from '$lib/components/chat/Settings/Tools/Connection.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
+	import QRCode from '$lib/components/common/QRCode.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -140,7 +141,7 @@
 		`${group.name} ${group.id}`.toLocaleLowerCase().includes(groupQuery.trim().toLocaleLowerCase())
 	);
 	$: filteredBindings = (adminBindings ?? []).filter((binding) =>
-		`${binding.display_name ?? ''} ${binding.external_user_id} ${binding.user_id} ${binding.channel}`
+		`${binding.display_name ?? ''} ${binding.user_name ?? ''} ${binding.user_username ?? ''} ${binding.user_email ?? ''} ${binding.external_user_id} ${binding.user_id} ${binding.channel}`
 			.toLocaleLowerCase()
 			.includes(bindingQuery.trim().toLocaleLowerCase())
 	);
@@ -156,11 +157,26 @@
 
 	const channelTitle = (channel: BotGatewayChannel) =>
 		$i18n.t(channel === 'wechat' ? 'WeChat' : 'QQ');
+	const auditActionTitle = (action?: string) =>
+		$i18n.t(
+			(
+				{
+					credentials_saved: 'Credentials saved',
+					login_started: 'Login started',
+					auto_bound: 'Automatically bound',
+					logged_out: 'Logged out'
+				} as Record<string, string>
+			)[action ?? ''] ??
+				action ??
+				'—'
+		);
 	const loginSucceeded = (state?: string) =>
 		['connected', 'confirmed', 'success'].includes(state ?? '');
 	const loginFinished = (state?: string) =>
 		loginSucceeded(state) ||
-		['expired', 'error', 'failed', 'cancelled', 'logged_out'].includes(state ?? '');
+		['expired', 'error', 'failed', 'cancelled', 'logged_out', 'degraded', 'unavailable'].includes(
+			state ?? ''
+		);
 
 	const statusLabel = (status?: string) => {
 		switch (status) {
@@ -168,6 +184,7 @@
 				return $i18n.t('Connected');
 			case 'connecting':
 			case 'pending':
+			case 'awaiting_scan':
 				return $i18n.t('Connecting');
 			case 'error':
 				return $i18n.t('Error');
@@ -244,7 +261,9 @@
 			toast.success($i18n.t('Bot policy saved.'));
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : $i18n.t('Failed to save bot policy.'));
-		} finally { botPolicyBusy = false; }
+		} finally {
+			botPolicyBusy = false;
+		}
 	};
 
 	const toggleBotConnection = async (connection: BotGatewayConnection, enabled: boolean) => {
@@ -313,15 +332,6 @@
 		loginSession = null;
 		loginLoading = false;
 	}
-
-	const normalizedQRCode = (value: string | null | undefined) => {
-		if (!value) return '';
-		if (/^(data:image\/|blob:|https?:\/\/)/i.test(value)) return value;
-		if (value.trimStart().startsWith('<svg')) {
-			return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(value)}`;
-		}
-		return `data:image/png;base64,${value}`;
-	};
 
 	const pollLoginState = async () => {
 		if (loginPollInFlight || !showLoginModal || !loginConnectionId) return;
@@ -679,11 +689,13 @@
 				{$i18n.t('Connected successfully.')}
 			</div>
 		{:else if loginSession?.qr_code}
-			<div class="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm dark:border-white/10">
-				<img
-					class="size-52"
-					src={normalizedQRCode(loginSession.qr_code)}
+			<div
+				class="size-56 rounded-2xl border border-gray-100 bg-white p-3 shadow-sm dark:border-white/10"
+			>
+				<QRCode
+					value={loginSession.qr_code}
 					alt={$i18n.t('{{channel}} login QR code', { channel: channelTitle(loginChannel) })}
+					size={208}
 				/>
 			</div>
 		{:else}
@@ -841,19 +853,63 @@
 					</div>
 
 					{#if userBotSettings}
-						<div class="rounded-xl border border-gray-100/80 bg-gray-50/30 p-3 dark:border-white/[0.06] dark:bg-white/[0.02]">
+						<div
+							class="rounded-xl border border-gray-100/80 bg-gray-50/30 p-3 dark:border-white/[0.06] dark:bg-white/[0.02]"
+						>
 							<div class="flex items-center justify-between gap-3">
-								<div><div class="text-xs font-medium text-gray-700 dark:text-gray-300">{$i18n.t('Enable messaging bots')}</div><div class="mt-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">{$i18n.t('Allow users to connect and use their own bot accounts.')}</div></div>
-								<Switch state={userBotSettings.enabled} ariaLabel={$i18n.t('Enable messaging bots')} on:change={(event: CustomEvent<boolean>) => updateUserBotPolicy({ enabled: event.detail })} />
+								<div>
+									<div class="text-xs font-medium text-gray-700 dark:text-gray-300">
+										{$i18n.t('Enable messaging bots')}
+									</div>
+									<div class="mt-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+										{$i18n.t('Allow users to connect and use their own bot accounts.')}
+									</div>
+								</div>
+								<Switch
+									state={userBotSettings.enabled}
+									ariaLabel={$i18n.t('Enable messaging bots')}
+									on:change={(event: CustomEvent<boolean>) =>
+										updateUserBotPolicy({ enabled: event.detail })}
+								/>
 							</div>
 							<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<div class="flex items-center justify-between rounded-lg border border-gray-100/70 px-2.5 py-2 dark:border-white/[0.06]"><span class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('QQ')}</span><Switch state={userBotSettings.qq_enabled} ariaLabel={$i18n.t('Enable QQ')} on:change={(event: CustomEvent<boolean>) => updateUserBotPolicy({ qq_enabled: event.detail })} /></div>
-								<div class="flex items-center justify-between rounded-lg border border-gray-100/70 px-2.5 py-2 dark:border-white/[0.06]"><span class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('WeChat')}</span><Switch state={userBotSettings.wechat_enabled} ariaLabel={$i18n.t('Enable WeChat')} on:change={(event: CustomEvent<boolean>) => updateUserBotPolicy({ wechat_enabled: event.detail })} /></div>
+								<div
+									class="flex items-center justify-between rounded-lg border border-gray-100/70 px-2.5 py-2 dark:border-white/[0.06]"
+								>
+									<span class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('QQ')}</span
+									><Switch
+										state={userBotSettings.qq_enabled}
+										ariaLabel={$i18n.t('Enable QQ')}
+										on:change={(event: CustomEvent<boolean>) =>
+											updateUserBotPolicy({ qq_enabled: event.detail })}
+									/>
+								</div>
+								<div
+									class="flex items-center justify-between rounded-lg border border-gray-100/70 px-2.5 py-2 dark:border-white/[0.06]"
+								>
+									<span class="text-xs text-gray-600 dark:text-gray-400">{$i18n.t('WeChat')}</span
+									><Switch
+										state={userBotSettings.wechat_enabled}
+										ariaLabel={$i18n.t('Enable WeChat')}
+										on:change={(event: CustomEvent<boolean>) =>
+											updateUserBotPolicy({ wechat_enabled: event.detail })}
+									/>
+								</div>
 							</div>
-							<label class="mt-3 block text-xs text-gray-600 dark:text-gray-400">{$i18n.t('Recommended bot model')}
-								<select class={inputClass} value={userBotSettings.recommended_model_id ?? ''} on:change={(event) => updateUserBotPolicy({ recommended_model_id: (event.currentTarget as HTMLSelectElement).value || null })}>
+							<label class="mt-3 block text-xs text-gray-600 dark:text-gray-400"
+								>{$i18n.t('Recommended bot model')}
+								<select
+									class={inputClass}
+									value={userBotSettings.recommended_model_id ?? ''}
+									on:change={(event) =>
+										updateUserBotPolicy({
+											recommended_model_id: (event.currentTarget as HTMLSelectElement).value || null
+										})}
+								>
 									<option value="">{$i18n.t('No recommendation')}</option>
-									{#each $models ?? [] as model}<option value={model.id}>{model.name || model.id}</option>{/each}
+									{#each $models ?? [] as model}<option value={model.id}
+											>{model.name || model.id}</option
+										>{/each}
 								</select>
 							</label>
 						</div>
@@ -862,155 +918,157 @@
 					{/if}
 
 					<div class="hidden">
-					{#if botConnections === null}
-						<div class="flex h-24 items-center justify-center">
-							<Spinner className="size-5" />
-						</div>
-					{:else}
-						{#if botLoadError}
-							<div
-								class="flex items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300"
-							>
-								<span>{$i18n.t('Bot Gateway API is unavailable.')}</span>
-								<button
-									type="button"
-									class="underline underline-offset-2"
-									on:click={() => loadBotConnections(true)}
-								>
-									{$i18n.t('Retry')}
-								</button>
+						{#if botConnections === null}
+							<div class="flex h-24 items-center justify-center">
+								<Spinner className="size-5" />
 							</div>
-						{/if}
-
-						<div class="grid grid-cols-1 gap-2.5 xl:grid-cols-2">
-							{#each botChannels as definition (definition.channel)}
-								{@const connection = getConnection(definition.channel)}
+						{:else}
+							{#if botLoadError}
 								<div
-									class="rounded-xl border border-gray-100/80 bg-gray-50/30 p-3 dark:border-white/[0.06] dark:bg-white/[0.02]"
+									class="flex items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300"
 								>
-									<div class="flex items-start justify-between gap-3">
-										<div class="flex min-w-0 items-center gap-2.5">
-											<div
-												class="flex size-8 shrink-0 items-center justify-center rounded-xl {definition.channel ===
-												'wechat'
-													? 'bg-emerald-500 text-white'
-													: 'bg-blue-500 text-white'} text-sm font-semibold"
-											>
-												{definition.channel === 'wechat' ? '微' : 'Q'}
-											</div>
-											<div class="min-w-0">
-												<div class="flex items-center gap-1.5">
-													<div
-														class="truncate text-xs font-medium text-gray-800 dark:text-gray-200"
-													>
-																{$i18n.t(definition.title)}
+									<span>{$i18n.t('Bot Gateway API is unavailable.')}</span>
+									<button
+										type="button"
+										class="underline underline-offset-2"
+										on:click={() => loadBotConnections(true)}
+									>
+										{$i18n.t('Retry')}
+									</button>
+								</div>
+							{/if}
+
+							<div class="grid grid-cols-1 gap-2.5 xl:grid-cols-2">
+								{#each botChannels as definition (definition.channel)}
+									{@const connection = getConnection(definition.channel)}
+									<div
+										class="rounded-xl border border-gray-100/80 bg-gray-50/30 p-3 dark:border-white/[0.06] dark:bg-white/[0.02]"
+									>
+										<div class="flex items-start justify-between gap-3">
+											<div class="flex min-w-0 items-center gap-2.5">
+												<div
+													class="flex size-8 shrink-0 items-center justify-center rounded-xl {definition.channel ===
+													'wechat'
+														? 'bg-emerald-500 text-white'
+														: 'bg-blue-500 text-white'} text-sm font-semibold"
+												>
+													{definition.channel === 'wechat' ? '微' : 'Q'}
+												</div>
+												<div class="min-w-0">
+													<div class="flex items-center gap-1.5">
+														<div
+															class="truncate text-xs font-medium text-gray-800 dark:text-gray-200"
+														>
+															{$i18n.t(definition.title)}
+														</div>
+														<span
+															class="rounded-full px-1.5 py-0.5 text-[0.625rem] {statusClass(
+																connection?.status
+															)}"
+														>
+															{statusLabel(connection?.status)}
+														</span>
 													</div>
-													<span
-														class="rounded-full px-1.5 py-0.5 text-[0.625rem] {statusClass(
-															connection?.status
-														)}"
-													>
-														{statusLabel(connection?.status)}
-													</span>
-												</div>
-												<div class="truncate text-[0.6875rem] text-gray-400 dark:text-gray-600">
-													{connection?.account_name ||
-														connection?.account_id ||
-														$i18n.t('No account connected')}
+													<div class="truncate text-[0.6875rem] text-gray-400 dark:text-gray-600">
+														{connection?.account_name ||
+															connection?.account_id ||
+															$i18n.t('No account connected')}
+													</div>
 												</div>
 											</div>
+
+											{#if connection}
+												<div class={botBusy[`toggle:${definition.channel}`] ? 'opacity-50' : ''}>
+													<Switch
+														state={connection.enabled}
+														ariaLabel={$i18n.t('Enable {{channel}} bot', {
+															channel: $i18n.t(definition.title)
+														})}
+														on:change={(event: CustomEvent<boolean>) =>
+															toggleBotConnection(connection, event.detail)}
+													/>
+												</div>
+											{/if}
 										</div>
 
-										{#if connection}
-											<div class={botBusy[`toggle:${definition.channel}`] ? 'opacity-50' : ''}>
-												<Switch
-													state={connection.enabled}
-													ariaLabel={$i18n.t('Enable {{channel}} bot', {
-																channel: $i18n.t(definition.title)
-													})}
-													on:change={(event: CustomEvent<boolean>) =>
-														toggleBotConnection(connection, event.detail)}
-												/>
+										<p
+											class="mt-2 text-[0.6875rem] leading-relaxed text-gray-400 dark:text-gray-600"
+										>
+											{$i18n.t(definition.description)}
+										</p>
+
+										{#if definition.channel === 'qq'}
+											<div class="mt-2 text-[0.6875rem] text-gray-500 dark:text-gray-500">
+												{connection?.credentials_configured
+													? $i18n.t('App credentials configured')
+													: $i18n.t('App credentials required')}
 											</div>
 										{/if}
-									</div>
 
-									<p class="mt-2 text-[0.6875rem] leading-relaxed text-gray-400 dark:text-gray-600">
-																{$i18n.t(definition.description)}
-									</p>
+										{#if connection?.last_error}
+											<div
+												class="mt-2 line-clamp-2 rounded-lg bg-red-50 px-2 py-1.5 text-[0.6875rem] text-red-600 dark:bg-red-950/20 dark:text-red-300"
+											>
+												{connection.last_error}
+											</div>
+										{/if}
 
-									{#if definition.channel === 'qq'}
-										<div class="mt-2 text-[0.6875rem] text-gray-500 dark:text-gray-500">
-											{connection?.credentials_configured
-												? $i18n.t('App credentials configured')
-												: $i18n.t('App credentials required')}
-										</div>
-									{/if}
+										<div class="mt-3 flex flex-wrap gap-1.5">
+											{#if definition.channel === 'qq'}
+												<button
+													type="button"
+													class={secondaryButtonClass}
+													disabled={!connection}
+													on:click={() => connection && openQQCredentials(connection)}
+												>
+													{connection?.credentials_configured
+														? $i18n.t('Replace credentials')
+														: $i18n.t('Configure credentials')}
+												</button>
+											{/if}
 
-									{#if connection?.last_error}
-										<div
-											class="mt-2 line-clamp-2 rounded-lg bg-red-50 px-2 py-1.5 text-[0.6875rem] text-red-600 dark:bg-red-950/20 dark:text-red-300"
-										>
-											{connection.last_error}
-										</div>
-									{/if}
-
-									<div class="mt-3 flex flex-wrap gap-1.5">
-										{#if definition.channel === 'qq'}
 											<button
 												type="button"
 												class={secondaryButtonClass}
 												disabled={!connection}
-												on:click={() => connection && openQQCredentials(connection)}
+												on:click={() => connection && openLogin(connection)}
 											>
-												{connection?.credentials_configured
-													? $i18n.t('Replace credentials')
-													: $i18n.t('Configure credentials')}
+												{connection?.status === 'connected'
+													? $i18n.t('Log in again')
+													: $i18n.t('QR login')}
 											</button>
-										{/if}
 
-										<button
-											type="button"
-											class={secondaryButtonClass}
-											disabled={!connection}
-											on:click={() => connection && openLogin(connection)}
-										>
-											{connection?.status === 'connected'
-												? $i18n.t('Log in again')
-												: $i18n.t('QR login')}
-										</button>
+											<button
+												type="button"
+												class={secondaryButtonClass}
+												disabled={!connection || botBusy[`reconnect:${definition.channel}`]}
+												on:click={() => connection && reconnect(connection)}
+											>
+												{$i18n.t('Reconnect')}
+											</button>
 
-										<button
-											type="button"
-											class={secondaryButtonClass}
-											disabled={!connection || botBusy[`reconnect:${definition.channel}`]}
-											on:click={() => connection && reconnect(connection)}
-										>
-											{$i18n.t('Reconnect')}
-										</button>
+											<button
+												type="button"
+												class={secondaryButtonClass}
+												disabled={!connection}
+												on:click={() => connection && openGroups(connection)}
+											>
+												{$i18n.t('Group allowlist')}
+											</button>
 
-										<button
-											type="button"
-											class={secondaryButtonClass}
-											disabled={!connection}
-											on:click={() => connection && openGroups(connection)}
-										>
-											{$i18n.t('Group allowlist')}
-										</button>
-
-										<button
-											type="button"
-											class="{secondaryButtonClass} hover:border-red-200 hover:text-red-600 dark:hover:border-red-900 dark:hover:text-red-300"
-											disabled={!connection || botBusy[`logout:${definition.channel}`]}
-											on:click={() => connection && requestLogout(connection)}
-										>
-											{$i18n.t('Log out')}
-										</button>
+											<button
+												type="button"
+												class="{secondaryButtonClass} hover:border-red-200 hover:text-red-600 dark:hover:border-red-900 dark:hover:text-red-300"
+												disabled={!connection || botBusy[`logout:${definition.channel}`]}
+												on:click={() => connection && requestLogout(connection)}
+											>
+												{$i18n.t('Log out')}
+											</button>
+										</div>
 									</div>
-								</div>
-							{/each}
-						</div>
-					{/if}
+								{/each}
+							</div>
+						{/if}
 					</div>
 
 					<div class="mt-1 border-t border-gray-100/80 pt-3 dark:border-white/[0.06]">
@@ -1064,7 +1122,7 @@
 										<div class="min-w-0">
 											<div class="flex items-center gap-1.5">
 												<div class="truncate text-xs text-gray-700 dark:text-gray-300">
-													{binding.display_name || binding.external_user_id}
+													{binding.user_name || binding.user_username || binding.user_email || binding.user_id}
 												</div>
 												<span
 													class="rounded-full px-1.5 py-0.5 text-[0.625rem] {binding.blocked
@@ -1083,7 +1141,10 @@
 											<div
 												class="truncate font-mono text-[0.6875rem] text-gray-400 dark:text-gray-600"
 											>
-												{channelTitle(binding.channel)} · {binding.external_user_id} · {binding.user_id}
+												{#if binding.user_username || binding.user_email}
+													{$i18n.t('Ryan AI account')}: {binding.user_username || binding.user_email} · {$i18n.t('Nickname')}: {binding.user_name || '—'}<br />
+												{/if}
+												{channelTitle(binding.channel)} · {binding.external_user_id} · {$i18n.t('User ID')}: {binding.user_id}
 											</div>
 										</div>
 										<button
@@ -1113,14 +1174,40 @@
 
 			<AdminSettingSection title={$i18n.t('Binding audit history')}>
 				<div class="flex items-center justify-between gap-3">
-					<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">{$i18n.t('Review user-owned bot connection and binding events.')}</div>
-					<button type="button" class={secondaryButtonClass} on:click={loadUserBotPolicy}>{$i18n.t('Refresh')}</button>
+					<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
+						{$i18n.t('Review user-owned bot connection and binding events.')}
+					</div>
+					<button type="button" class={secondaryButtonClass} on:click={loadUserBotPolicy}
+						>{$i18n.t('Refresh')}</button
+					>
 				</div>
-				<input class="mt-2 {inputClass}" type="search" bind:value={auditQuery} placeholder={$i18n.t('Search audit history')} />
-				<div class="mt-2 max-h-48 overflow-y-auto rounded-xl border border-gray-100/80 px-3 dark:border-white/[0.06]">
+				<input
+					class="mt-2 {inputClass}"
+					type="search"
+					bind:value={auditQuery}
+					placeholder={$i18n.t('Search audit history')}
+				/>
+				<div
+					class="mt-2 max-h-48 overflow-y-auto rounded-xl border border-gray-100/80 px-3 dark:border-white/[0.06]"
+				>
 					{#each filteredAudit as record (record.id)}
-						<div class="border-b border-gray-100 py-2 text-[0.6875rem] last:border-b-0 dark:border-white/[0.05]"><div class="flex justify-between gap-2"><span class="font-medium text-gray-700 dark:text-gray-300">{record.action}</span><span class="text-gray-400">{record.channel ?? '—'}</span></div><div class="mt-0.5 font-mono text-gray-400 dark:text-gray-600">{record.user_id ?? '—'} · {record.account_id ?? '—'}</div></div>
-					{:else}<div class="py-4 text-xs text-gray-400 dark:text-gray-600">{$i18n.t('No audit records found.')}</div>{/each}
+						<div
+							class="border-b border-gray-100 py-2 text-[0.6875rem] last:border-b-0 dark:border-white/[0.05]"
+						>
+							<div class="flex justify-between gap-2">
+								<span class="font-medium text-gray-700 dark:text-gray-300"
+									>{auditActionTitle(record.action)}</span
+								><span class="text-gray-400"
+									>{record.channel ? channelTitle(record.channel) : '—'}</span
+								>
+							</div>
+							<div class="mt-0.5 font-mono text-gray-400 dark:text-gray-600">
+								{record.user_id ?? '—'} · {record.account_id ?? '—'}
+							</div>
+						</div>
+					{:else}<div class="py-4 text-xs text-gray-400 dark:text-gray-600">
+							{$i18n.t('No audit records found.')}
+						</div>{/each}
 				</div>
 			</AdminSettingSection>
 
