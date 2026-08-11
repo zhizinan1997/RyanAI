@@ -1,5 +1,5 @@
 import type { GatewayConfig } from '../config.js';
-import { buildEventMultipart } from '../ryanai-client.js';
+import { buildEventMultipart, readResponseTextLimited } from '../ryanai-client.js';
 import { signRequest } from '../security/hmac.js';
 import type { GatewayInboundEvent, GatewayReply } from '../types.js';
 
@@ -61,12 +61,9 @@ export class OpenClawBridgeClient {
 		}
 		let raw: string;
 		try {
-			raw = await response.text();
+			raw = await readResponseTextLimited(response, 1_048_576);
 		} finally {
 			clearTimeout(timer);
-		}
-		if (Buffer.byteLength(raw, 'utf8') > 1_048_576) {
-			throw new Error('bridge_response_too_large');
 		}
 		const parsed = JSON.parse(raw) as BridgeResponse;
 		if (

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.11] - 2026-08-11
+
+### Fixed
+
+- Serialized bot conversations across uvicorn workers with PostgreSQL advisory locks and returned a retryable conflict when a conversation is busy.
+- Prevented stale event leases from allowing duplicate model turns and validated persisted reply recovery against the owning user.
+- Restricted private user-owned bot events to the trusted external identity and kept bot chat sequence numbers unique after deletions.
+- Hardened OpenClaw credential handling for corrupt files and improved cancellation, media URL, and background credit handling.
+
 ## [0.11.0.10] - 2026-08-11
 
 ### Fixed

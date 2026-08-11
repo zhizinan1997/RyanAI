@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import json
+import os
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -30,6 +31,18 @@ from open_webui.models.chats import Chat, Chats
 from open_webui.models.users import User
 from sqlalchemy import Column, String, Table, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+
+def _enabled_gateway_policy() -> AsyncMock:
+    """Both channels switched on, so router tests reach the logic they assert."""
+    return AsyncMock(
+        return_value={
+            'enabled': True,
+            'qq_enabled': True,
+            'wechat_enabled': True,
+            'recommended_model_id': None,
+        }
+    )
 
 
 class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
@@ -151,12 +164,29 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
             )
         self.assertEqual(count, 1)
 
-    async def test_personal_connection_auto_binds_its_first_private_identity(self):
+    async def test_personal_connection_only_auto_binds_the_scanned_owner_identity(self):
         now = int(time.time())
         async with self.sessions() as session:
             session.add(
                 BotGatewayConnection(
                     id='wechat-user-1',
+                    channel='wechat',
+                    name='WeChat',
+                    enabled=True,
+                    status='connected',
+                    credentials_configured=True,
+                    owner_user_id='user-1',
+                    config={'trusted_external_user_id': 'wechat-identity'},
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            # Without the identity the QR login returned there is nobody to trust,
+            # so a personal bot must refuse to bind rather than take the first
+            # stranger who direct-messages it.
+            session.add(
+                BotGatewayConnection(
+                    id='wechat-user-2',
                     channel='wechat',
                     name='WeChat',
                     enabled=True,
@@ -186,6 +216,13 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
                 'wechat-user-1',
                 'different-identity',
                 display_name='Unexpected User',
+            )
+        )
+        self.assertIsNone(
+            await self.gateway.ensure_owner_binding(
+                'wechat-user-2',
+                'first-stranger',
+                display_name='Stranger',
             )
         )
 
@@ -400,6 +437,32 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
                 2,
             )
 
+    async def test_bot_chat_sequence_never_repeats_after_a_same_day_chat_is_deleted(self):
+        day_start, day_end = 1_754_928_000, 1_755_014_400
+        async with self.sessions() as session:
+            session.add_all(
+                [
+                    Chat(
+                        id=f'qq-chat-{index}', user_id='user-1',
+                        title=f'🤖QQ-20260811-{index:03d}',
+                        chat={'title': f'🤖QQ-20260811-{index:03d}'},
+                        meta={'source': 'bot_gateway', 'channel': 'qq'},
+                        created_at=day_start + index, updated_at=day_start + index,
+                    )
+                    for index in (1, 2, 3)
+                ]
+            )
+            await session.commit()
+
+            await session.delete(await session.get(Chat, 'qq-chat-2'))
+            await session.commit()
+
+            # A row count would hand out 003 again and collide with the surviving chat.
+            self.assertEqual(
+                await Chats.get_next_bot_chat_sequence('user-1', 'qq', day_start, day_end, db=session),
+                4,
+            )
+
 
 class BotGatewayMigrationTests(TestCase):
     def test_production_revision_is_connected_to_the_bot_gateway_chain(self):
@@ -470,6 +533,101 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         self.assertEqual(
             self.gateway_router.format_bot_chat_title('qq', created_at, 2),
             '🤖QQ-20260811-002',
+        )
+
+    async def test_conversation_lock_skips_the_advisory_lock_outside_postgresql(self):
+        opened = []
+
+        @asynccontextmanager
+        async def sqlite_session():
+            session = SimpleNamespace(
+                bind=SimpleNamespace(dialect=SimpleNamespace(name='sqlite')),
+                scalar=AsyncMock(),
+                execute=AsyncMock(),
+                commit=AsyncMock(),
+            )
+            opened.append(session)
+            yield session
+
+        with (
+            patch.object(self.gateway_router, 'get_async_db', sqlite_session),
+            patch.object(self.gateway_router, 'UVICORN_WORKERS', 4),
+        ):
+            async with self.gateway_router._conversation_lock('conversation-key'):
+                pass
+
+        self.assertEqual(len(opened), 1)
+        opened[0].scalar.assert_not_awaited()
+
+    async def test_conversation_lock_holds_and_releases_a_postgres_advisory_lock(self):
+        statements = []
+        session = SimpleNamespace(
+            bind=SimpleNamespace(dialect=SimpleNamespace(name='postgresql')),
+            commit=AsyncMock(),
+        )
+
+        async def scalar(statement, parameters):
+            statements.append((str(statement), parameters))
+            return True
+
+        async def execute(statement, parameters):
+            statements.append((str(statement), parameters))
+
+        session.scalar = scalar
+        session.execute = execute
+
+        @asynccontextmanager
+        async def postgres_session():
+            yield session
+
+        with (
+            patch.object(self.gateway_router, 'get_async_db', postgres_session),
+            patch.object(self.gateway_router, 'UVICORN_WORKERS', 4),
+        ):
+            async with self.gateway_router._conversation_lock('conversation-key'):
+                self.assertEqual(len(statements), 1)
+
+        self.assertEqual(len(statements), 2)
+        self.assertIn('pg_try_advisory_lock', statements[0][0])
+        self.assertIn('pg_advisory_unlock', statements[1][0])
+        expected_key = self.gateway_router._advisory_lock_key('conversation-key')
+        self.assertEqual(statements[0][1], {'key': expected_key})
+        self.assertEqual(statements[1][1], {'key': expected_key})
+        self.assertGreaterEqual(expected_key, -(2**63))
+        self.assertLess(expected_key, 2**63)
+
+    async def test_conversation_lock_times_out_while_another_holder_keeps_it(self):
+        async def hold(started, release):
+            async with self.gateway_router._conversation_lock('busy-key'):
+                started.set()
+                await release.wait()
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        holder = asyncio.create_task(hold(started, release))
+        await started.wait()
+        try:
+            with self.assertRaises(self.gateway_router._ConversationLockTimeoutError):
+                async with self.gateway_router._conversation_lock('busy-key', timeout=0.05):
+                    pass
+        finally:
+            release.set()
+            await holder
+
+    def test_bot_media_url_uses_the_mounted_api_v1_route(self):
+        with patch.dict(
+            os.environ,
+            {
+                'BOT_GATEWAY_HMAC_SECRET': 'a' * 32,
+                'BOT_GATEWAY_PUBLIC_BASE_URL': 'https://chat.example.test',
+            },
+        ):
+            media_url = self.gateway_router._media_url('file-id', 'user-id')
+
+        self.assertTrue(
+            media_url.startswith(
+                'https://chat.example.test/api/v1/internal/bot-gateway/media/'
+            )
         )
 
     def test_bot_commands_accept_chinese_aliases_and_arguments(self):
@@ -745,6 +903,7 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
             status='connected',
             credentials_configured=True,
             owner_user_id='user-1',
+            config={'trusted_external_user_id': 'wechat-identity'},
             created_at=now,
             updated_at=now,
         )
@@ -775,6 +934,7 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
                 '_verify_internal_request',
                 AsyncMock(return_value=(event_record.request_nonce, 'hash', b'')),
             ),
+            patch.object(self.gateway_router, '_gateway_policy', _enabled_gateway_policy()),
             patch.object(self.gateway_router.BotGateway, 'claim_request_nonce', AsyncMock(return_value=True)),
             patch.object(self.gateway_router.BotGateway, 'cleanup_expired_records', AsyncMock(return_value={})),
             patch.object(self.gateway_router.BotGateway, 'get_connection', AsyncMock(return_value=connection)),
@@ -794,6 +954,71 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         self.assertIs(handle_command.await_args.args[2], binding)
         self.assertEqual(response['reply']['text'], '已自动绑定')
         self.assertFalse(self.gateway_router._conversation_locks)
+
+    async def test_personal_private_message_from_an_untrusted_sender_is_ignored(self):
+        now = int(time.time())
+        payload = {
+            'version': '1.0',
+            'event_id': 'personal-private-stranger',
+            'occurred_at': dt.datetime.now(dt.UTC).isoformat(),
+            'channel': 'wechat',
+            'connection_id': 'wechat-user-1',
+            'conversation': {'type': 'private', 'id': 'stranger-identity'},
+            'sender': {'id': 'stranger-identity', 'name': 'Stranger'},
+            'message': {'text': '/状态'},
+            'attachments': [],
+        }
+        request = SimpleNamespace(form=AsyncMock(return_value={'event': json.dumps(payload)}))
+        connection = BotGatewayConnectionModel(
+            id='wechat-user-1',
+            channel='wechat',
+            name='WeChat',
+            enabled=True,
+            status='connected',
+            credentials_configured=True,
+            owner_user_id='user-1',
+            config={'trusted_external_user_id': 'wechat-identity'},
+            created_at=now,
+            updated_at=now,
+        )
+        event_record = BotGatewayEventModel(
+            id='personal-private-stranger-row',
+            connection_id=connection.id,
+            event_id=payload['event_id'],
+            request_hash='c' * 64,
+            request_nonce='personal-private-nonce-000002',
+            status='processing',
+            conversation_type='private',
+            external_conversation_id='stranger-identity',
+            external_sender_id='stranger-identity',
+            attempts=1,
+            received_at=now,
+            updated_at=now,
+        )
+        auto_bind = AsyncMock()
+        handle_command = AsyncMock()
+        with (
+            patch.object(
+                self.gateway_router,
+                '_verify_internal_request',
+                AsyncMock(return_value=(event_record.request_nonce, 'hash', b'')),
+            ),
+            patch.object(self.gateway_router, '_gateway_policy', _enabled_gateway_policy()),
+            patch.object(self.gateway_router.BotGateway, 'claim_request_nonce', AsyncMock(return_value=True)),
+            patch.object(self.gateway_router.BotGateway, 'cleanup_expired_records', AsyncMock(return_value={})),
+            patch.object(self.gateway_router.BotGateway, 'get_connection', AsyncMock(return_value=connection)),
+            patch.object(self.gateway_router.BotGateway, 'claim_event', AsyncMock(return_value=(event_record, True))),
+            patch.object(self.gateway_router.BotGateway, 'get_enabled_binding', AsyncMock(return_value=None)),
+            patch.object(self.gateway_router.BotGateway, 'ensure_owner_binding', auto_bind),
+            patch.object(self.gateway_router.BotGateway, 'complete_event', AsyncMock(return_value=True)),
+            patch.object(self.gateway_router, '_handle_command', handle_command),
+        ):
+            response = await self.gateway_router.receive_event(request, db=None)
+
+        auto_bind.assert_not_awaited()
+        handle_command.assert_not_awaited()
+        self.assertTrue(response['status'] == 'ignored')
+        self.assertIsNone(response['reply'])
 
     async def test_logout_clears_backend_credential_flag_after_sidecar_success(self):
         now = int(time.time())

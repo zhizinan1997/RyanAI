@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import type { GatewayConfig } from '../config.js';
 import { connectionIdFor, parseMockEvent } from '../event.js';
 import type { RyanAiGateway } from '../gateway.js';
@@ -60,7 +62,7 @@ export class MockAdapter implements MockInjectableAdapter {
 	async createConnection(input: CreateConnectionInput): Promise<ConnectionSnapshot> {
 		if (input.channel !== 'wechat' && input.channel !== 'qq') throw new AdapterError('invalid_channel', 400);
 		if (!input.ownerUserId?.trim()) throw new AdapterError('owner_user_id_required', 400);
-		const id = input.id || `${input.channel}-${Math.random().toString(36).slice(2, 12)}`;
+		const id = input.id || `${input.channel}-${randomBytes(8).toString('base64url')}`;
 		if (this.state.getConnection(id)) throw new AdapterError('connection_already_exists', 409);
 		const snapshot: ConnectionSnapshot = {
 			id, channel: input.channel, ownerUserId: input.ownerUserId, enabled: input.enabled !== false,

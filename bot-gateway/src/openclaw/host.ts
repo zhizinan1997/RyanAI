@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { copyFile, cp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
@@ -9,6 +10,7 @@ import path from 'node:path';
 import type { GatewayConfig } from '../config.js';
 import { Logger, safeErrorFields } from '../logger.js';
 import type { Channel } from '../types.js';
+import { withOpenClawEnv } from './env-mutex.js';
 
 const PINNED_PACKAGES = {
 	openclaw: '2026.7.1-2',
@@ -28,6 +30,7 @@ export interface OpenClawCredentialSet {
 	qq?: {
 		appId: string;
 		appSecret: string;
+		userOpenid?: string;
 	};
 }
 
@@ -42,6 +45,17 @@ export interface OpenClawAccountStatus {
 interface PackageInfo {
 	root: string;
 	version: string;
+}
+
+/**
+ * Shape of the singleton lock the pinned OpenClaw gateway writes before it
+ * binds its port. It records the pid that owns a given config path, which is
+ * what lets the parent prove a reachable port belongs to the child it spawned.
+ */
+interface GatewayLockPayload {
+	pid?: number;
+	port?: number;
+	configPath?: string;
 }
 
 function appRoot(): string {
@@ -149,12 +163,14 @@ export class OpenClawHost {
 	private commandTail: Promise<void> = Promise.resolve();
 
 	readonly configPath: string;
+	private readonly tempDir: string;
 
 	constructor(
 		private readonly config: GatewayConfig,
 		private readonly logger: Logger
 	) {
 		this.configPath = path.join(config.openClawStateDir, 'openclaw.json');
+		this.tempDir = path.join(config.openClawStateDir, 'tmp');
 	}
 
 	isRunning(): boolean {
@@ -170,12 +186,16 @@ export class OpenClawHost {
 		channelEnabled: Record<Channel, boolean>
 	): Promise<void> {
 		if (this.isRunning()) throw new Error('OpenClaw host is already running');
+		if (await canConnect(this.config.openClawPort)) {
+			throw new Error(`OpenClaw port ${this.config.openClawPort} is already in use`);
+		}
 		this.credentials = structuredClone(credentials);
 		this.channelEnabled = { ...channelEnabled };
 		this.packageRoots = await this.verifyPackages();
 		await Promise.all([
 			mkdir(this.config.openClawStateDir, { recursive: true, mode: 0o700 }),
 			mkdir(this.config.openClawHomeDir, { recursive: true, mode: 0o700 }),
+			mkdir(this.tempDir, { recursive: true, mode: 0o700 }),
 			mkdir(path.join(this.config.openClawStateDir, 'media'), {
 				recursive: true,
 				mode: 0o700
@@ -186,12 +206,18 @@ export class OpenClawHost {
 			})
 			]);
 
-			await this.seedManagedWeixinProject();
-			process.env.OPENCLAW_STATE_DIR = this.config.openClawStateDir;
-		process.env.OPENCLAW_CONFIG_PATH = this.configPath;
-		await this.materializeWeixinCredentials(credentials.wechat);
-		await this.clearQqCredentialBackups();
-		await this.writeConfig();
+		await this.seedManagedWeixinProject();
+		await withOpenClawEnv(
+			{
+				OPENCLAW_STATE_DIR: this.config.openClawStateDir,
+				OPENCLAW_CONFIG_PATH: this.configPath
+			},
+			async () => {
+				await this.materializeWeixinCredentials(credentials.wechat);
+				await this.clearQqCredentialBackups();
+				await this.writeConfig();
+			}
+		);
 
 		const openClawEntry = path.join(this.packageRoots.openclaw!.root, 'openclaw.mjs');
 		const child = spawn(
@@ -216,6 +242,7 @@ export class OpenClawHost {
 		);
 		this.child = child;
 		let stderrTail = '';
+		let startupError: Error | undefined;
 		child.stderr.setEncoding('utf8');
 		child.stderr.on('data', (chunk: string) => {
 			stderrTail = `${stderrTail}${chunk}`.slice(-8_192);
@@ -232,19 +259,36 @@ export class OpenClawHost {
 			});
 		});
 		child.once('error', (error) => {
+			if (this.child === child) this.child = undefined;
+			startupError = error;
 			this.detail = 'OpenClaw host process failed';
 			this.logger.error('OpenClaw host process failed', safeErrorFields(error));
 		});
 
 		const deadline = Date.now() + this.config.openClawStartupTimeoutMs;
 		while (Date.now() < deadline) {
+			if (startupError) throw startupError;
 			if (child.exitCode !== null) {
 				const startupDetail = stderrTail.trim().slice(-4_096);
 				throw new Error(startupDetail || 'OpenClaw host exited during startup');
 			}
 			if (await canConnect(this.config.openClawPort)) {
-				this.detail = 'OpenClaw host is running; RyanAI owns all message inference';
-				return;
+				// A reachable port is not proof of ownership: an orphaned or foreign
+				// gateway can hold it while this child loses the bind and exits. Only
+				// treat the host as started once the gateway lock names this child.
+				const owner = await this.readGatewayLockOwner();
+				if (owner?.pid !== undefined) {
+					if (owner.pid !== child.pid) {
+						throw new Error(
+							`OpenClaw port ${this.config.openClawPort} is owned by another gateway process`
+						);
+					}
+					if (owner.port !== undefined && owner.port !== this.config.openClawPort) {
+						throw new Error('OpenClaw host bound an unexpected port');
+					}
+					this.detail = 'OpenClaw host is running; RyanAI owns all message inference';
+					return;
+				}
 			}
 			await wait(250);
 		}
@@ -343,8 +387,39 @@ export class OpenClawHost {
 			}
 	}
 
-	private async verifyPackages(): Promise<Record<string, PackageInfo>> {
-		const entries = await Promise.all(
+	/**
+	 * Path of the singleton lock the pinned OpenClaw gateway writes for this
+	 * connection's config. `childEnvironment()` pins the child's temp directory,
+	 * so the parent derives exactly the path the child uses.
+	 */
+	private gatewayLockPath(): string {
+		const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+		const digest = createHash('sha256').update(this.configPath).digest('hex').slice(0, 8);
+		return path.join(
+			this.tempDir,
+			uid === undefined ? 'openclaw' : `openclaw-${uid}`,
+			`gateway.${digest}.lock`
+		);
+	}
+
+	private async readGatewayLockOwner(): Promise<GatewayLockPayload | undefined> {
+		let raw: string;
+		try {
+			raw = await readFile(this.gatewayLockPath(), 'utf8');
+		} catch {
+			return undefined;
+		}
+		try {
+			const parsed: unknown = JSON.parse(raw);
+			return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+				? (parsed as GatewayLockPayload)
+				: undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	private async verifyPackages(): Promise<Record<string, PackageInfo>> {		const entries = await Promise.all(
 			Object.entries(PINNED_PACKAGES).map(async ([name, expected]) => {
 				const info = await resolvePackageInfo(name);
 				if (info.version !== expected) throw new Error(`Pinned package mismatch for ${name}`);
@@ -498,6 +573,12 @@ export class OpenClawHost {
 			NODE_ENV: 'production',
 			HOME: this.config.openClawHomeDir,
 			USERPROFILE: this.config.openClawHomeDir,
+			// Pinning the temp directory keeps the gateway's singleton lock inside this
+			// connection's state tree, which both isolates it from other connections and
+			// lets `start()` prove the reachable port belongs to the child it spawned.
+			TMPDIR: this.tempDir,
+			TMP: this.tempDir,
+			TEMP: this.tempDir,
 			OPENCLAW_STATE_DIR: this.config.openClawStateDir,
 			OPENCLAW_CONFIG_PATH: this.configPath,
 			OPENCLAW_HIDE_BANNER: '1',

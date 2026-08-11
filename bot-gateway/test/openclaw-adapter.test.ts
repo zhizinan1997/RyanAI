@@ -132,6 +132,42 @@ test('per-connection hosts trust their own media directories without trusting si
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('every connection host gets its own port and steps off ports another process holds', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const adapter = new OpenClawAdapter(
+		config,
+		new GatewayStateStore(dataDir, config.replayTtlMs),
+		new CredentialVault(dataDir, config.credentialsEncryptionKey),
+		quietLogger()
+	);
+	const internals = adapter as unknown as {
+		allocatePort(connectionId: string): number;
+		releasePort(connectionId: string): void;
+		blockedPorts: Set<number>;
+	};
+
+	const ports = ['bot-wechat-user-1', 'bot-wechat-user-2', 'bot-qq-user-3'].map((id) =>
+		internals.allocatePort(id)
+	);
+	assert.equal(new Set(ports).size, ports.length);
+	assert.equal(internals.allocatePort('bot-wechat-user-1'), ports[0]);
+	for (const port of ports) {
+		assert.equal(port >= 1_024 && port <= 65_535, true);
+	}
+
+	// A port a foreign or orphaned process already owns must never be handed back
+	// out, otherwise a failed host would retry onto the same conflict forever.
+	const taken = ports[0]!;
+	internals.releasePort('bot-wechat-user-1');
+	internals.blockedPorts.add(taken);
+	const rebound = internals.allocatePort('bot-wechat-user-1');
+	assert.notEqual(rebound, taken);
+	assert.equal(ports.includes(rebound), false);
+
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('connection ids cannot escape their per-user OpenClaw directories', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir, { adapterMode: 'openclaw' });

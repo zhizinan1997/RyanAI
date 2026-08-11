@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import type { GatewayConfig } from '../config.js';
@@ -83,10 +84,19 @@ type Credential = WeixinLoginCredential | QqLoginCredential;
 function sameCredential(left: Credential | undefined, right: Credential): boolean {
 	if (!left) return false;
 	if ('appId' in left && 'appId' in right) {
-		return left.appId === right.appId && left.appSecret === right.appSecret;
+		return (
+			left.appId === right.appId &&
+			left.appSecret === right.appSecret &&
+			left.userOpenid === right.userOpenid
+		);
 	}
 	if ('accountId' in left && 'accountId' in right) {
-		return left.accountId === right.accountId && left.botToken === right.botToken;
+		return (
+			left.accountId === right.accountId &&
+			left.botToken === right.botToken &&
+			left.baseUrl === right.baseUrl &&
+			left.userId === right.userId
+		);
 	}
 	return false;
 }
@@ -100,9 +110,15 @@ interface RuntimeConnection {
 	initializing?: Promise<void>;
 	retryTimer?: NodeJS.Timeout;
 }
-
 const MIGRATION_LOCK_RETRY_PATTERN =
 	/OpenClaw startup migrations are already running[\s\S]*?after\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/i;
+
+const PORT_CONFLICT_PATTERN =
+	/is already in use|owned by another gateway process|bound an unexpected port|EADDRINUSE|already listening on/i;
+
+function isPortConflict(error: unknown): boolean {
+	return PORT_CONFLICT_PATTERN.test(error instanceof Error ? error.message : String(error));
+}
 
 function migrationLockRetryDelay(error: unknown): number | undefined {
 	const message = error instanceof Error ? error.message : String(error);
@@ -136,7 +152,12 @@ export class OpenClawAdapter implements ChannelAdapter {
 	private readonly legacyHostMode: boolean;
 	private started = false;
 	private detail = 'OpenClaw adapter has not started';
-	private operationTail: Promise<void> = Promise.resolve();
+	private globalTail: Promise<void> = Promise.resolve();
+	private readonly connectionTails = new Map<string, Promise<void>>();
+	private supervisorTimer?: NodeJS.Timeout;
+	private readonly assignedPorts = new Map<string, number>();
+	private readonly portOwners = new Map<number, string>();
+	private readonly blockedPorts = new Set<number>();
 
 	constructor(
 		private readonly config: GatewayConfig,
@@ -180,24 +201,28 @@ export class OpenClawAdapter implements ChannelAdapter {
 				await legacy.host.start(credentials, { wechat: this.config.enabledChannels.has('wechat'), qq: this.config.enabledChannels.has('qq') });
 			}
 			this.started = true;
-			this.detail = 'Per-user OpenClaw channel hosts are restoring; RyanAI owns all inference';
-			// Credential materialization temporarily points OpenClaw's parent-process
-			// environment at a connection-specific directory. Restore hosts in order
-			// so two users can never write WeChat credentials into each other's state.
-			for (const connection of this.state.listConnections()) {
-				await this.ensureRuntime(connection);
+			try {
+				this.detail = 'Per-user OpenClaw channel hosts are restoring; RyanAI owns all inference';
+				// Credential materialization temporarily points OpenClaw's parent-process
+				// environment at a connection-specific directory. Restore hosts in order
+				// so two users can never write WeChat credentials into each other's state.
+				for (const connection of this.state.listConnections()) {
+					await this.serializeConnection(connection.id, () => this.ensureRuntime(connection));
+				}
+				this.startSupervisor();
+			} catch (error) {
+				this.started = false;
+				await this.stopAllRuntimes();
+				throw error;
 			}
 		});
 	}
 
 	async stop(): Promise<void> {
 		await this.serialize(async () => {
-			for (const runtime of this.runtimes.values()) {
-				this.clearRetry(runtime);
-				if (runtime.pending) runtime.pending.cancel();
-				if (runtime.host.isRunning()) await runtime.host.stop();
-			}
 			this.started = false;
+			this.stopSupervisor();
+			await this.stopAllRuntimes();
 			this.detail = 'OpenClaw channel hosts are stopped';
 		});
 	}
@@ -213,10 +238,10 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	async createConnection(input: CreateConnectionInput): Promise<ConnectionSnapshot> {
-		return this.serialize(async () => {
-			if (input.channel !== 'wechat' && input.channel !== 'qq') throw new AdapterError('invalid_channel', 400);
-			const ownerUserId = validOwner(input.ownerUserId);
-			const id = validId(input.id || `${input.channel}-${cryptoRandomId()}`);
+		if (input.channel !== 'wechat' && input.channel !== 'qq') throw new AdapterError('invalid_channel', 400);
+		const ownerUserId = validOwner(input.ownerUserId);
+		const id = validId(input.id || `${input.channel}-${cryptoRandomId()}`);
+		return this.serializeConnection(id, async () => {
 			if (this.state.getConnection(id)) throw new AdapterError('connection_already_exists', 409);
 			const snapshot: ConnectionSnapshot = {
 				id, channel: input.channel, ownerUserId, enabled: input.enabled !== false,
@@ -232,34 +257,42 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	async deleteConnection(connectionId: string): Promise<void> {
-		await this.serialize(async () => {
+		await this.serializeConnection(connectionId, async () => {
 			const runtime = this.runtimes.get(connectionId);
 			if (runtime) {
 				this.clearRetry(runtime);
-				runtime.pending?.cancel();
+				const pending = runtime.pending;
+				runtime.pending = undefined;
+				runtime.qrCode = undefined;
+				pending?.cancel();
 				await runtime.host.stop();
 				this.runtimes.delete(connectionId);
 			}
 			await this.vault.delete(connectionId);
-			if (!(await this.state.deleteConnection(connectionId))) throw new AdapterError('connection_not_found', 404);
+			const deleted = await this.state.deleteConnection(connectionId);
+			this.releasePort(connectionId);
+			if (!deleted) throw new AdapterError('connection_not_found', 404);
 		});
 	}
 
 	async patchConnection(connectionId: string, enabled: boolean): Promise<ConnectionSnapshot> {
-		return this.serialize(async () => {
+		return this.serializeConnection(connectionId, async () => {
 			const runtime = await this.runtimeFor(connectionId);
 			runtime.snapshot = await this.state.patchConnection(connectionId, { enabled, status: enabled ? (runtime.snapshot.status === 'disabled' ? 'logged_out' : runtime.snapshot.status) : 'disabled' }) as ConnectionSnapshot;
-			runtime.snapshot = runtime.snapshot;
 			try {
 				if (enabled) {
 					if (runtime.credentials) {
-						if (!runtime.host.isRunning()) await runtime.host.start(this.credentialsFor(runtime), this.channelFlags(runtime.snapshot));
+						if (!runtime.host.isRunning()) await this.startHost(runtime, false);
 						await this.refresh(runtime);
 					} else {
 						if (runtime.host.isRunning()) await runtime.host.stop();
 						runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured');
 					}
 				} else {
+					const pending = runtime.pending;
+					runtime.pending = undefined;
+					runtime.qrCode = undefined;
+					pending?.cancel();
 					if (runtime.host.isRunning()) await runtime.host.stop();
 				}
 			} catch (error) {
@@ -271,11 +304,14 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	async login(connectionId: string, input: LoginInput): Promise<ConnectionSnapshot> {
-		return this.serialize(async () => {
+		return this.serializeConnection(connectionId, async () => {
 			const runtime = await this.runtimeFor(connectionId);
 			if (!runtime.snapshot.enabled) throw new AdapterError('connection_disabled', 409);
 			this.clearRetry(runtime);
-			runtime.pending?.cancel();
+			const previousPending = runtime.pending;
+			runtime.pending = undefined;
+			runtime.qrCode = undefined;
+			previousPending?.cancel();
 			if (runtime.snapshot.channel === 'qq') {
 				const raw = input.credentials || (await this.vault.get(connectionId));
 				if (raw) {
@@ -294,15 +330,15 @@ export class OpenClawAdapter implements ChannelAdapter {
 			runtime.qrCode = structuredClone(pending.qrCode);
 			runtime.snapshot = await this.setStatus(runtime, 'awaiting_scan', 'Waiting for official QR confirmation');
 			pending.completion.then(
-				(credential) => this.serialize(() => this.completeLogin(runtime, pending, credential)),
-				(error) => this.serialize(() => this.failLogin(runtime, pending, error))
+				(credential) => this.serializeConnection(connectionId, () => this.completeLogin(runtime, pending, credential)),
+				(error) => this.serializeConnection(connectionId, () => this.failLogin(runtime, pending, error))
 			).catch((error) => this.logger.error('QR completion handler failed', safeErrorFields(error)));
 			return structuredClone(runtime.snapshot);
 		});
 	}
 
 	async reconnect(connectionId: string): Promise<ConnectionSnapshot> {
-		return this.serialize(async () => {
+		return this.serializeConnection(connectionId, async () => {
 			const runtime = await this.runtimeFor(connectionId);
 			if (!runtime.snapshot.enabled) throw new AdapterError('connection_disabled', 409);
 			this.clearRetry(runtime);
@@ -314,11 +350,16 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	async logout(connectionId: string): Promise<ConnectionSnapshot> {
-		return this.serialize(async () => {
+		return this.serializeConnection(connectionId, async () => {
 			const runtime = await this.runtimeFor(connectionId);
 			this.clearRetry(runtime);
-			runtime.pending?.cancel(); runtime.pending = undefined; runtime.qrCode = undefined;
+			const pending = runtime.pending;
+			runtime.pending = undefined;
+			runtime.qrCode = undefined;
+			pending?.cancel();
 			runtime.credentials = undefined;
+			const { trustedOwnerExternalId: _trustedOwnerExternalId, ...withoutTrustedIdentity } = runtime.snapshot;
+			runtime.snapshot = withoutTrustedIdentity;
 			await this.vault.delete(connectionId);
 			if (runtime.host.clearCredentials) {
 				await runtime.host.clearCredentials();
@@ -352,6 +393,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		this.runtimes.set(snapshot.id, runtime);
 		const raw = await this.vault.get(snapshot.id);
 		runtime.credentials = snapshot.channel === 'qq' ? parseQqCredential(raw) : parseWeixinCredential(raw);
+		await this.persistCredentialIdentity(runtime);
 		// A user can start a fresh QR flow while persisted connections are still
 		// restoring. Keep that new flow authoritative and do not start the old
 		// credential host underneath it.
@@ -362,9 +404,9 @@ export class OpenClawAdapter implements ChannelAdapter {
 			return runtime;
 		}
 		try {
-			if (!host.isRunning()) {
+			if (!runtime.host.isRunning()) {
 				try {
-					await host.start(this.credentialsFor(runtime), this.channelFlags(snapshot));
+					await this.startHost(runtime, false);
 				} catch (error) {
 					if (await this.deferMigrationLockedRestart(runtime, error)) return runtime;
 					throw error;
@@ -419,7 +461,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 			return;
 		}
 		try {
-			await runtime.host.restart(this.credentialsFor(runtime), this.channelFlags(runtime.snapshot));
+			await this.startHost(runtime, true);
 		} catch (error) {
 			if (await this.deferMigrationLockedRestart(runtime, error)) return;
 			throw error;
@@ -445,7 +487,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		});
 		runtime.retryTimer = setTimeout(() => {
 			runtime.retryTimer = undefined;
-			void this.serialize(async () => {
+			void this.serializeConnection(runtime.snapshot.id, async () => {
 				if (!this.started || !runtime.snapshot.enabled || !runtime.credentials) return;
 				try {
 					await this.restartRuntime(runtime);
@@ -490,10 +532,16 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	private async completeLogin(runtime: RuntimeConnection, pending: OfficialLogin, credential: Credential): Promise<void> {
-		if (runtime.pending !== pending) return;
+		if (
+			!this.started ||
+			this.runtimes.get(runtime.snapshot.id) !== runtime ||
+			!this.state.getConnection(runtime.snapshot.id) ||
+			runtime.pending !== pending
+		) return;
 		const unchangedCredential = sameCredential(runtime.credentials, credential);
 		runtime.pending = undefined;
 		runtime.credentials = credential;
+		await this.persistCredentialIdentity(runtime);
 		await this.vault.put(runtime.snapshot.id, credential as unknown as Record<string, unknown>);
 		if (unchangedCredential && runtime.host.isRunning()) {
 			runtime.snapshot = await this.setStatus(
@@ -516,7 +564,12 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	private async failLogin(runtime: RuntimeConnection, pending: OfficialLogin, error: unknown): Promise<void> {
-		if (runtime.pending !== pending) return;
+		if (
+			!this.started ||
+			this.runtimes.get(runtime.snapshot.id) !== runtime ||
+			!this.state.getConnection(runtime.snapshot.id) ||
+			runtime.pending !== pending
+		) return;
 		runtime.pending = undefined; runtime.qrCode = undefined;
 		runtime.snapshot = await this.setStatus(runtime, runtime.credentials ? 'degraded' : 'logged_out', 'Official QR login expired or failed');
 		this.logger.warn('Official QR login failed', safeErrorFields(error));
@@ -529,7 +582,6 @@ export class OpenClawAdapter implements ChannelAdapter {
 	private channelFlags(snapshot: ConnectionSnapshot): Record<Channel, boolean> { return { wechat: snapshot.channel === 'wechat' && snapshot.enabled, qq: snapshot.channel === 'qq' && snapshot.enabled }; }
 
 	private connectionConfig(snapshot: ConnectionSnapshot): GatewayConfig {
-		const offset = Math.abs(hashCode(snapshot.id)) % 10_000;
 		const openClawStateDir = path.join(this.config.openClawStateDir, snapshot.id, 'state');
 		const openClawHomeDir = path.join(this.config.openClawHomeDir, snapshot.id, 'home');
 		const parentGeneratedRoots = new Set([
@@ -545,7 +597,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 			...this.config,
 			enabledChannels: new Set<Channel>([snapshot.channel]),
 			openClawConnectionId: snapshot.id,
-			openClawPort: Math.min(65_000, this.config.openClawPort + offset),
+			openClawPort: this.allocatePort(snapshot.id),
 			openClawStateDir,
 			openClawHomeDir,
 			attachmentRoots: [...new Set(attachmentRoots)]
@@ -557,11 +609,179 @@ export class OpenClawAdapter implements ChannelAdapter {
 		await this.state.upsertConnection(next); return next;
 	}
 	private accountLabel(credential: Credential): string { return 'appId' in credential ? credential.appId : credential.accountId; }
-	private serialize<T>(operation: () => Promise<T>): Promise<T> { const result = this.operationTail.then(operation); this.operationTail = result.then(() => undefined, () => undefined); return result; }
+	private trustedOwnerExternalId(credential: Credential | undefined): string | undefined {
+		const value = credential && ('appId' in credential ? credential.userOpenid : credential.userId);
+		return value?.trim() || undefined;
+	}
+	private async persistCredentialIdentity(runtime: RuntimeConnection): Promise<void> {
+		const trustedOwnerExternalId = this.trustedOwnerExternalId(runtime.credentials);
+		if (!trustedOwnerExternalId || runtime.snapshot.trustedOwnerExternalId === trustedOwnerExternalId) return;
+		runtime.snapshot = { ...runtime.snapshot, trustedOwnerExternalId, updatedAt: new Date().toISOString() };
+		await this.state.upsertConnection(runtime.snapshot);
+	}
+	private allocatePort(connectionId: string): number {
+		const existing = this.assignedPorts.get(connectionId);
+		if (existing !== undefined) return existing;
+		const minimum = 1_024;
+		const span = 65_535 - minimum + 1;
+		const start = (this.config.openClawPort - minimum + hashCode(connectionId)) % span;
+		for (let attempt = 0; attempt < span; attempt += 1) {
+			const port = minimum + ((start + attempt) % span);
+			if (!this.portOwners.has(port) && !this.blockedPorts.has(port)) {
+				this.assignedPorts.set(connectionId, port);
+				this.portOwners.set(port, connectionId);
+				return port;
+			}
+		}
+		throw new Error('No OpenClaw ports are available');
+	}
+	private releasePort(connectionId: string): void {
+		const port = this.assignedPorts.get(connectionId);
+		if (port === undefined) return;
+		this.assignedPorts.delete(connectionId);
+		if (this.portOwners.get(port) === connectionId) this.portOwners.delete(port);
+	}
+	/**
+	 * Move a connection onto a fresh port after its own port turned out to be held
+	 * by a foreign or orphaned process. The host captures its port at construction,
+	 * so the host object is rebuilt rather than restarted in place.
+	 */
+	private async rebindRuntime(runtime: RuntimeConnection): Promise<boolean> {
+		const connectionId = runtime.snapshot.id;
+		if (!connectionId || this.legacyHostMode || this.runtimes.get(connectionId) !== runtime) {
+			return false;
+		}
+		const port = this.assignedPorts.get(connectionId);
+		if (port !== undefined) this.blockedPorts.add(port);
+		this.releasePort(connectionId);
+		if (runtime.host.isRunning()) await runtime.host.stop();
+		runtime.host = new OpenClawHost(
+			this.connectionConfig(runtime.snapshot),
+			this.logger.child(connectionId)
+		);
+		this.logger.warn('OpenClaw connection host moved to a free port', {
+			connection_id: connectionId,
+			previous_port: port,
+			port: this.assignedPorts.get(connectionId)
+		});
+		return true;
+	}
+	/**
+	 * Start (or restart) a connection host, stepping off ports that another process
+	 * already owns instead of leaving the connection permanently unavailable.
+	 */
+	private async startHost(runtime: RuntimeConnection, restart: boolean): Promise<void> {
+		let useRestart = restart;
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			if (!this.started && !this.legacyHostMode) throw new AdapterError('adapter_stopped', 409);
+			try {
+				const credentials = this.credentialsFor(runtime);
+				const flags = this.channelFlags(runtime.snapshot);
+				if (useRestart) await runtime.host.restart(credentials, flags);
+				else await runtime.host.start(credentials, flags);
+				return;
+			} catch (error) {
+				if (!isPortConflict(error) || !(await this.rebindRuntime(runtime))) throw error;
+				useRestart = false;
+			}
+		}
+		throw new Error('OpenClaw host could not acquire a free port');
+	}
+	private startSupervisor(): void {
+		this.stopSupervisor();
+		this.supervisorTimer = setInterval(() => {
+			this.superviseRuntimes();
+		}, 15_000);
+		this.supervisorTimer.unref();
+	}
+	private stopSupervisor(): void {
+		if (!this.supervisorTimer) return;
+		clearInterval(this.supervisorTimer);
+		this.supervisorTimer = undefined;
+	}
+	private superviseRuntimes(): void {
+		if (!this.started) return;
+		for (const runtime of this.runtimes.values()) {
+			const connectionId = runtime.snapshot.id;
+			if (
+				!connectionId ||
+				!runtime.snapshot.enabled ||
+				!runtime.credentials ||
+				runtime.pending ||
+				runtime.initializing ||
+				runtime.retryTimer ||
+				runtime.host.isRunning()
+			) continue;
+			void this.serializeConnection(connectionId, async () => {
+				// Re-check under the connection lock: a login or restart may have
+				// recovered the host while this sweep was queued.
+				if (
+					!this.started ||
+					this.runtimes.get(connectionId) !== runtime ||
+					!runtime.snapshot.enabled ||
+					!runtime.credentials ||
+					runtime.pending ||
+					runtime.retryTimer ||
+					runtime.host.isRunning()
+				) return;
+				runtime.snapshot = await this.setStatus(runtime, 'degraded', 'Channel host stopped; reconnecting');
+				try {
+					await this.restartRuntime(runtime);
+				} catch (error) {
+					runtime.snapshot = await this.setStatus(runtime, 'unavailable', 'Channel host restart failed');
+					this.logger.error('OpenClaw channel host restart failed', {
+						connection_id: connectionId,
+						...safeErrorFields(error)
+					});
+				}
+			}).catch((error) =>
+				this.logger.error('OpenClaw runtime supervisor failed', {
+					connection_id: connectionId,
+					...safeErrorFields(error)
+				})
+			);
+		}
+	}
+	private async stopAllRuntimes(): Promise<void> {
+		for (const runtime of this.runtimes.values()) {
+			this.clearRetry(runtime);
+			const pending = runtime.pending;
+			runtime.pending = undefined;
+			runtime.qrCode = undefined;
+			pending?.cancel();
+			if (runtime.host.isRunning()) await runtime.host.stop();
+		}
+	}
+	/** Adapter-wide exclusive section, for whole-adapter lifecycle only. */
+	private serialize<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.globalTail.then(operation);
+		this.globalTail = result.then(
+			() => undefined,
+			() => undefined
+		);
+		return result;
+	}
+	/**
+	 * Per-connection exclusive section. QR logins and host restarts take minutes,
+	 * so one user's onboarding must never queue behind another user's.
+	 */
+	private serializeConnection<T>(connectionId: string, operation: () => Promise<T>): Promise<T> {
+		const previous = this.connectionTails.get(connectionId) || Promise.resolve();
+		const result = previous.then(operation);
+		const tail = result.then(
+			() => undefined,
+			() => undefined
+		);
+		this.connectionTails.set(connectionId, tail);
+		void tail.then(() => {
+			if (this.connectionTails.get(connectionId) === tail) this.connectionTails.delete(connectionId);
+		});
+		return result;
+	}
 }
 
 function cryptoRandomId(): string {
-	return Math.random().toString(36).slice(2, 12);
+	return randomBytes(8).toString('base64url');
 }
 
 function hashCode(value: string): number {

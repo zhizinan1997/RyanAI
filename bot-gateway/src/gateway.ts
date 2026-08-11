@@ -19,7 +19,7 @@ function eventKey(
 }
 
 export class RyanAiGateway {
-	private readonly serialQueue = new KeyedSerialQueue();
+	private readonly serialQueue: KeyedSerialQueue;
 	private readonly inFlightEvents = new Map<string, Promise<GatewayReply>>();
 
 	constructor(
@@ -27,7 +27,12 @@ export class RyanAiGateway {
 		private readonly state: GatewayStateStore,
 		private readonly transport: RyanAiTransport,
 		private readonly logger: Logger
-	) {}
+	) {
+		// A slow model turn must not pin every later message in the same
+		// conversation: past this bound the queued event fails fast and safely
+		// instead of holding the channel's delivery slot open indefinitely.
+		this.serialQueue = new KeyedSerialQueue(100, config.requestTimeoutMs);
+	}
 
 	handle(input: GatewayInboundEvent): Promise<GatewayReply> {
 		const replayKey = eventKey({

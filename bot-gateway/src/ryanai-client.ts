@@ -87,6 +87,29 @@ export function buildEventMultipart(event: GatewayInboundEvent): MultipartBody {
 	);
 }
 
+export async function readResponseTextLimited(response: Response, maxBytes: number): Promise<string> {
+	if (!response.body) return '';
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let received = 0;
+	let result = '';
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			received += value.byteLength;
+			if (received > maxBytes) {
+				await reader.cancel('response_too_large').catch(() => undefined);
+				throw new RyanAiTransportError('response_too_large');
+			}
+			result += decoder.decode(value, { stream: true });
+		}
+		return result + decoder.decode();
+	} finally {
+		reader.releaseLock();
+	}
+}
+
 export class RyanAiClient implements RyanAiTransport {
 	constructor(
 		private readonly config: GatewayConfig,
@@ -138,15 +161,14 @@ export class RyanAiClient implements RyanAiTransport {
 		}
 		let responseText: string;
 		try {
-			responseText = await response.text();
+			responseText = await readResponseTextLimited(response, 1_048_576);
 		} catch (error) {
+			if (error instanceof RyanAiTransportError) throw error;
 			if (controller.signal.aborted) throw new RyanAiTransportError('timeout');
 			throw new RyanAiTransportError('network_error', error);
 		} finally {
 			clearTimeout(timer);
 		}
-		if (responseText.length > 1_048_576) throw new RyanAiTransportError('response_too_large');
-
 		let parsed: RyanAiResponse;
 		try {
 			parsed = JSON.parse(responseText) as RyanAiResponse;

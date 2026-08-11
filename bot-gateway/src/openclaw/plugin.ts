@@ -22,6 +22,8 @@ interface PluginRuntime {
 
 interface ReplyPayloadLike {
 	text?: string;
+	mediaUrl?: string;
+	mediaUrls?: string[];
 	isError?: boolean;
 	channelData?: Record<string, unknown>;
 }
@@ -105,8 +107,42 @@ function fallbackErrorMessage(): string {
 	);
 }
 
+function isRyanAiMediaUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return (
+			url.protocol === 'https:' &&
+			(url.pathname.startsWith('/api/v1/internal/bot-gateway/media/') ||
+				url.pathname.startsWith('/api/internal/bot-gateway/media/'))
+		);
+	} catch {
+		return false;
+	}
+}
+
+function deliveryPayload(value: string, isError: boolean): ReplyPayloadLike {
+	const trimmed = value.trim();
+	if (trimmed === value && isRyanAiMediaUrl(trimmed)) {
+		return { mediaUrl: trimmed, isError };
+	}
+	return { text: value, isError };
+}
+
 function replyPayload(reply: GatewayReply): ReplyPayloadLike | undefined {
 	if (reply.chunks.length === 0) return undefined;
+	if (reply.chunks.length === 1) {
+		const chunk = reply.chunks[0];
+		if (chunk === undefined) return undefined;
+		return {
+			...deliveryPayload(chunk, reply.isError),
+			channelData: {
+				ryanai: {
+					event_id: reply.eventId,
+					replayed: reply.replayed
+				}
+			}
+		};
+	}
 	return {
 		text: reply.chunks.join(''),
 		isError: reply.isError,
@@ -158,7 +194,8 @@ async function handleReplyDispatch(
 		if (event.sendPolicy !== 'deny' && event.suppressUserDelivery !== true) {
 			for (const replyText of replyChunks) {
 				if (replyText) {
-					queuedFinal = context.dispatcher.sendFinalReply({ text: replyText, isError }) || queuedFinal;
+					queuedFinal =
+						context.dispatcher.sendFinalReply(deliveryPayload(replyText, isError)) || queuedFinal;
 				}
 			}
 		}
@@ -195,7 +232,15 @@ export function registerRyanAiBridge(
 	// produce a handled safe error instead of an unhandled rejected promise at
 	// plugin registration time.
 	let runtime: Promise<PluginRuntime> | undefined;
-	const getRuntime = (): Promise<PluginRuntime> => (runtime ??= runtimeFactory());
+	const getRuntime = (): Promise<PluginRuntime> => {
+		if (runtime) return runtime;
+		const pending = runtimeFactory();
+		runtime = pending;
+		void pending.catch(() => {
+			if (runtime === pending) runtime = undefined;
+		});
+		return pending;
+	};
 
 	// This hook remains useful for conversations explicitly bound to a plugin.
 	// Ordinary channel messages use the global reply_dispatch hook below.

@@ -26,7 +26,8 @@ from uuid import uuid4
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
-from open_webui.internal.db import get_async_session
+from open_webui.env import UVICORN_WORKERS
+from open_webui.internal.db import get_async_db, get_async_session
 from open_webui.models.bot_gateway import (
     BotGateway,
     BotGatewayBindingError,
@@ -47,6 +48,7 @@ from open_webui.utils.misc import get_message_list, get_output_text
 from open_webui.utils.models import get_all_models, get_filtered_models
 from open_webui.storage.provider import Storage
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers, UploadFile
 from starlette.responses import FileResponse, Response
@@ -65,6 +67,7 @@ BOT_GATEWAY_MEDIA_TTL_SECONDS = 30 * 60
 BOT_GATEWAY_HMAC_VERSION = 'v1'
 BOT_GATEWAY_EVENT_LEASE_SECONDS = 3 * 60
 BOT_GATEWAY_EVENT_HEARTBEAT_SECONDS = 30
+BOT_GATEWAY_CONVERSATION_LOCK_TIMEOUT_SECONDS = 60
 BOT_GATEWAY_NONCE_RETENTION_SECONDS = 2 * BOT_GATEWAY_SIGNATURE_MAX_SKEW + 60
 BOT_GATEWAY_CHAT_TIMEZONE = dt.timezone(dt.timedelta(hours=8), name='Asia/Shanghai')
 
@@ -98,7 +101,7 @@ _COMMAND_NAMES = (
     *_COMMAND_ALIASES.keys(),
 )
 _COMMAND_PATTERN = re.compile(
-    rf'(?:^|\s)/({"|".join(re.escape(name) for name in sorted(_COMMAND_NAMES, key=len, reverse=True))})(?:\s+(.+?))?\s*$',
+    rf'^/({"|".join(re.escape(name) for name in sorted(_COMMAND_NAMES, key=len, reverse=True))})(?:\s+(.+?))?\s*$',
     re.IGNORECASE,
 )
 
@@ -150,17 +153,97 @@ _conversation_locks: dict[str, _ConversationLockEntry] = {}
 _background_login_tasks: set[asyncio.Task[None]] = set()
 
 
+class _ConversationLockTimeoutError(TimeoutError):
+    pass
+
+
+class _EventLeaseLostError(RuntimeError):
+    pass
+
+
+def _advisory_lock_key(key: str) -> int:
+    """Map a lock name onto the signed 64-bit space PostgreSQL advisory locks use."""
+    return int.from_bytes(
+        hashlib.blake2b(key.encode(), digest_size=8).digest(), 'big', signed=True
+    )
+
+
+def _distributed_locking_enabled() -> bool:
+    override = os.getenv('BOT_GATEWAY_DISTRIBUTED_LOCK', '').strip().lower()
+    if override in {'1', 'true', 'yes', 'on'}:
+        return True
+    if override in {'0', 'false', 'no', 'off'}:
+        return False
+    return UVICORN_WORKERS > 1
+
+
 @asynccontextmanager
-async def _conversation_lock(key: str):
+async def _database_conversation_lock(key: str, timeout: float):
+    """Hold `key` across worker processes for the duration of the block.
+
+    The in-process asyncio lock only orders coroutines inside one worker, so with
+    `UVICORN_WORKERS > 1` two workers can answer the same conversation at once.
+    Advisory locks live on a single connection, so this takes a dedicated session
+    rather than borrowing the request's. It stays opt-out because holding an extra
+    pooled connection for a whole model turn only pays for itself when there is
+    more than one worker to coordinate.
+    """
+    if not _distributed_locking_enabled():
+        yield False
+        return
+    async with get_async_db() as session:
+        if session.bind is None or session.bind.dialect.name != 'postgresql':
+            yield False
+            return
+        lock_key = _advisory_lock_key(key)
+        deadline = time.monotonic() + timeout
+        while True:
+            if bool(await session.scalar(text('SELECT pg_try_advisory_lock(:key)'), {'key': lock_key})):
+                break
+            if time.monotonic() >= deadline:
+                raise _ConversationLockTimeoutError(
+                    f'Timed out waiting for bot conversation lock {key}'
+                )
+            await asyncio.sleep(0.1)
+        # Session-level advisory locks outlive their transaction, so commit to
+        # release the connection from "idle in transaction" while still holding it.
+        await session.commit()
+        try:
+            yield True
+        finally:
+            try:
+                await session.execute(text('SELECT pg_advisory_unlock(:key)'), {'key': lock_key})
+                await session.commit()
+            except Exception:
+                log.exception('Failed to release bot conversation advisory lock %s', key)
+
+
+@asynccontextmanager
+async def _conversation_lock(
+    key: str,
+    timeout: float = BOT_GATEWAY_CONVERSATION_LOCK_TIMEOUT_SECONDS,
+):
     entry = _conversation_locks.get(key)
     if entry is None:
         entry = _ConversationLockEntry(lock=asyncio.Lock())
         _conversation_locks[key] = entry
     entry.references += 1
+    acquired = False
+    deadline = time.monotonic() + timeout
     try:
-        async with entry.lock:
+        try:
+            await asyncio.wait_for(entry.lock.acquire(), timeout=timeout)
+            acquired = True
+        except TimeoutError as exc:
+            raise _ConversationLockTimeoutError(
+                f'Timed out waiting for bot conversation lock {key}'
+            ) from exc
+        # Both stages share one budget so a caller can never wait 2x the timeout.
+        async with _database_conversation_lock(key, max(0.0, deadline - time.monotonic())):
             yield
     finally:
+        if acquired:
+            entry.lock.release()
         entry.references -= 1
         if entry.references == 0 and _conversation_locks.get(key) is entry:
             _conversation_locks.pop(key, None)
@@ -169,6 +252,13 @@ async def _conversation_lock(key: str):
 @asynccontextmanager
 async def _event_lease(event_record_id: str, request_nonce: str):
     stop = asyncio.Event()
+    lease_lost = asyncio.Event()
+    owner_task = asyncio.current_task()
+
+    def cancel_owner() -> None:
+        lease_lost.set()
+        if owner_task is not None and not owner_task.done():
+            owner_task.cancel()
 
     async def heartbeat() -> None:
         while True:
@@ -179,16 +269,28 @@ async def _event_lease(event_record_id: str, request_nonce: str):
                 pass
             try:
                 if not await BotGateway.renew_event_lease(event_record_id, request_nonce):
+                    cancel_owner()
                     return
             except Exception:
                 log.exception('Failed to renew bot gateway event lease %s', event_record_id)
+                cancel_owner()
+                return
 
     heartbeat_task = asyncio.create_task(heartbeat())
     try:
         yield
+    except asyncio.CancelledError:
+        if lease_lost.is_set():
+            raise _EventLeaseLostError('Bot gateway event lease was lost') from None
+        raise
     finally:
         stop.set()
-        await heartbeat_task
+        if not heartbeat_task.done():
+            heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
 
 def _env_enabled() -> bool:
@@ -222,7 +324,7 @@ def _media_token(file_id: str, user_id: str, expires_at: int) -> str:
 
 def _media_url(file_id: str, user_id: str) -> str:
     expires_at = int(time.time()) + BOT_GATEWAY_MEDIA_TTL_SECONDS
-    return f'{_public_media_base_url()}/api/internal/bot-gateway/media/{_media_token(file_id, user_id, expires_at)}'
+    return f'{_public_media_base_url()}/api/v1/internal/bot-gateway/media/{_media_token(file_id, user_id, expires_at)}'
 
 
 def _generated_image_urls(message: dict[str, Any], user_id: str) -> list[str]:
@@ -672,6 +774,16 @@ async def _sync_connection(connection: BotGatewayConnectionModel, remote: dict[s
             values['credentials_configured'] = configured
     if 'detail' in remote and 'last_error' not in remote:
         values['last_error'] = remote.get('detail')
+    trusted_external_user_id = remote.get(
+        'trustedOwnerExternalId',
+        remote.get('trusted_owner_external_id'),
+    )
+    if isinstance(trusted_external_user_id, str) and trusted_external_user_id.strip():
+        config = dict(connection.config or {})
+        normalized_id = trusted_external_user_id.strip()
+        if config.get('trusted_external_user_id') != normalized_id:
+            config['trusted_external_user_id'] = normalized_id
+            values['config'] = config
     return (
         await BotGateway.update_connection(
             connection.id,
@@ -1784,7 +1896,7 @@ async def _handle_command(  # noqa: C901
         await BotGateway.update_conversation(conversation.id, {'chat_id': None})
         return '已开始新的 Ryan AI 会话。当前模型设置保持不变。'
     if command == 'points':
-        credit = Credits.init_credit_by_user_id(user.id)
+        credit = await asyncio.to_thread(Credits.init_credit_by_user_id, user.id)
         return f'当前积分：{credit.credit}'
     if command == 'models':
         models = await _accessible_models(request, user)
@@ -1860,6 +1972,13 @@ async def _recover_persisted_reply(
 ) -> str | list[str] | None:
     """Recover a reply persisted before a worker died, avoiding a second model call."""
     if not record.chat_id or not record.assistant_message_id:
+        return None
+    if await Chats.get_chat_by_id_and_user_id(record.chat_id, user_id) is None:
+        log.warning(
+            'Refused persisted bot reply recovery for chat %s outside user %s',
+            record.chat_id,
+            user_id,
+        )
         return None
     message = await Chats.get_message_by_id_and_message_id(record.chat_id, record.assistant_message_id)
     if not message or message.get('done') is False:
@@ -1952,6 +2071,22 @@ async def receive_event(  # noqa: C901
                             _wire_response(event.event_id, ignored=True),
                         )
 
+                if event.conversation.type == 'private' and connection.owner_user_id:
+                    trusted_external_user_id = str(
+                        (connection.config or {}).get('trusted_external_user_id') or ''
+                    ).strip()
+                    if not trusted_external_user_id or trusted_external_user_id != event.sender.id:
+                        log.warning(
+                            'Ignored personal bot event from untrusted sender: connection=%s sender=%s',
+                            connection.id,
+                            event.sender.id,
+                        )
+                        return await _complete(
+                            record.id,
+                            record.request_nonce,
+                            _wire_response(event.event_id, ignored=True),
+                        )
+
                 binding = await BotGateway.get_enabled_binding(event.connection_id, event.sender.id)
                 if (
                     binding is None
@@ -2028,9 +2163,28 @@ async def receive_event(  # noqa: C901
                     record.request_nonce,
                     _wire_response(event.event_id, reply),
                 )
+    except _ConversationLockTimeoutError as exc:
+        await BotGateway.fail_event(record.id, record.request_nonce, str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Bot conversation is busy; retry the message',
+        ) from exc
+    except _EventLeaseLostError as exc:
+        await BotGateway.fail_event(record.id, record.request_nonce, str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Bot gateway event lease was lost',
+        ) from exc
     except HTTPException as exc:
         await BotGateway.fail_event(record.id, record.request_nonce, str(exc.detail))
         raise
+    except asyncio.CancelledError:
+        try:
+            await asyncio.shield(
+                BotGateway.fail_event(record.id, record.request_nonce, 'Bot gateway event was cancelled')
+            )
+        finally:
+            raise
     except Exception as exc:
         log.exception('Bot gateway event %s failed', event.event_id)
         await BotGateway.fail_event(record.id, record.request_nonce, str(exc))

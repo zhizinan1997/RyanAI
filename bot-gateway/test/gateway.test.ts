@@ -4,9 +4,50 @@ import test from 'node:test';
 
 import { chunkText } from '../src/chunk.js';
 import { RyanAiGateway } from '../src/gateway.js';
+import { KeyedSerialQueue } from '../src/queue.js';
 import { RyanAiTransportError, type RyanAiTransport } from '../src/ryanai-client.js';
 import { GatewayStateStore } from '../src/state.js';
 import { inboundEvent, quietLogger, tempDataDir, testConfig } from './helpers.js';
+
+test('a conversation queue drops entries that wait past their bound instead of stalling', async () => {
+	const queue = new KeyedSerialQueue(100, 25);
+	let releaseHead!: () => void;
+	const head = queue.run('conversation', () => new Promise<void>((resolve) => {
+		releaseHead = resolve;
+	}));
+
+	await assert.rejects(
+		() => queue.run('conversation', async () => 'never runs'),
+		/queue_wait_timeout/
+	);
+
+	// The timed-out entry must not let anything overtake the task still running.
+	let secondStarted = false;
+	const second = queue.run('conversation', async () => {
+		secondStarted = true;
+		return 'ran';
+	});
+	assert.equal(secondStarted, false);
+	releaseHead();
+	await head;
+	assert.equal(await second, 'ran');
+});
+
+test('a full conversation queue rejects rather than growing without bound', async () => {
+	const queue = new KeyedSerialQueue(2);
+	let releaseHead!: () => void;
+	const head = queue.run('conversation', () => new Promise<void>((resolve) => {
+		releaseHead = resolve;
+	}));
+	const queued = queue.run('conversation', async () => undefined);
+
+	await assert.rejects(
+		() => queue.run('conversation', async () => undefined),
+		/queue_capacity_exceeded/
+	);
+	releaseHead();
+	await Promise.all([head, queued]);
+});
 
 test('text chunking is unicode-safe and preserves the original reply', () => {
 	const input = '第一段。第二段😀第三段。第四段';

@@ -657,6 +657,11 @@ class BotGatewayTable:
             connection = (await session.execute(connection_stmt)).scalars().first()
             if connection is None or not connection.owner_user_id:
                 return None
+            trusted_external_user_id = str(
+                (connection.config or {}).get('trusted_external_user_id') or ''
+            ).strip()
+            if not trusted_external_user_id or trusted_external_user_id != external_user_id:
+                return None
             result = await session.execute(
                 select(BotGatewayBinding).where(
                     BotGatewayBinding.connection_id == connection_id,

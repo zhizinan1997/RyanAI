@@ -117,6 +117,9 @@ export class GatewayStateStore {
 			for (const key of Object.keys(this.state.groups)) {
 				if (key.split('\u0000')[1] === id) delete this.state.groups[key];
 			}
+			for (const key of Object.keys(this.state.replays)) {
+				if (key.split('\u0000')[1] === id) delete this.state.replays[key];
+			}
 			deleted = true;
 			return true;
 		});
@@ -125,7 +128,12 @@ export class GatewayStateStore {
 
 	async patchConnection(
 		id: string,
-		patch: Partial<Pick<ConnectionSnapshot, 'enabled' | 'status' | 'detail' | 'accountLabel'>>
+		patch: Partial<
+			Pick<
+				ConnectionSnapshot,
+				'enabled' | 'status' | 'detail' | 'accountLabel' | 'trustedOwnerExternalId'
+			>
+		>
 	): Promise<ConnectionSnapshot | undefined> {
 		let result: ConnectionSnapshot | undefined;
 		await this.mutate(() => {

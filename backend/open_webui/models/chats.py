@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 
@@ -40,6 +41,10 @@ from sqlalchemy.sql import case, exists
 from sqlalchemy.sql.expression import bindparam
 
 log = logging.getLogger(__name__)
+
+# Trailing counter of the bot-created chat titles built by
+# `routers.bot_gateway.format_bot_chat_title` (e.g. "🤖QQ-20260811-002").
+BOT_CHAT_TITLE_SEQUENCE_PATTERN = re.compile(r'-(\d{3,})$')
 ACTIVE_CHAT_GAP_SECONDS = 30 * 60
 
 
@@ -476,20 +481,30 @@ class ChatTable:
         day_end: int,
         db: AsyncSession | None = None,
     ) -> int:
-        """Return the next daily sequence for a user's bot-created chats."""
+        """Return the next daily sequence for a user's bot-created chats.
+
+        Derived from the highest sequence already present in the day's titles
+        rather than a row count, so deleting one chat cannot hand the same
+        number out twice.
+        """
         async with get_async_db_context(db) as session:
-            count = await session.scalar(
-                select(func.count())
-                .select_from(Chat)
-                .where(
-                    Chat.user_id == user_id,
-                    Chat.created_at >= day_start,
-                    Chat.created_at < day_end,
-                    Chat.meta['source'].as_string() == 'bot_gateway',
-                    Chat.meta['channel'].as_string() == channel,
+            titles = (
+                await session.execute(
+                    select(Chat.title).where(
+                        Chat.user_id == user_id,
+                        Chat.created_at >= day_start,
+                        Chat.created_at < day_end,
+                        Chat.meta['source'].as_string() == 'bot_gateway',
+                        Chat.meta['channel'].as_string() == channel,
+                    )
                 )
-            )
-            return int(count or 0) + 1
+            ).scalars().all()
+            highest = 0
+            for title in titles:
+                match = BOT_CHAT_TITLE_SEQUENCE_PATTERN.search(title or '')
+                if match:
+                    highest = max(highest, int(match.group(1)))
+            return max(highest + 1, len(titles) + 1)
 
     async def get_internal_chat_ids_by_parent_id(self, parent_chat_id: str, user_id: str) -> list[str]:
         async with get_async_db_context() as session:

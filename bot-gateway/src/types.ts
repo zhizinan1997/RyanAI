@@ -81,6 +81,7 @@ export interface ConnectionSnapshot {
 	id: string;
 	channel: Channel;
 	ownerUserId?: string;
+	trustedOwnerExternalId?: string;
 	enabled: boolean;
 	status: ConnectionStatus;
 	accountLabel?: string;

@@ -434,22 +434,44 @@ test('typed inbound_claim rejects dynamic RyanAI connection ids', async () => {
 	);
 });
 
-test('typed inbound_claim fails closed when a second WeChat account is observed', async () => {
+test('typed inbound_claim fails closed when one event carries conflicting account ids', async () => {
 	await assert.rejects(
 		normalizeInboundClaim(
 			{
 				...WECHAT_PRIVATE_CLAIM,
-				accountId: 'wx-second-account',
-				messageId: 'weixin-message-second-account'
+				accountId: 'wx-account-a',
+				messageId: 'weixin-message-conflicting-account'
 			},
 			{
 				...WECHAT_PRIVATE_CONTEXT,
-				accountId: 'wx-second-account',
-				messageId: 'weixin-message-second-account'
+				accountId: 'wx-account-b',
+				messageId: 'weixin-message-conflicting-account'
 			},
 			testConfig('unused')
 		),
 		(error: unknown) =>
 			error instanceof EventValidationError && error.code === 'multiple_openclaw_accounts'
 	);
+});
+
+test('a different WeChat account in a later event normalizes, because hosts are per connection', async () => {
+	// Every connection runs its own OpenClaw host against its own state directory,
+	// so a process-wide "one account ever" latch would only make normalization
+	// depend on which event arrived first without isolating anything.
+	const normalized = await normalizeInboundClaim(
+		{
+			...WECHAT_PRIVATE_CLAIM,
+			accountId: 'wx-second-account',
+			messageId: 'weixin-message-second-account'
+		},
+		{
+			...WECHAT_PRIVATE_CONTEXT,
+			accountId: 'wx-second-account',
+			messageId: 'weixin-message-second-account'
+		},
+		testConfig('unused')
+	);
+
+	assert.equal(normalized.channel, 'wechat');
+	assert.equal(normalized.eventId, 'weixin-message-second-account');
 });

@@ -1,6 +1,7 @@
 import type { GatewayConfig } from '../config.js';
 import { Logger, safeErrorFields } from '../logger.js';
 import type { QrCodeSnapshot } from '../types.js';
+import { withOpenClawEnv } from './env-mutex.js';
 
 const WEIXIN_LOGIN_MODULE = '@tencent-weixin/openclaw-weixin/dist/src/auth/login-qr.js';
 const WEIXIN_DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
@@ -25,42 +26,50 @@ export interface PendingOfficialLogin<T> {
 	cancel(): void;
 }
 
+interface WeixinLoginModule {
+	DEFAULT_ILINK_BOT_TYPE: string;
+	startWeixinLoginWithQr(options: {
+		force?: boolean;
+		apiBaseUrl: string;
+		botType: string;
+	}): Promise<{ qrcodeUrl?: string; message: string; sessionKey: string }>;
+	waitForWeixinLogin(options: {
+		sessionKey: string;
+		apiBaseUrl: string;
+		timeoutMs: number;
+		botType: string;
+	}): Promise<{
+		connected: boolean;
+		alreadyConnected?: boolean;
+		botToken?: string;
+		accountId?: string;
+		baseUrl?: string;
+		userId?: string;
+		message: string;
+	}>;
+}
+
 export async function startWeixinOfficialLogin(
 	config: GatewayConfig,
 	logger: Logger,
 	existingCredential?: WeixinLoginCredential,
 	connectionId = 'wechat-default'
 ): Promise<PendingOfficialLogin<WeixinLoginCredential>> {
-	process.env.OPENCLAW_STATE_DIR = config.openClawStateDir;
-	const login = (await import(WEIXIN_LOGIN_MODULE)) as {
-		DEFAULT_ILINK_BOT_TYPE: string;
-		startWeixinLoginWithQr(options: {
-			force?: boolean;
-			apiBaseUrl: string;
-			botType: string;
-		}): Promise<{ qrcodeUrl?: string; message: string; sessionKey: string }>;
-		waitForWeixinLogin(options: {
-			sessionKey: string;
-			apiBaseUrl: string;
-			timeoutMs: number;
-			botType: string;
-		}): Promise<{
-			connected: boolean;
-			alreadyConnected?: boolean;
-			botToken?: string;
-			accountId?: string;
-			baseUrl?: string;
-			userId?: string;
-			message: string;
-		}>;
-	};
-	const started = await login.startWeixinLoginWithQr({
-		force: true,
-		apiBaseUrl: WEIXIN_DEFAULT_BASE_URL,
-		botType: login.DEFAULT_ILINK_BOT_TYPE
-	});
+	let login!: WeixinLoginModule;
+	const started = await withOpenClawEnv(
+		{ OPENCLAW_STATE_DIR: config.openClawStateDir },
+		async () => {
+			login = (await import(WEIXIN_LOGIN_MODULE)) as WeixinLoginModule;
+			return login.startWeixinLoginWithQr({
+				force: true,
+				apiBaseUrl: WEIXIN_DEFAULT_BASE_URL,
+				botType: login.DEFAULT_ILINK_BOT_TYPE
+			});
+		}
+	);
 	if (!started.qrcodeUrl) throw new Error('weixin_qr_unavailable');
 
+	let cancelled = false;
 	const completion = login
 		.waitForWeixinLogin({
 			sessionKey: started.sessionKey,
@@ -69,6 +78,10 @@ export async function startWeixinOfficialLogin(
 			botType: login.DEFAULT_ILINK_BOT_TYPE
 		})
 		.then((result) => {
+			// The pinned package cannot abort its poll, so a cancelled flow can still
+			// resolve minutes later. Drop that credential here so no caller can revive
+			// a connection the operator already logged out or deleted.
+			if (cancelled) throw new Error('weixin_login_cancelled');
 			if (result.alreadyConnected && existingCredential) {
 				return existingCredential;
 			}
@@ -97,8 +110,11 @@ export async function startWeixinOfficialLogin(
 		},
 		completion,
 		// The pinned package does not expose cancellation. Its internal session is
-		// bounded by the same five-minute TTL and contains no durable credential.
-		cancel: () => undefined
+		// bounded by the same five-minute TTL and contains no durable credential, so
+		// cancelling only has to guarantee the late result is discarded.
+		cancel: () => {
+			cancelled = true;
+		}
 	};
 }
 
@@ -175,12 +191,26 @@ export async function startQqOfficialLogin(
 
 	let qrTimer: NodeJS.Timeout | undefined;
 	const qrTimeout = new Promise<never>((_resolve, reject) => {
-		qrTimer = setTimeout(() => reject(new Error('qq_qr_timeout')), 30_000);
+		qrTimer = setTimeout(() => {
+			if (!settled) {
+				settled = true;
+				dispose();
+				rejectCredential(new Error('qq_qr_timeout'));
+			}
+			reject(new Error('qq_qr_timeout'));
+		}, 30_000);
 		qrTimer.unref();
 	});
 	let qrDataUrl: string;
 	try {
-		qrDataUrl = await Promise.race([qrReady, qrTimeout]);
+		qrDataUrl = await Promise.race([
+			qrReady,
+			credentialReady.then(
+				() =>
+					'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+			),
+			qrTimeout
+		]);
 	} finally {
 		if (qrTimer) clearTimeout(qrTimer);
 	}
@@ -189,7 +219,10 @@ export async function startQqOfficialLogin(
 		credentialReady,
 		new Promise<never>((_resolve, reject) => {
 			completionTimer = setTimeout(() => {
-				if (!settled) dispose();
+				if (!settled) {
+					settled = true;
+					dispose();
+				}
 				reject(new Error('qq_login_timeout'));
 			}, QR_TTL_MS);
 			completionTimer.unref();

@@ -225,10 +225,6 @@ function inferAttachmentContentType(
 	return 'application/octet-stream';
 }
 
-// A process hosts at most one official account for each RyanAI connection.
-// A second account must not be silently merged into the same backend identity.
-const observedOpenClawAccounts = new Map<Channel, string>();
-
 function record(value: unknown): UnknownRecord {
 	return value && typeof value === 'object' && !Array.isArray(value)
 		? (value as UnknownRecord)
@@ -298,7 +294,6 @@ export function mapOpenClawConnectionId(channel: Channel): string {
 }
 
 function assertSingleOpenClawAccount(
-	channel: Channel,
 	event: MessageHookLike,
 	ctx: AgentContextLike,
 	metadata: UnknownRecord,
@@ -317,16 +312,6 @@ function assertSingleOpenClawAccount(
 			'Conflicting OpenClaw account ids are not supported'
 		);
 	}
-	const accountId = accountIds[0];
-	if (!accountId) return;
-	const observed = observedOpenClawAccounts.get(channel);
-	if (observed && observed !== accountId) {
-		throw new EventValidationError(
-			'multiple_openclaw_accounts',
-			`Multiple OpenClaw ${channel} accounts are not supported`
-		);
-	}
-	observedOpenClawAccounts.set(channel, accountId);
 }
 
 function resolveConnectionId(channel: Channel, bridge: UnknownRecord): string {
@@ -586,7 +571,7 @@ export async function normalizeMessageHook(
 		bridge.channel,
 		metadata.channel_id
 	]);
-	assertSingleOpenClawAccount(channel, event, ctx, metadata, bridge);
+	assertSingleOpenClawAccount(event, ctx, metadata, bridge);
 
 	const conversationId =
 		text(event.conversationId) ||
