@@ -39,7 +39,10 @@ test('RyanAI client sends signed multipart metadata and attachment bytes', async
 				version: '1.0',
 				event_id: 'multipart-event',
 				status: 'ok',
-				reply: { text: 'Ryan reply' }
+				reply: {
+					text: 'Privacy notice\n\nUsage tutorial',
+					messages: ['Privacy notice', 'Usage tutorial']
+				}
 			})
 		);
 	});
@@ -64,7 +67,10 @@ test('RyanAI client sends signed multipart metadata and attachment bytes', async
 		})
 	);
 	assert.equal(verified, true);
-	assert.deepEqual(result, { text: 'Ryan reply' });
+	assert.deepEqual(result, {
+		text: 'Privacy notice\n\nUsage tutorial',
+		messages: ['Privacy notice', 'Usage tutorial']
+	});
 	await new Promise<void>((resolve, reject) =>
 		server.close((error) => (error ? reject(error) : resolve()))
 	);

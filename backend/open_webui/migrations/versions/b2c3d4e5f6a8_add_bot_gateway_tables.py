@@ -1,7 +1,7 @@
 """add bot gateway tables
 
 Revision ID: b2c3d4e5f6a8
-Revises: a1b2c3d4e5f7
+Revises: b5e7c9d1a2f3
 Create Date: 2026-08-09 00:00:00.000000
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 from open_webui.migrations.util import get_existing_tables
 
 revision: str = 'b2c3d4e5f6a8'
-down_revision: str | None = 'a1b2c3d4e5f7'
+down_revision: str | None = 'b5e7c9d1a2f3'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -3,6 +3,9 @@
 docs
 kubernetes
 node_modules
+**/node_modules
+/.venv
+**/.test-dist
 /.svelte-kit
 /package
 .env

@@ -202,6 +202,7 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
         )
         self.assertTrue(rebound.enabled)
         self.assertFalse(rebound.blocked)
+        self.assertFalse(rebound.is_new_binding)
 
         self.assertTrue(await self.gateway.block_binding('binding-1', blocked_by='user-1'))
         await self.gateway.create_binding_code('user-1', 'b' * 64, 'qq', now + 600)
@@ -234,6 +235,30 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
         )
         self.assertTrue(unblocked.enabled)
         self.assertFalse(unblocked.blocked)
+        self.assertFalse(unblocked.is_new_binding)
+
+    async def test_only_the_first_binding_is_marked_new(self):
+        now = int(time.time())
+        await self.gateway.create_binding_code('user-1', 'c' * 64, 'qq', now + 600)
+        first = await self.gateway.bind_with_code(
+            connection_id='qq-default',
+            channel='qq',
+            external_user_id='first-time-user',
+            display_name='First Time User',
+            code_hash='c' * 64,
+        )
+        self.assertTrue(first.is_new_binding)
+
+        self.assertTrue(await self.gateway.unbind(first.id, user_id='user-1'))
+        await self.gateway.create_binding_code('user-1', 'd' * 64, 'qq', now + 600)
+        rebound = await self.gateway.bind_with_code(
+            connection_id='qq-default',
+            channel='qq',
+            external_user_id='first-time-user',
+            display_name='First Time User',
+            code_hash='d' * 64,
+        )
+        self.assertFalse(rebound.is_new_binding)
 
     async def test_cleanup_bounds_old_event_and_nonce_rows(self):
         now = int(time.time())
@@ -321,6 +346,21 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
 
 
 class BotGatewayMigrationTests(TestCase):
+    def test_production_revision_is_connected_to_the_bot_gateway_chain(self):
+        from open_webui.migrations.versions import b2c3d4e5f6a8_add_bot_gateway_tables as bot_gateway
+        from open_webui.migrations.versions import b5e7c9d1a2f3_restore_production_revision as compatibility
+
+        self.assertEqual(compatibility.down_revision, 'a1b2c3d4e5f7')
+        self.assertEqual(bot_gateway.down_revision, compatibility.revision)
+
+    def test_credit_log_migration_preserves_existing_history(self):
+        from open_webui.migrations.versions import c4d5e6f7a8b9_remove_credit_log_table as migration
+
+        with patch.object(migration, 'op', create=True) as operations:
+            migration.upgrade()
+
+        operations.drop_table.assert_not_called()
+
     def test_fresh_sqlite_schema_has_nonce_uniqueness_block_state_and_cleanup_index(self):
         from alembic.migration import MigrationContext
         from alembic.operations import Operations
@@ -394,6 +434,101 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         for text, expected in cases.items():
             with self.subTest(text=text):
                 self.assertEqual(self.gateway_router.parse_bot_gateway_command(text), expected)
+
+    def test_model_commands_use_visible_names_and_accept_numeric_selection(self):
+        models = [
+            {'id': 'internal-model-id', 'name': 'Ryan 智能助手'},
+            {'id': 'second-model-id', 'name': '论文分析模型'},
+        ]
+
+        self.assertEqual(self.gateway_router._model_display_name(models[0]), 'Ryan 智能助手')
+        self.assertEqual(self.gateway_router._model_name_for_id('internal-model-id', models), 'Ryan 智能助手')
+        self.assertEqual(self.gateway_router._model_for_argument('2', models), models[1])
+        self.assertEqual(self.gateway_router._model_for_argument('论文分析模型', models), models[1])
+        self.assertEqual(self.gateway_router._model_for_argument('internal-model-id', models), models[0])
+        self.assertEqual(self.gateway_router._model_display_name({'id': 'hidden-id'}), '未命名模型')
+        self.assertEqual(self.gateway_router._model_name_for_id('missing-id', models), '未命名模型')
+
+    async def test_first_binding_returns_privacy_tutorial_and_command_messages(self):
+        event = self.gateway_router.InboundEvent.model_validate(
+            {
+                'version': '1.0',
+                'event_id': 'bind-event',
+                'occurred_at': dt.datetime.now(dt.UTC).isoformat(),
+                'channel': 'qq',
+                'connection_id': 'qq-default',
+                'conversation': {'type': 'private', 'id': 'external-user'},
+                'sender': {'id': 'external-user', 'name': 'New User'},
+                'message': {'text': '/绑定 ABC123'},
+                'attachments': [],
+            }
+        )
+
+        with patch.object(
+            self.gateway_router.BotGateway,
+            'bind_with_code',
+            AsyncMock(return_value=SimpleNamespace(is_new_binding=True)),
+        ):
+            reply = await self.gateway_router._handle_command(
+                SimpleNamespace(), event, None, 'bind', 'ABC123'
+            )
+
+        self.assertIsInstance(reply, list)
+        self.assertEqual(len(reply), 3)
+        self.assertTrue(reply[0].startswith('【隐私协议】'))
+        self.assertTrue(reply[1].startswith('【使用教程】'))
+        self.assertTrue(reply[2].startswith('【常用指令】'))
+        wire = self.gateway_router._wire_response(event.event_id, reply)
+        self.assertEqual(wire['reply']['messages'], reply)
+        self.assertIn('/模型 <序号或名称>', wire['reply']['text'])
+
+    async def test_history_uses_chat_titles_and_numeric_selection(self):
+        now = int(time.time())
+        target = SimpleNamespace(
+            id='conversation-long-opaque-id',
+            chat_id='chat-long-opaque-id',
+            model_id='gpt-test',
+            created_at=now,
+        )
+        current = SimpleNamespace(id='current-conversation', chat_id=None, model_id=None)
+        binding = SimpleNamespace(id='binding-1', user_id='user-1')
+        user = SimpleNamespace(id='user-1', role='user')
+        event = self.gateway_router.InboundEvent.model_validate(
+            {
+                'version': '1.0',
+                'event_id': 'history-event',
+                'occurred_at': dt.datetime.now(dt.UTC).isoformat(),
+                'channel': 'wechat',
+                'connection_id': 'wechat-default',
+                'conversation': {'type': 'private', 'id': 'external-user'},
+                'sender': {'id': 'external-user'},
+                'message': {'text': '/历史'},
+                'attachments': [],
+            }
+        )
+        entries = [(target, '🤖微信-20260811-001')]
+
+        with (
+            patch.object(self.gateway_router.Users, 'get_user_by_id', AsyncMock(return_value=user)),
+            patch.object(self.gateway_router.BotGateway, 'get_or_create_conversation', AsyncMock(return_value=current)),
+            patch.object(self.gateway_router, '_conversation_history_entries', AsyncMock(return_value=entries)),
+            patch.object(self.gateway_router.BotGateway, 'update_conversation', AsyncMock()) as update_conversation,
+        ):
+            history = await self.gateway_router._handle_command(
+                SimpleNamespace(), event, binding, 'history', None
+            )
+            switched = await self.gateway_router._handle_command(
+                SimpleNamespace(), event, binding, 'conversation', '1'
+            )
+
+        self.assertIn('1. 🤖微信-20260811-001', history)
+        self.assertNotIn('conversation-long-opaque-id', history)
+        self.assertNotIn('chat-long-opaque-id', history)
+        self.assertEqual(switched, '已切换到“🤖微信-20260811-001”，请继续发送消息。')
+        update_conversation.assert_awaited_with(
+            current.id,
+            {'chat_id': target.chat_id, 'model_id': target.model_id},
+        )
 
     def test_bot_conversation_inherits_latest_document_as_full_context(self):
         old_pdf = {

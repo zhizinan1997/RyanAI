@@ -70,6 +70,30 @@ test('event IDs are isolated across channel connections', async () => {
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('backend message groups remain separate gateway reply chunks', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { replyChunkChars: { wechat: 100, qq: 100 } });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	await state.initialize();
+	const gateway = new RyanAiGateway(
+		config,
+		state,
+		{
+			async send() {
+				return {
+					text: '隐私协议\n\n使用教程\n\n常用指令',
+					messages: ['隐私协议', '使用教程', '常用指令']
+				};
+			}
+		},
+		quietLogger()
+	);
+
+	const reply = await gateway.handle(inboundEvent({ eventId: 'multi-message-reply' }));
+	assert.deepEqual(reply.chunks, ['隐私协议', '使用教程', '常用指令']);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('messages in the same conversation are serialized', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir);

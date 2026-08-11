@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.7] - 2026-08-11
+
+### Fixed
+
+- Restored the missing `b5e7c9d1a2f3` Alembic compatibility revision so existing PostgreSQL deployments can migrate to the bot gateway schema on startup.
+- Preserved the legacy `credit_log` table during upgrades to avoid deleting billing history and to keep database rollback possible.
+- Updated bot history commands to show readable Ryan AI conversation titles and support numeric conversation selection instead of exposing internal IDs.
+- Updated model commands and status replies to show user-visible model names, with switching by list number or name.
+- Added separate first-binding privacy, usage tutorial, and common-command messages for WeChat and QQ users.
+- Preserved multi-message replies through the gateway so onboarding messages and long channel replies are delivered as separate messages.
+
 ## [0.11.0.5] - 2026-08-04
 
 ### Added

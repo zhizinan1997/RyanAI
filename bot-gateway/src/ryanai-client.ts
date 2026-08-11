@@ -5,6 +5,7 @@ import type { GatewayInboundEvent, RyanAiWireEvent } from './types.js';
 
 export interface RyanAiResult {
 	text: string | null;
+	messages?: string[];
 }
 
 export interface RyanAiTransport {
@@ -35,6 +36,7 @@ interface RyanAiResponse {
 	status: 'ok' | 'ignored';
 	reply?: {
 		text: string;
+		messages?: string[];
 	} | null;
 }
 
@@ -153,6 +155,26 @@ export class RyanAiClient implements RyanAiTransport {
 		}
 		if (Array.from(parsed.reply.text).length > this.config.maxResponseTextChars) {
 			throw new RyanAiTransportError('reply_too_large');
+		}
+		if (parsed.reply.messages !== undefined) {
+			if (
+				!Array.isArray(parsed.reply.messages) ||
+				parsed.reply.messages.length === 0 ||
+				parsed.reply.messages.length > 20 ||
+				parsed.reply.messages.some(
+					(message) => typeof message !== 'string' || message.length === 0
+				)
+			) {
+				throw new RyanAiTransportError('invalid_reply_messages');
+			}
+			const totalMessageChars = parsed.reply.messages.reduce(
+				(total, message) => total + Array.from(message).length,
+				0
+			);
+			if (totalMessageChars > this.config.maxResponseTextChars) {
+				throw new RyanAiTransportError('reply_too_large');
+			}
+			return { text: parsed.reply.text, messages: parsed.reply.messages };
 		}
 		return { text: parsed.reply.text };
 	}

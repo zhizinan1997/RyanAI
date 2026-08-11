@@ -106,13 +106,18 @@ export class RyanAiGateway {
 		let releaseClaim = false;
 		try {
 			const result = await this.transport.send(event);
-			if (result.text === null || result.text === '') {
+			const messages = (result.messages?.length ? result.messages : [result.text]).filter(
+				(message): message is string => typeof message === 'string' && message.length > 0
+			);
+			if (messages.length === 0) {
 				reply = this.ignored(event.eventId);
 			} else {
 				reply = {
 					handled: true,
 					eventId: event.eventId,
-					chunks: chunkText(result.text, this.config.replyChunkChars[event.channel]),
+					chunks: messages.flatMap((message) =>
+						chunkText(message, this.config.replyChunkChars[event.channel])
+					),
 					isError: false,
 					replayed: false,
 					reason: 'ryanai'

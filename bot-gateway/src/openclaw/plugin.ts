@@ -133,7 +133,7 @@ async function handleReplyDispatch(
 	queuedFinal: boolean;
 	counts: Record<'tool' | 'block' | 'final', number>;
 }> {
-	let replyText = fallbackErrorMessage();
+	let replyChunks = [fallbackErrorMessage()];
 	let isError = true;
 	let errorPhase = 'runtime';
 	try {
@@ -145,7 +145,7 @@ async function handleReplyDispatch(
 		);
 		errorPhase = 'forward';
 		const reply = await active.client.forward(inbound);
-		replyText = reply.chunks.join('');
+		replyChunks = reply.chunks;
 		isError = reply.isError;
 	} catch (error) {
 		logger.error?.(
@@ -155,8 +155,12 @@ async function handleReplyDispatch(
 
 	let queuedFinal = false;
 	try {
-		if (replyText && event.sendPolicy !== 'deny' && event.suppressUserDelivery !== true) {
-			queuedFinal = context.dispatcher.sendFinalReply({ text: replyText, isError });
+		if (event.sendPolicy !== 'deny' && event.suppressUserDelivery !== true) {
+			for (const replyText of replyChunks) {
+				if (replyText) {
+					queuedFinal = context.dispatcher.sendFinalReply({ text: replyText, isError }) || queuedFinal;
+				}
+			}
 		}
 	} catch (error) {
 		logger.error?.(

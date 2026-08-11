@@ -96,6 +96,43 @@ _COMMAND_PATTERN = re.compile(
 )
 
 
+def _command_guide(title: str = 'Ryan AI 机器人常用指令') -> str:
+    return (
+        f'【{title}】\n'
+        '/帮助 或 /help 查看帮助\n'
+        '/状态 或 /status 查看机器人和模型\n'
+        '/积分 或 /points 查询积分\n'
+        '/模型列表 或 /models 查看可用模型\n'
+        '/模型 <序号或名称> 查看或切换模型\n'
+        '/历史 或 /history 查看历史对话\n'
+        '/会话 <序号> 继续指定对话\n'
+        '/新建 或 /new 新建对话\n'
+        '/绑定 <绑定码> 绑定账号\n'
+        '/解绑 解绑账号\n'
+        '使用方法：直接把指令发送给机器人。'
+    )
+
+
+def _first_binding_messages() -> list[str]:
+    return [
+        (
+            '【隐私协议】\n'
+            '你的 Ryan AI 账号已绑定成功。为提供机器人服务，你发送的文字、图片、文件及必要的账号标识会传输至 Ryan AI，'
+            '并保存到所绑定账号的对话记录中。请勿发送无权披露的个人信息、账号密码或其他敏感资料。'
+            '你可以随时发送 /解绑 停止机器人访问；继续使用即表示你知悉并同意上述处理方式。'
+        ),
+        (
+            '【使用教程】\n'
+            '1. 私聊中直接发送文字、图片或文件，机器人会交给 Ryan AI 处理。\n'
+            '2. 图片或文件可以附带文字，说明希望 Ryan AI 完成的任务。\n'
+            '3. 连续发送默认沿用当前对话；发送 /新建 可开始新对话。\n'
+            '4. 发送 /历史 查看最近对话，再发送 /会话 <序号> 继续指定对话。\n'
+            '5. 群聊中需要 @机器人，且该群已由管理员允许。'
+        ),
+        _command_guide('常用指令'),
+    ]
+
+
 @dataclass
 class _ConversationLockEntry:
     lock: asyncio.Lock
@@ -166,6 +203,31 @@ def format_bot_chat_title(channel: BotGatewayChannel, created_at: int, sequence:
     label = '微信' if channel == 'wechat' else 'QQ'
     date = dt.datetime.fromtimestamp(created_at, BOT_GATEWAY_CHAT_TIMEZONE).strftime('%Y%m%d')
     return f'🤖{label}-{date}-{sequence:03d}'
+
+
+def _history_chat_title(chat: Any, created_at: int) -> str:
+    title = getattr(chat, 'title', None)
+    chat_data = getattr(chat, 'chat', None)
+    if not title and isinstance(chat_data, dict):
+        title = chat_data.get('title')
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    date = dt.datetime.fromtimestamp(created_at, BOT_GATEWAY_CHAT_TIMEZONE).strftime('%Y-%m-%d')
+    return f'Ryan AI 对话 {date}'
+
+
+async def _conversation_history_entries(
+    user_id: str,
+    limit: int = 20,
+) -> list[tuple[BotGatewayConversationModel, str]]:
+    conversations = await BotGateway.list_conversations(user_id, limit=limit)
+    entries: list[tuple[BotGatewayConversationModel, str]] = []
+    for item in conversations:
+        if not item.chat_id:
+            continue
+        chat = await Chats.get_chat_by_id_and_user_id(item.chat_id, user_id)
+        entries.append((item, _history_chat_title(chat, item.created_at)))
+    return entries
 
 
 def _bot_chat_day_bounds(created_at: int) -> tuple[int, int]:
@@ -1083,12 +1145,33 @@ async def unblock_admin_binding(binding_id: str, user=Depends(get_admin_user)):
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _wire_response(event_id: str, text: str | None = None, *, ignored: bool = False) -> dict[str, Any]:
+def _wire_reply(text: str | list[str]) -> dict[str, Any] | None:
+    if isinstance(text, str):
+        return {'text': text[:BOT_GATEWAY_MAX_REPLY_CHARS]}
+
+    messages: list[str] = []
+    remaining = BOT_GATEWAY_MAX_REPLY_CHARS
+    for item in text:
+        message = item.strip()
+        if not message or remaining <= 0:
+            continue
+        message = message[:remaining]
+        messages.append(message)
+        remaining -= len(message)
+    if not messages:
+        return None
+    return {
+        'text': '\n\n'.join(messages)[:BOT_GATEWAY_MAX_REPLY_CHARS],
+        'messages': messages,
+    }
+
+
+def _wire_response(event_id: str, text: str | list[str] | None = None, *, ignored: bool = False) -> dict[str, Any]:
     return {
         'version': '1.0',
         'event_id': event_id,
         'status': 'ignored' if ignored else 'ok',
-        'reply': {'text': text[:BOT_GATEWAY_MAX_REPLY_CHARS]} if text is not None and not ignored else None,
+        'reply': _wire_reply(text) if text is not None and not ignored else None,
     }
 
 
@@ -1107,6 +1190,32 @@ async def _accessible_models(request: Request, user: UserModel) -> list[dict]:
         models = await get_all_models(request, user=user)
     models = await get_filtered_models(models, user)
     return [model for model in models if model.get('info', {}).get('meta', {}).get('hidden') is not True]
+
+
+def _model_display_name(model: dict) -> str:
+    name = model.get('name')
+    return str(name).strip() if name and str(name).strip() else '未命名模型'
+
+
+def _model_for_argument(argument: str, models: list[dict]) -> dict | None:
+    if argument.isdigit():
+        index = int(argument) - 1
+        return models[index] if 0 <= index < len(models) else None
+    normalized = argument.casefold()
+    return next(
+        (
+            model
+            for model in models
+            if str(model.get('id') or '').casefold() == normalized
+            or _model_display_name(model).casefold() == normalized
+        ),
+        None,
+    )
+
+
+def _model_name_for_id(model_id: str, models: list[dict]) -> str:
+    model = next((item for item in models if item.get('id') == model_id), None)
+    return _model_display_name(model) if model else '未命名模型'
 
 
 async def _resolve_model(
@@ -1471,21 +1580,9 @@ async def _handle_command(  # noqa: C901
     binding: BotGatewayBindingModel | None,
     command: str,
     argument: str | None,
-) -> str:
+) -> str | list[str]:
     if command == 'help':
-        return (
-            'Ryan AI 机器人常用指令：\n'
-            '/帮助 或 /help 查看帮助\n'
-            '/状态 或 /status 查看机器人和模型\n'
-            '/积分 或 /points 查询积分\n'
-            '/模型列表 或 /models 查看可用模型\n'
-            '/模型 [模型ID] 查看或切换模型\n'
-            '/历史 或 /history 查看历史对话\n'
-            '/会话 <ID> 继续指定对话\n'
-            '/新建 或 /new 新建对话\n'
-            '/绑定 <绑定码> 绑定账号\n'
-            '/解绑 解绑账号'
-        )
+        return _command_guide()
     if command == 'status' and binding is None:
         return '当前微信/QQ账号尚未绑定 Ryan AI。请先在 Ryan AI 设置中生成绑定码，再发送 /bind <绑定码>。'
     if command == 'bind':
@@ -1496,13 +1593,15 @@ async def _handle_command(  # noqa: C901
         if not argument:
             return '用法：/bind <绑定码>'
         try:
-            await BotGateway.bind_with_code(
+            bound = await BotGateway.bind_with_code(
                 connection_id=event.connection_id,
                 channel=event.channel,
                 external_user_id=event.sender.id,
                 display_name=event.sender.name,
                 code_hash=hash_bot_gateway_binding_code(argument),
             )
+            if bound.is_new_binding:
+                return _first_binding_messages()
             return '绑定成功。现在可以直接发送消息调用 Ryan AI。'
         except BotGatewayBindingError as exc:
             messages = {
@@ -1541,39 +1640,70 @@ async def _handle_command(  # noqa: C901
         credit = Credits.init_credit_by_user_id(user.id)
         return f'当前积分：{credit.credit}'
     if command == 'models':
-        available = '\n'.join(f"- {item['id']}" for item in await _accessible_models(request, user))
-        return f'可用模型：\n{available or "（无可用模型）"}'
-    if command == 'history':
-        conversations = await BotGateway.list_conversations(user.id, limit=20)
-        if not conversations:
-            return '暂无 Ryan AI 历史会话。'
-        return '历史会话：\n' + '\n'.join(
-            f'- {item.id}: {item.chat_id or "尚未产生网页会话"}' for item in conversations
+        models = await _accessible_models(request, user)
+        available = '\n'.join(
+            f'{index}. {_model_display_name(item)}' for index, item in enumerate(models, start=1)
         )
+        suffix = '\n发送 /模型 <序号或名称> 切换模型。' if models else ''
+        return f'可用模型：\n{available or "（无可用模型）"}{suffix}'
+    if command == 'history':
+        entries = await _conversation_history_entries(user.id, limit=20)
+        if not entries:
+            return '暂无 Ryan AI 历史会话。'
+        lines = [
+            f'{index}. {title}{"（当前）" if item.chat_id == conversation.chat_id else ""}'
+            for index, (item, title) in enumerate(entries, start=1)
+        ]
+        return '历史会话：\n' + '\n'.join(lines) + '\n发送 /会话 <序号> 继续，例如：/会话 1'
     if command == 'conversation':
         if not argument:
-            return '用法：/conversation <会话ID>'
-        target = await BotGateway.get_conversation(argument, user.id)
+            return '用法：/会话 <序号>，请先发送 /历史 查看列表。'
+        title: str | None = None
+        if argument.isdigit():
+            entries = await _conversation_history_entries(user.id, limit=20)
+            index = int(argument) - 1
+            if index < 0 or index >= len(entries):
+                return '会话序号不存在，请重新发送 /历史 查看列表。'
+            target, title = entries[index]
+        else:
+            target = await BotGateway.get_conversation(argument, user.id)
         if target is None or not target.chat_id:
             return '会话不存在，或尚未产生 Ryan AI 聊天记录。'
         await BotGateway.update_conversation(conversation.id, {'chat_id': target.chat_id, 'model_id': target.model_id})
-        return f'已切换到会话 {target.id}，请继续发送消息。'
+        if title is None:
+            chat = await Chats.get_chat_by_id_and_user_id(target.chat_id, user.id)
+            title = _history_chat_title(chat, target.created_at)
+        return f'已切换到“{title}”，请继续发送消息。'
     model_id, models = await _resolve_model(request, user, conversation)
     if command == 'status':
-        return f'已绑定 Ryan AI；渠道：{event.channel}；当前模型：{model_id}；连接状态正常。'
+        return (
+            f'已绑定 Ryan AI；渠道：{event.channel}；'
+            f'当前模型：{_model_name_for_id(model_id, models)}；连接状态正常。'
+        )
     if command == 'model':
         if not argument:
-            available = '、'.join(model['id'] for model in models[:20])
-            return f'当前模型：{model_id}\n可用模型：{available}'
+            available = '\n'.join(
+                f'{index}. {_model_display_name(model)}'
+                for index, model in enumerate(models[:20], start=1)
+            )
+            return (
+                f'当前模型：{_model_name_for_id(model_id, models)}\n'
+                f'可用模型：\n{available}\n发送 /模型 <序号或名称> 切换模型。'
+            )
         if argument.lower() == 'default':
             await BotGateway.update_conversation(conversation.id, {'model_id': None})
-            refreshed, _ = await _resolve_model(request, user, conversation.model_copy(update={'model_id': None}))
-            return f'已恢复默认模型：{refreshed}'
-        available = {model['id'] for model in models}
-        if argument not in available:
-            return '模型不存在或当前 Ryan AI 账号无权使用。发送 /model 查看可用模型。'
-        await BotGateway.update_conversation(conversation.id, {'model_id': argument})
-        return f'当前会话已切换到模型：{argument}'
+            refreshed, refreshed_models = await _resolve_model(
+                request,
+                user,
+                conversation.model_copy(update={'model_id': None}),
+            )
+            return f'已恢复默认模型：{_model_name_for_id(refreshed, refreshed_models)}'
+        selected = _model_for_argument(argument, models)
+        if selected is None:
+            return '模型不存在或当前 Ryan AI 账号无权使用。发送 /模型列表 查看可用模型。'
+        selected_id = str(selected['id'])
+        await BotGateway.update_conversation(conversation.id, {'model_id': selected_id})
+        return f'当前会话已切换到模型：{_model_display_name(selected)}'
     return '未知命令。发送 /help 查看帮助。'
 
 

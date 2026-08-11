@@ -322,6 +322,7 @@ class BotGatewayBindingModel(BaseModel):
     last_seen_at: int | None = None
     created_at: int
     updated_at: int
+    is_new_binding: bool = Field(default=False, exclude=True)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -709,6 +710,7 @@ class BotGatewayTable:
             if binding and binding.enabled and binding.user_id != code.user_id:
                 raise BotGatewayBindingError('identity_already_bound')
 
+            is_new_binding = binding is None
             if binding is None:
                 binding = BotGatewayBinding(
                     id=str(uuid4()),
@@ -761,7 +763,9 @@ class BotGatewayTable:
                 raise BotGatewayBindingError('invalid_or_expired_code')
             await session.commit()
             await session.refresh(binding)
-            return BotGatewayBindingModel.model_validate(binding)
+            return BotGatewayBindingModel.model_validate(binding).model_copy(
+                update={'is_new_binding': is_new_binding}
+            )
 
     async def list_bindings(
         self,

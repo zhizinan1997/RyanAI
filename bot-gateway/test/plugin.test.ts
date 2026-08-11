@@ -8,12 +8,12 @@ import { testConfig } from './helpers.js';
 test('RyanAI bridge claims global reply_dispatch before any OpenClaw model hook', async () => {
 	const handlers = new Map<string, (...args: any[]) => Promise<unknown> | unknown>();
 	let forwarded: GatewayInboundEvent | undefined;
-	let queuedText = '';
+	const queuedTexts: string[] = [];
 	let modelHookCalled = false;
 	const reply: GatewayReply = {
 		handled: true,
 		eventId: 'qq-message-reply-dispatch-1',
-		chunks: ['RyanAI reply'],
+		chunks: ['Privacy notice', 'Usage tutorial'],
 		isError: false,
 		replayed: false,
 		reason: 'ryanai'
@@ -56,12 +56,12 @@ test('RyanAI bridge claims global reply_dispatch before any OpenClaw model hook'
 		{
 			dispatcher: {
 				sendFinalReply(payload: { text?: string }): boolean {
-					queuedText = payload.text || '';
+					queuedTexts.push(payload.text || '');
 					return true;
 				},
 				markComplete(): void {},
 				getQueuedCounts(): { tool: number; block: number; final: number } {
-					return { tool: 0, block: 0, final: 1 };
+					return { tool: 0, block: 0, final: 2 };
 				}
 			},
 			recordProcessed(): void {},
@@ -72,12 +72,12 @@ test('RyanAI bridge claims global reply_dispatch before any OpenClaw model hook'
 	assert.deepEqual(result, {
 		handled: true,
 		queuedFinal: true,
-		counts: { tool: 0, block: 0, final: 1 }
+		counts: { tool: 0, block: 0, final: 2 }
 	});
 	assert.equal(forwarded?.connectionId, 'qq-default');
 	assert.equal(forwarded?.conversation.type, 'group');
 	assert.equal(forwarded?.message.mentionsBot, true);
-	assert.equal(queuedText, 'RyanAI reply');
+	assert.deepEqual(queuedTexts, ['Privacy notice', 'Usage tutorial']);
 	assert.equal(handlers.has('before_dispatch'), false);
 	const modelHandler = handlers.get('model_call_started');
 	modelHandler?.({}, {});
