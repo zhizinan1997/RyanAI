@@ -6,6 +6,7 @@ import {
 	createBotGatewayBindingCode,
 	deleteBotGatewayBinding,
 	getAdminBotGatewayBindings,
+	getBotGatewayConnections,
 	getBotGatewayLoginState,
 	getBotGatewayUserLoginState,
 	logoutBotGateway,
@@ -169,5 +170,29 @@ describe('bot gateway API contract', () => {
 
 		expect(connection).not.toHaveProperty('app_id');
 		expect(connection).not.toHaveProperty('app_secret');
+	});
+
+	it('keeps user ownership details on admin connection rows', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			jsonResponse([
+				{
+					id: 'bot-qq-user-1',
+					channel: 'qq',
+					owner_user_id: 'user-1',
+					owner_name: 'Test User',
+					owner_username: 'tester',
+					owner_email: 'user@example.com',
+					credentials_configured: true
+				}
+			])
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const [connection] = await getBotGatewayConnections('token');
+
+		expect(connection.owner_user_id).toBe('user-1');
+		expect(connection.owner_name).toBe('Test User');
+		expect(connection.owner_username).toBe('tester');
+		expect(connection.owner_email).toBe('user@example.com');
 	});
 });

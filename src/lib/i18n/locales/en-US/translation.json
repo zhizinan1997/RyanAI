@@ -3480,6 +3480,10 @@
   "Tu": "",
   "Unlimited": "",
   "We": "",
+  "Disconnect QQ bot": "Disconnect QQ bot",
+  "Disconnect WeChat bot": "Disconnect WeChat bot",
+  "Disconnecting will clear the bot credentials. You must bind it again before using it. Continue?": "Disconnecting will clear the bot credentials. You must bind it again before using it. Continue?",
+  "{{bot}} bot disconnected. Credentials were cleared.": "{{bot}} bot disconnected. Credentials were cleared.",
   "and": "",
   "and {{COUNT}} others": "",
   "for": "",
@@ -3496,5 +3500,13 @@
   "{{count}} groups": "",
   "{{count}} of {{total}} accessible": "",
   "{{count}} selected": "",
-  "{{count}} users": ""
+  "{{count}} users": "",
+  "User bot connections": "User bot connections",
+  "Bot accounts appear here as soon as a user saves credentials or completes login.": "Bot accounts appear here as soon as a user saves credentials or completes login.",
+  "Search by user or bot account": "Search by user or bot account",
+  "Search user bot connections": "Search user bot connections",
+  "Account pending": "Account pending",
+  "Bound": "Bound",
+  "No user bot connections match your search.": "No user bot connections match your search.",
+  "No user bot connections found.": "No user bot connections found."
 }

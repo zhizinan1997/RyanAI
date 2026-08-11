@@ -496,7 +496,19 @@ class BotGatewayTable:
             else:
                 item.enabled = enabled
                 item.updated_at = now
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                result = await session.execute(
+                    select(BotGatewayConnection).where(
+                        BotGatewayConnection.owner_user_id == user_id,
+                        BotGatewayConnection.channel == channel,
+                    )
+                )
+                item = result.scalars().first()
+                if item is None:
+                    raise
             await session.refresh(item)
             return BotGatewayConnectionModel.model_validate(item)
 
@@ -636,7 +648,10 @@ class BotGatewayTable:
         administrators can audit/block it and duplicate events remain scoped.
         """
         async with get_async_db_context(db) as session:
-            connection = await session.get(BotGatewayConnection, connection_id)
+            connection_stmt = select(BotGatewayConnection).where(BotGatewayConnection.id == connection_id)
+            if session.bind and session.bind.dialect.name == 'postgresql':
+                connection_stmt = connection_stmt.with_for_update()
+            connection = (await session.execute(connection_stmt)).scalars().first()
             if connection is None or not connection.owner_user_id:
                 return None
             result = await session.execute(
@@ -648,6 +663,17 @@ class BotGatewayTable:
             item = result.scalars().first()
             now = int(time.time())
             if item is None:
+                existing = (
+                    await session.execute(
+                        select(BotGatewayBinding).where(
+                            BotGatewayBinding.connection_id == connection_id,
+                            BotGatewayBinding.enabled.is_(True),
+                            BotGatewayBinding.blocked.is_(False),
+                        )
+                    )
+                ).scalars().first()
+                if existing is not None:
+                    return None
                 item = BotGatewayBinding(
                     id=str(uuid4()), connection_id=connection_id,
                     user_id=connection.owner_user_id, external_user_id=external_user_id,
@@ -945,20 +971,32 @@ class BotGatewayTable:
                     raise
             return BotGatewayConversationModel.model_validate(item)
 
-    async def get_conversation(self, conversation_id: str, user_id: str, db: AsyncSession | None = None):
+    async def get_conversation(
+        self,
+        conversation_id: str,
+        user_id: str,
+        binding_id: str | None = None,
+        db: AsyncSession | None = None,
+    ):
         async with get_async_db_context(db) as session:
             item = await session.get(BotGatewayConversation, conversation_id)
-            if item is None or item.user_id != user_id:
+            if item is None or item.user_id != user_id or (binding_id is not None and item.binding_id != binding_id):
                 return None
             return BotGatewayConversationModel.model_validate(item)
 
-    async def list_conversations(self, user_id: str, limit: int = 20, db: AsyncSession | None = None):
+    async def list_conversations(
+        self,
+        user_id: str,
+        limit: int = 20,
+        binding_id: str | None = None,
+        db: AsyncSession | None = None,
+    ):
         async with get_async_db_context(db) as session:
+            stmt = select(BotGatewayConversation).where(BotGatewayConversation.user_id == user_id)
+            if binding_id is not None:
+                stmt = stmt.where(BotGatewayConversation.binding_id == binding_id)
             result = await session.execute(
-                select(BotGatewayConversation)
-                .where(BotGatewayConversation.user_id == user_id)
-                .order_by(desc(BotGatewayConversation.updated_at))
-                .limit(max(1, min(limit, 100)))
+                stmt.order_by(desc(BotGatewayConversation.updated_at)).limit(max(1, min(limit, 100)))
             )
             return [BotGatewayConversationModel.model_validate(item) for item in result.scalars().all()]
 

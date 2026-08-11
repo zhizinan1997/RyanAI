@@ -103,19 +103,29 @@
 		loginSession = null;
 		busyChannel = 'wechat';
 		showLogin = true;
+		// Start polling immediately. The sidecar may have created the QR code
+		// before the initial login request finishes.
+		loginPoll = setInterval(pollLogin, 1000);
 		try {
 			loginSession = await beginBotGatewayUserLogin(localStorage.token);
-			if (!loginFinished(loginSession.state)) loginPoll = setInterval(pollLogin, 2000);
+			if (loginFinished(loginSession.state)) stopPolling();
 		} catch (error) {
-			showLogin = false;
-			toast.error(error instanceof Error ? error.message : $i18n.t('Failed to request WeChat QR code.'));
+			// A slow initial response must not hide a QR code obtained by polling.
+			if (!loginSession?.qr_code) {
+				showLogin = false;
+				stopPolling();
+				toast.error(error instanceof Error ? error.message : $i18n.t('Failed to request WeChat QR code.'));
+			}
 		} finally { busyChannel = null; }
 	};
 	const logout = async (channel: BotGatewayChannel) => {
+		const botLabel = channel === 'qq' ? 'QQ' : $i18n.t('WeChat');
+		if (!window.confirm($i18n.t('Disconnecting will clear the bot credentials. You must bind it again before using it. Continue?'))) return;
 		busyChannel = channel;
 		try {
 			await logoutBotGatewayUserConnection(localStorage.token, channel);
-			connections = connections.map((item) => item.channel === channel ? { ...item, configured: false, status: 'logged_out', account_id: null, account_name: null } : item);
+			connections = await getBotGatewayUserConnections(localStorage.token);
+			toast.success($i18n.t('{{bot}} bot disconnected. Credentials were cleared.', { bot: botLabel }));
 		} catch (error) { toast.error(error instanceof Error ? error.message : $i18n.t('Failed to disconnect bot.')); }
 		finally { busyChannel = null; }
 	};
@@ -184,11 +194,11 @@
 			<UserSettingSection title={$i18n.t('Your QQ bot')}>
 				<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600">{$i18n.t('Create a bot on the QQ Bot Platform, then enter its AppID and AppSecret to bind it.')}</p>
 				<a class="mb-2 inline-block text-[0.6875rem] text-blue-600 hover:underline dark:text-blue-400" href="https://q.qq.com/qqbot/" target="_blank" rel="noreferrer">{$i18n.t('Go to QQ Bot Platform to apply for credentials')} ↗</a>
-				<div class="flex items-center justify-between rounded-xl border border-gray-100/80 p-3 dark:border-white/[0.06]"><div><div class="text-xs text-gray-700 dark:text-gray-300">QQ <span class="ml-1 text-[0.6875rem] text-gray-400">{statusText(qqConnection)}</span></div>{#if qqConnection?.account_name}<div class="mt-1 text-[0.6875rem] text-gray-400">{qqConnection.account_name}</div>{/if}</div><div class="flex gap-1.5"><button type="button" class={buttonClass} on:click={() => showQQ = true} disabled={!settings.qq_enabled}>{qqConnection?.configured ? $i18n.t('Replace credentials') : $i18n.t('Bind QQ bot')}</button>{#if qqConnection?.configured}<button type="button" class={buttonClass} on:click={() => logout('qq')} disabled={busyChannel === 'qq'}>{$i18n.t('Disconnect')}</button>{/if}</div></div>
+				<div class="flex items-center justify-between rounded-xl border border-gray-100/80 p-3 dark:border-white/[0.06]"><div><div class="text-xs text-gray-700 dark:text-gray-300">QQ <span class="ml-1 text-[0.6875rem] text-gray-400">{statusText(qqConnection)}</span></div>{#if qqConnection?.account_name}<div class="mt-1 text-[0.6875rem] text-gray-400">{qqConnection.account_name}</div>{/if}</div><div class="flex gap-1.5"><button type="button" class={buttonClass} on:click={() => showQQ = true} disabled={!settings.qq_enabled}>{qqConnection?.configured ? $i18n.t('Replace credentials') : $i18n.t('Bind QQ bot')}</button>{#if qqConnection?.configured}<button type="button" class={buttonClass} on:click={() => logout('qq')} disabled={busyChannel === 'qq'}>{$i18n.t('Disconnect QQ bot')}</button>{/if}</div></div>
 			</UserSettingSection>
 			<UserSettingSection title={$i18n.t('Your WeChat bot')}>
 				<p class="text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600">{$i18n.t('First open WeChat → Settings → Plugins and enable WeChat ClawBot. Then click the button below and scan the QR code in WeChat.')}</p>
-				<div class="flex items-center justify-between rounded-xl border border-gray-100/80 p-3 dark:border-white/[0.06]"><div><div class="text-xs text-gray-700 dark:text-gray-300">{$i18n.t('WeChat')} <span class="ml-1 text-[0.6875rem] text-gray-400">{statusText(wechatConnection)}</span></div>{#if wechatConnection?.account_name}<div class="mt-1 text-[0.6875rem] text-gray-400">{wechatConnection.account_name}</div>{/if}</div><div class="flex gap-1.5"><button type="button" class={buttonClass} on:click={loginWeChat} disabled={!settings.wechat_enabled || busyChannel === 'wechat'}>{$i18n.t('Scan QR to bind')}</button>{#if wechatConnection?.configured}<button type="button" class={buttonClass} on:click={() => logout('wechat')} disabled={busyChannel === 'wechat'}>{$i18n.t('Disconnect')}</button>{/if}</div></div>
+				<div class="flex items-center justify-between rounded-xl border border-gray-100/80 p-3 dark:border-white/[0.06]"><div><div class="text-xs text-gray-700 dark:text-gray-300">{$i18n.t('WeChat')} <span class="ml-1 text-[0.6875rem] text-gray-400">{statusText(wechatConnection)}</span></div>{#if wechatConnection?.account_name}<div class="mt-1 text-[0.6875rem] text-gray-400">{wechatConnection.account_name}</div>{/if}</div><div class="flex gap-1.5"><button type="button" class={buttonClass} on:click={loginWeChat} disabled={!settings.wechat_enabled || busyChannel === 'wechat'}>{$i18n.t('Scan QR to bind')}</button>{#if wechatConnection?.configured}<button type="button" class={buttonClass} on:click={() => logout('wechat')} disabled={busyChannel === 'wechat'}>{$i18n.t('Disconnect WeChat bot')}</button>{/if}</div></div>
 			</UserSettingSection>
 			{#if !settings.available}<div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">{$i18n.t('Messaging bots are disabled by the administrator.')}</div>{/if}
 		</div>

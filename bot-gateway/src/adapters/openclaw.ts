@@ -122,7 +122,7 @@ function validOwner(value: string): string {
 }
 
 function validId(value: string): string {
-	if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(value)) {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/.test(value)) {
 		throw new AdapterError('invalid_connection_id', 400);
 	}
 	return value;
@@ -181,8 +181,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 			}
 			this.started = true;
 			this.detail = 'Per-user OpenClaw channel hosts are restoring; RyanAI owns all inference';
+			// Credential materialization temporarily points OpenClaw's parent-process
+			// environment at a connection-specific directory. Restore hosts in order
+			// so two users can never write WeChat credentials into each other's state.
 			for (const connection of this.state.listConnections()) {
-				this.scheduleRuntimeInitialization(connection);
+				await this.ensureRuntime(connection);
 			}
 		});
 	}

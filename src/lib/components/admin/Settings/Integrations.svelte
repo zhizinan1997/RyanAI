@@ -97,6 +97,7 @@
 	let botConnections: BotGatewayConnection[] | null = null;
 	let botLoadError = false;
 	let botBusy: Record<string, boolean> = {};
+	let userBotQuery = '';
 	let adminBindings: BotGatewayBinding[] | null = null;
 	let adminBindingsLoading = false;
 	let adminBindingsLoadError = false;
@@ -144,6 +145,14 @@
 		`${binding.display_name ?? ''} ${binding.user_name ?? ''} ${binding.user_username ?? ''} ${binding.user_email ?? ''} ${binding.external_user_id} ${binding.user_id} ${binding.channel}`
 			.toLocaleLowerCase()
 			.includes(bindingQuery.trim().toLocaleLowerCase())
+	);
+	$: userBotConnections = (botConnections ?? []).filter(
+		(connection) => connection.owner_user_id && connection.credentials_configured
+	);
+	$: filteredUserBotConnections = userBotConnections.filter((connection) =>
+		`${connection.owner_name ?? ''} ${connection.owner_username ?? ''} ${connection.owner_email ?? ''} ${connection.owner_user_id ?? ''} ${connection.account_name ?? ''} ${connection.account_id ?? ''} ${connection.channel}`
+			.toLocaleLowerCase()
+			.includes(userBotQuery.trim().toLocaleLowerCase())
 	);
 	$: if (!showLoginModal && (loginPoll || loginSession || loginLoading || loginConnectionId)) {
 		resetLoginState();
@@ -365,22 +374,31 @@
 		loginConnectionId = connection.id;
 		loginLoading = true;
 		showLoginModal = true;
+		// Poll immediately because the sidecar can expose the QR code before
+		// the initial login request returns to the browser.
+		loginPoll = setInterval(pollLoginState, 1000);
 		try {
 			const session = await beginBotGatewayLogin(localStorage.token, connection.id);
 			if (generation !== loginGeneration || !showLoginModal) return;
 			loginSession = session;
 			if (loginSucceeded(session.state)) {
+				stopLoginPolling();
 				await loadBotConnections();
 				toast.success(
 					$i18n.t('{{channel}} bot connected.', { channel: channelTitle(connection.channel) })
 				);
-			} else if (!loginFinished(session.state)) {
-				loginPoll = setInterval(pollLoginState, 2000);
+			} else if (loginFinished(session.state)) {
+				stopLoginPolling();
 			}
 		} catch (error) {
 			if (generation === loginGeneration) {
-				showLoginModal = false;
-				toast.error(error instanceof Error ? error.message : $i18n.t('Failed to start QR login.'));
+				if (!loginSession?.qr_code) {
+					showLoginModal = false;
+					stopLoginPolling();
+					toast.error(
+						error instanceof Error ? error.message : $i18n.t('Failed to start QR login.')
+					);
+				}
 			}
 		} finally {
 			if (generation === loginGeneration) loginLoading = false;
@@ -1075,6 +1093,89 @@
 						<div class="flex items-center justify-between gap-3">
 							<div>
 								<div class="text-xs font-medium text-gray-700 dark:text-gray-300">
+									{$i18n.t('User bot connections')}
+								</div>
+								<div class="mt-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+									{$i18n.t(
+										'Bot accounts appear here as soon as a user saves credentials or completes login.'
+									)}
+								</div>
+							</div>
+							<button
+								type="button"
+								class={secondaryButtonClass}
+								on:click={() => loadBotConnections(true)}
+							>
+								{$i18n.t('Refresh')}
+							</button>
+						</div>
+
+						<input
+							class="mt-3 {inputClass}"
+							type="search"
+							bind:value={userBotQuery}
+							placeholder={$i18n.t('Search by user or bot account')}
+							aria-label={$i18n.t('Search user bot connections')}
+						/>
+
+						{#if botConnections === null}
+							<div class="flex h-20 items-center justify-center">
+								<Spinner className="size-5" />
+							</div>
+						{:else if filteredUserBotConnections.length > 0}
+							<div
+								class="mt-2 max-h-56 overflow-y-auto rounded-xl border border-gray-100/80 px-3 scrollbar-hover dark:border-white/[0.06]"
+							>
+								{#each filteredUserBotConnections as connection (connection.id)}
+									<div
+										class="flex items-center justify-between gap-3 border-b border-gray-100 py-2.5 last:border-b-0 dark:border-white/[0.05]"
+									>
+										<div class="min-w-0">
+											<div class="truncate text-xs text-gray-700 dark:text-gray-300">
+												{connection.owner_name ||
+													connection.owner_username ||
+													connection.owner_email ||
+													connection.owner_user_id}
+											</div>
+											<div class="truncate text-[0.6875rem] text-gray-400 dark:text-gray-600">
+												{#if connection.owner_username || connection.owner_email}
+													{connection.owner_username || connection.owner_email} ·
+												{/if}
+												{channelTitle(connection.channel)} · {connection.account_name ||
+													connection.account_id ||
+													$i18n.t('Account pending')}
+											</div>
+										</div>
+										<div class="flex shrink-0 items-center gap-1.5">
+											<span
+												class="rounded-full bg-blue-50 px-1.5 py-0.5 text-[0.625rem] text-blue-700 dark:bg-blue-950/30 dark:text-blue-300"
+											>
+												{$i18n.t('Bound')}
+											</span>
+											<span
+												class="rounded-full px-1.5 py-0.5 text-[0.625rem] {statusClass(
+													connection.status
+												)}"
+											>
+												{statusLabel(connection.status)}
+											</span>
+										</div>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<div class="py-4 text-xs text-gray-400 dark:text-gray-600">
+								{userBotQuery
+									? $i18n.t('No user bot connections match your search.')
+									: $i18n.t('No user bot connections found.')}
+							</div>
+						{/if}
+					</div>
+
+					<div class="mt-1 border-t border-gray-100/80 pt-3 dark:border-white/[0.06]">
+						<div class="flex items-center justify-between gap-3">
+							<div>
+								<div class="text-xs font-medium text-gray-700 dark:text-gray-300">
 									{$i18n.t('User bindings')}
 								</div>
 								<div class="mt-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
@@ -1122,7 +1223,10 @@
 										<div class="min-w-0">
 											<div class="flex items-center gap-1.5">
 												<div class="truncate text-xs text-gray-700 dark:text-gray-300">
-													{binding.user_name || binding.user_username || binding.user_email || binding.user_id}
+													{binding.user_name ||
+														binding.user_username ||
+														binding.user_email ||
+														binding.user_id}
 												</div>
 												<span
 													class="rounded-full px-1.5 py-0.5 text-[0.625rem] {binding.blocked
@@ -1142,9 +1246,13 @@
 												class="truncate font-mono text-[0.6875rem] text-gray-400 dark:text-gray-600"
 											>
 												{#if binding.user_username || binding.user_email}
-													{$i18n.t('Ryan AI account')}: {binding.user_username || binding.user_email} · {$i18n.t('Nickname')}: {binding.user_name || '—'}<br />
+													{$i18n.t('Ryan AI account')}: {binding.user_username ||
+														binding.user_email} · {$i18n.t('Nickname')}: {binding.user_name ||
+														'—'}<br />
 												{/if}
-												{channelTitle(binding.channel)} · {binding.external_user_id} · {$i18n.t('User ID')}: {binding.user_id}
+												{channelTitle(binding.channel)} · {binding.external_user_id} · {$i18n.t(
+													'User ID'
+												)}: {binding.user_id}
 											</div>
 										</div>
 										<button

@@ -1,4 +1,4 @@
-"""retain the legacy credit log table for upgrade and rollback safety"""
+"""retain the credit log table for history, audits, and rollback safety"""
 
 from collections.abc import Sequence
 
@@ -9,8 +9,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Newer code no longer writes credit_log, but existing rows are billing
-    # history and must remain available for audits and database rollback.
+    # Credit history remains active and must survive upgrades and rollbacks.
     pass
 
 

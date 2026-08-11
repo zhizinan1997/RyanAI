@@ -133,6 +133,22 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
             )
         self.assertEqual(count, 1)
 
+    async def test_user_connection_creation_is_idempotent_under_concurrency(self):
+        connections = await asyncio.gather(
+            self.gateway.ensure_user_connection('user-1', 'wechat'),
+            self.gateway.ensure_user_connection('user-1', 'wechat'),
+        )
+
+        self.assertEqual(connections[0].id, connections[1].id)
+        async with self.sessions() as session:
+            count = await session.scalar(
+                select(func.count()).select_from(BotGatewayConnection).where(
+                    BotGatewayConnection.owner_user_id == 'user-1',
+                    BotGatewayConnection.channel == 'wechat',
+                )
+            )
+        self.assertEqual(count, 1)
+
     async def test_failed_and_stale_events_can_be_retried_without_old_lease_writes(self):
         values = {
             'connection_id': 'qq-default',
@@ -449,7 +465,7 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.gateway_router._model_display_name({'id': 'hidden-id'}), '未命名模型')
         self.assertEqual(self.gateway_router._model_name_for_id('missing-id', models), '未命名模型')
 
-    async def test_first_binding_returns_privacy_tutorial_and_command_messages(self):
+    async def test_every_successful_binding_returns_privacy_tutorial_and_command_messages(self):
         event = self.gateway_router.InboundEvent.model_validate(
             {
                 'version': '1.0',
@@ -482,6 +498,17 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         self.assertEqual(wire['reply']['messages'], reply)
         self.assertIn('/模型 <序号或名称>', wire['reply']['text'])
 
+        with patch.object(
+            self.gateway_router.BotGateway,
+            'bind_with_code',
+            AsyncMock(return_value=SimpleNamespace(is_new_binding=False)),
+        ):
+            rebound_reply = await self.gateway_router._handle_command(
+                SimpleNamespace(), event, None, 'bind', 'NEW456'
+            )
+
+        self.assertEqual(rebound_reply, reply)
+
     async def test_history_uses_chat_titles_and_numeric_selection(self):
         now = int(time.time())
         target = SimpleNamespace(
@@ -511,7 +538,11 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         with (
             patch.object(self.gateway_router.Users, 'get_user_by_id', AsyncMock(return_value=user)),
             patch.object(self.gateway_router.BotGateway, 'get_or_create_conversation', AsyncMock(return_value=current)),
-            patch.object(self.gateway_router, '_conversation_history_entries', AsyncMock(return_value=entries)),
+            patch.object(
+                self.gateway_router,
+                '_conversation_history_entries',
+                AsyncMock(return_value=entries),
+            ) as history_entries,
             patch.object(self.gateway_router.BotGateway, 'update_conversation', AsyncMock()) as update_conversation,
         ):
             history = await self.gateway_router._handle_command(
@@ -525,6 +556,7 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         self.assertNotIn('conversation-long-opaque-id', history)
         self.assertNotIn('chat-long-opaque-id', history)
         self.assertEqual(switched, '已切换到“🤖微信-20260811-001”，请继续发送消息。')
+        history_entries.assert_awaited_with(user.id, binding.id, limit=20)
         update_conversation.assert_awaited_with(
             current.id,
             {'chat_id': target.chat_id, 'model_id': target.model_id},
@@ -712,6 +744,92 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         values = update_connection.await_args.args[1]
         self.assertTrue(values['credentials_configured'])
         self.assertTrue(self.gateway_router._connection_response(result, remote)['configured'])
+
+    async def test_admin_connections_include_owner_identity_for_saved_user_bot(self):
+        now = int(time.time())
+        connection = BotGatewayConnectionModel(
+            id='bot-qq-user-1',
+            channel='qq',
+            name='QQ',
+            enabled=True,
+            status='degraded',
+            credentials_configured=True,
+            account_id='1905398424',
+            owner_user_id='user-1',
+            created_at=now,
+            updated_at=now,
+        )
+        owner = SimpleNamespace(
+            id='user-1',
+            name='Test User',
+            username='tester',
+            email='user@example.com',
+        )
+        with (
+            patch.object(
+                self.gateway_router.BotGateway,
+                'list_connections',
+                AsyncMock(return_value=[connection]),
+            ),
+            patch.object(
+                self.gateway_router.Users,
+                'get_user_by_id',
+                AsyncMock(return_value=owner),
+            ),
+            patch.object(self.gateway_router, '_env_enabled', return_value=False),
+        ):
+            response = await self.gateway_router.get_connections(
+                user=SimpleNamespace(id='admin-1'),
+                db=SimpleNamespace(),
+            )
+
+        self.assertEqual(len(response), 1)
+        self.assertEqual(response[0]['owner_user_id'], 'user-1')
+        self.assertEqual(response[0]['owner_name'], 'Test User')
+        self.assertEqual(response[0]['owner_username'], 'tester')
+        self.assertEqual(response[0]['owner_email'], 'user@example.com')
+        self.assertTrue(response[0]['credentials_configured'])
+
+    async def test_admin_connections_fall_back_to_database_when_sidecar_is_unavailable(self):
+        now = int(time.time())
+        connection = BotGatewayConnectionModel(
+            id='bot-qq-user-1',
+            channel='qq',
+            name='QQ',
+            enabled=True,
+            status='degraded',
+            credentials_configured=True,
+            owner_user_id='user-1',
+            created_at=now,
+            updated_at=now,
+        )
+        owner = SimpleNamespace(name='Test User', username='tester', email='user@example.com')
+        with (
+            patch.object(
+                self.gateway_router.BotGateway,
+                'list_connections',
+                AsyncMock(return_value=[connection]),
+            ),
+            patch.object(
+                self.gateway_router.Users,
+                'get_user_by_id',
+                AsyncMock(return_value=owner),
+            ),
+            patch.object(self.gateway_router, '_env_enabled', return_value=True),
+            patch.object(
+                self.gateway_router,
+                '_sidecar_request',
+                AsyncMock(side_effect=self.gateway_router.HTTPException(status_code=503)),
+            ),
+        ):
+            response = await self.gateway_router.get_connections(
+                user=SimpleNamespace(id='admin-1'),
+                db=SimpleNamespace(),
+            )
+
+        self.assertEqual(response[0]['id'], connection.id)
+        self.assertEqual(response[0]['owner_name'], 'Test User')
+        self.assertTrue(response[0]['credentials_configured'])
 
     async def test_conversation_lock_registry_releases_entries_after_waiters_finish(self):
         active = 0

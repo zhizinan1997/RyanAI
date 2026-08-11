@@ -1,9 +1,6 @@
 name: Create and publish slim Docker image
 
 on:
-  release:
-    types:
-      - published
   workflow_call:
     inputs:
       release_tag:
@@ -11,7 +8,7 @@ on:
         type: string
 
 concurrency:
-  group: docker-${{ github.event.release.tag_name || inputs.release_tag }}
+  group: docker-${{ inputs.release_tag }}
   cancel-in-progress: true
 
 env:
@@ -28,10 +25,9 @@ jobs:
       - name: Resolve release tag
         id: release
         env:
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
           RELEASE_INPUT_TAG: ${{ inputs.release_tag }}
         run: |
-          tag="${RELEASE_EVENT_TAG:-$RELEASE_INPUT_TAG}"
+          tag="$RELEASE_INPUT_TAG"
           if [ -z "$tag" ]; then
             echo "Release tag is required" >&2
             exit 1

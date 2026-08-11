@@ -41,6 +41,18 @@ test('duplicate event IDs call RyanAI once and reuse the reply', async () => {
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('abandoned processing events are reclaimable after the short processing lease', async () => {
+	const dataDir = await tempDataDir();
+	const state = new GatewayStateStore(dataDir, 24 * 60 * 60 * 1000);
+	await state.initialize();
+
+	assert.deepEqual(await state.claimEvent('abandoned-event', 1_000), { status: 'new' });
+	assert.deepEqual(await state.claimEvent('abandoned-event', 1_000 + 15 * 60 * 1000 + 1), {
+		status: 'new'
+	});
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('event IDs are isolated across channel connections', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir);

@@ -23,6 +23,8 @@ const EMPTY_STATE: PersistedState = {
 	groups: {}
 };
 
+const PROCESSING_LEASE_MS = 15 * 60 * 1000;
+
 export type ReplayClaim =
 	| { status: 'new' }
 	| { status: 'processing' }
@@ -69,7 +71,7 @@ export class GatewayStateStore {
 			}
 			this.state.replays[eventId] = {
 				state: 'processing',
-				expiresAt: now + this.replayTtlMs
+				expiresAt: now + Math.min(this.replayTtlMs, PROCESSING_LEASE_MS)
 			};
 			return true;
 		});

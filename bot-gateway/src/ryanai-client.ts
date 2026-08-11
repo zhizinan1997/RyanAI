@@ -120,20 +120,31 @@ export class RyanAiClient implements RyanAiTransport {
 				signal: controller.signal
 			});
 		} catch (error) {
+			clearTimeout(timer);
+			if (controller.signal.aborted) throw new RyanAiTransportError('timeout');
+			throw new RyanAiTransportError('network_error', error);
+		}
+
+		if (!response.ok) {
+			await response.body?.cancel().catch(() => undefined);
+			clearTimeout(timer);
+			throw new RyanAiTransportError(`http_${response.status}`);
+		}
+
+		const contentLength = Number(response.headers.get('content-length') || '0');
+		if (contentLength > 1_048_576) {
+			clearTimeout(timer);
+			throw new RyanAiTransportError('response_too_large');
+		}
+		let responseText: string;
+		try {
+			responseText = await response.text();
+		} catch (error) {
 			if (controller.signal.aborted) throw new RyanAiTransportError('timeout');
 			throw new RyanAiTransportError('network_error', error);
 		} finally {
 			clearTimeout(timer);
 		}
-
-		if (!response.ok) {
-			await response.body?.cancel().catch(() => undefined);
-			throw new RyanAiTransportError(`http_${response.status}`);
-		}
-
-		const contentLength = Number(response.headers.get('content-length') || '0');
-		if (contentLength > 1_048_576) throw new RyanAiTransportError('response_too_large');
-		const responseText = await response.text();
 		if (responseText.length > 1_048_576) throw new RyanAiTransportError('response_too_large');
 
 		let parsed: RyanAiResponse;

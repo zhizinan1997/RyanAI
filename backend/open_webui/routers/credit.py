@@ -1,5 +1,6 @@
 import datetime
 import logging
+from collections import defaultdict
 from decimal import Decimal
 from typing import Optional
 from urllib.parse import quote
@@ -14,6 +15,8 @@ from open_webui.models.chat_messages import ChatMessages, get_usage, _normalize_
 from open_webui.models.chats import Chats
 from open_webui.models.credits import (
     Credits,
+    CreditLogSimpleModel,
+    CreditLogs,
 )
 from open_webui.models.models import ModelForm, Models, ModelPriceForm
 from open_webui.models.users import UserModel, Users
@@ -26,6 +29,57 @@ log.setLevel(GLOBAL_LOG_LEVEL)
 router = APIRouter()
 
 PAGE_ITEM_COUNT = 30
+
+
+@router.get('/logs', response_model=list[CreditLogSimpleModel])
+async def list_credit_logs(
+    page: Optional[int] = None, user: UserModel = Depends(get_verified_user)
+) -> list[CreditLogSimpleModel]:
+    if page:
+        limit = PAGE_ITEM_COUNT
+        offset = (page - 1) * limit
+        return CreditLogs.get_credit_log_by_page(user_ids=[user.id], offset=offset, limit=limit)
+    else:
+        return CreditLogs.get_credit_log_by_page(user_ids=[user.id], offset=0, limit=10)
+
+
+class DeleteLogsForm(BaseModel):
+    timestamp: int = Field(gt=0)
+
+
+class DeleteLogsResponse(BaseModel):
+    affect_rows: int
+
+
+@router.delete('/logs')
+async def delete_credit_logs(form_data: DeleteLogsForm, _: UserModel = Depends(get_admin_user)) -> DeleteLogsResponse:
+    return DeleteLogsResponse(affect_rows=CreditLogs.delete_log_by_timestamp(form_data.timestamp))
+
+
+@router.get('/all_logs')
+async def get_all_logs(
+    query: Optional[str] = None,
+    page: Optional[int] = None,
+    limit: Optional[int] = None,
+    _: UserModel = Depends(get_admin_user),
+):
+    # init params
+    page = page or 1
+    limit = limit or PAGE_ITEM_COUNT
+    offset = (page - 1) * limit
+    # query users
+    users = await Users.get_users(filter={'query': query})
+    user_map = {user.id: user.name for user in users['users']}
+    if query and not user_map:
+        return {'total': 0, 'results': []}
+    # query db
+    user_ids = list(user_map.keys()) if query else None
+    results = CreditLogs.get_credit_log_by_page(user_ids=user_ids, offset=offset, limit=limit)
+    total = CreditLogs.count_credit_log(user_ids=user_ids)
+    # add username to results
+    for result in results:
+        setattr(result, 'username', user_map.get(result.user_id, ''))
+    return {'total': total, 'results': results}
 
 
 @router.get('/models/price')
@@ -47,6 +101,12 @@ async def update_model_price(form_data: dict[str, dict], _: UserModel = Depends(
         model_data['price'] = ModelPriceForm.model_validate(price).model_dump() if price else None
         await Models.update_model_by_id(id=model_id, model=ModelForm.model_validate(model_data))
     return f'success update price for {len(form_data)} models'
+
+
+class StatisticRequest(BaseModel):
+    start_time: int
+    end_time: int
+    query: Optional[str] = None
 
 
 class MyUsagePeriod(BaseModel):
@@ -192,6 +252,75 @@ def _usage_period_ranges(timezone: Optional[str]) -> dict[str, tuple[int, int]]:
     return {key: (_to_epoch(start), _to_epoch(end)) for key, (start, end) in ranges.items()}
 
 
+def _credit_used_for_period(user_id: str, start_time: int, end_time: int) -> float:
+    credit_used = Decimal('0')
+    for log_item in CreditLogs.get_log_by_time(start_time, end_time, [user_id]):
+        usage = _usage_from_credit_log_detail(log_item.detail)
+        total_price = _decimal_usage_value(usage, 'total_price', 'total_cost')
+        if total_price is not None:
+            credit_used += total_price
+    return float(credit_used)
+
+
+def _usage_from_credit_log_detail(detail) -> dict:
+    if not detail:
+        return {}
+
+    if isinstance(detail, dict):
+        usage = detail.get('usage') or {}
+    else:
+        usage = getattr(detail, 'usage', None) or {}
+
+    if hasattr(usage, 'model_dump'):
+        return usage.model_dump()
+    return usage if isinstance(usage, dict) else {}
+
+
+def _int_usage_value(usage: dict, *keys: str) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if value is not None:
+            return int(value)
+    return 0
+
+
+def _decimal_usage_value(usage: dict, *keys: str) -> Optional[Decimal]:
+    for key in keys:
+        value = usage.get(key)
+        if value is not None:
+            return Decimal(str(value))
+    return None
+
+
+def _usage_summary_from_credit_logs(user_id: str, start_time: int, end_time: int) -> dict[str, int | float]:
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+    credit_used = Decimal('0')
+
+    for log_item in CreditLogs.get_log_by_time(start_time, end_time, [user_id]):
+        usage = _usage_from_credit_log_detail(log_item.detail)
+        if not usage:
+            continue
+
+        message_input = _int_usage_value(usage, 'input_tokens', 'prompt_tokens')
+        message_output = _int_usage_value(usage, 'output_tokens', 'completion_tokens')
+        message_total = _int_usage_value(usage, 'total_tokens') or message_input + message_output
+
+        input_tokens += message_input
+        output_tokens += message_output
+        total_tokens += message_total
+
+        total_price = _decimal_usage_value(usage, 'total_price', 'total_cost')
+        if total_price is not None:
+            credit_used += total_price
+
+    return {
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens,
+        'total_tokens': total_tokens,
+        'credit_used': float(credit_used),
+    }
 async def _legacy_usage_summary_by_user(
     user_id: str,
     start_time: int,
@@ -250,6 +379,8 @@ async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
 
     for period_key, (start_time, end_time) in _usage_period_ranges(user.timezone).items():
         token_usage = await ChatMessages.get_usage_summary_by_user(user.id, start_time, end_time)
+        log_usage = _usage_summary_from_credit_logs(user.id, start_time, end_time)
+
         if token_usage['total_tokens'] == 0 or token_usage['conversation_count'] == 0:
             legacy_usage = await _legacy_usage_summary_by_user(user.id, start_time, end_time)
             if token_usage['total_tokens'] == 0 and legacy_usage['total_tokens'] > 0:
@@ -263,6 +394,15 @@ async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
             if token_usage['conversation_count'] == 0 and legacy_usage['conversation_count'] > 0:
                 token_usage['conversation_count'] = legacy_usage['conversation_count']
 
+        if token_usage['total_tokens'] == 0 and log_usage['total_tokens'] > 0:
+            token_usage.update(
+                {
+                    'input_tokens': log_usage['input_tokens'],
+                    'output_tokens': log_usage['output_tokens'],
+                    'total_tokens': log_usage['total_tokens'],
+                }
+            )
+
         periods[period_key] = MyUsagePeriod(
             start_time=start_time,
             end_time=end_time,
@@ -270,7 +410,7 @@ async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
             output_tokens=token_usage['output_tokens'],
             total_tokens=token_usage['total_tokens'],
             conversation_count=token_usage['conversation_count'],
-            credit_used=0,
+            credit_used=log_usage['credit_used'],
         )
 
         usage_by_user = await ChatMessages.get_usage_leaderboard_by_user(start_time, end_time)
@@ -285,3 +425,64 @@ async def get_my_usage_summary(user: UserModel = Depends(get_verified_user)):
         user_leaderboards=user_leaderboards,
         model_leaderboards=model_leaderboards,
     )
+
+
+@router.post('/statistics')
+async def get_statistics(form_data: StatisticRequest, _: UserModel = Depends(get_admin_user)):
+    # query user id
+    user_ids = []
+    if form_data.query:
+        users = (await Users.get_users(filter={'query': form_data.query}))['users']
+        user_map = {user.id: user.name for user in users}
+        user_ids = list(user_map.keys())
+        if not user_ids:
+            return {
+                'total_tokens': 0,
+                'total_credit': 0,
+                'model_cost_pie': [],
+                'model_token_pie': [],
+                'user_cost_pie': [],
+                'user_token_pie': [],
+            }
+    else:
+        users = (await Users.get_users())['users']
+        user_map = {user.id: user.name for user in users}
+
+    # load credit data
+    logs = CreditLogs.get_log_by_time(form_data.start_time, form_data.end_time, user_ids)
+
+    # build graph data
+    total_tokens = 0
+    total_credit = 0
+    model_cost_pie = defaultdict(int)
+    model_token_pie = defaultdict(int)
+    user_cost_pie = defaultdict(int)
+    user_token_pie = defaultdict(int)
+    for log in logs:
+        if not log.detail.usage or log.detail.usage.total_price is None:
+            continue
+
+        model = log.detail.api_params.model
+        if not model:
+            continue
+
+        total_tokens += log.detail.usage.total_tokens
+        total_credit += log.detail.usage.total_price
+
+        model_key = log.detail.api_params.model.id
+        model_cost_pie[model_key] += log.detail.usage.total_price
+        model_token_pie[model_key] += log.detail.usage.total_tokens
+
+        user_key = f'{log.user_id}:{user_map.get(log.user_id, log.user_id)}'
+        user_cost_pie[user_key] += log.detail.usage.total_price
+        user_token_pie[user_key] += log.detail.usage.total_tokens
+
+    # response
+    return {
+        'total_tokens': total_tokens,
+        'total_credit': total_credit,
+        'model_cost_pie': [{'name': model, 'value': total} for model, total in model_cost_pie.items()],
+        'model_token_pie': [{'name': model, 'value': total} for model, total in model_token_pie.items()],
+        'user_cost_pie': [{'name': user.split(':', 1)[1], 'value': total} for user, total in user_cost_pie.items()],
+        'user_token_pie': [{'name': user.split(':', 1)[1], 'value': total} for user, total in user_token_pie.items()],
+    }

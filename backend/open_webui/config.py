@@ -73,6 +73,7 @@ def run_migrations():
         command.upgrade(alembic_cfg, 'head')
     except Exception as e:
         log.exception(f'Error running migrations: {e}')
+        raise RuntimeError('Database migrations failed; refusing to start with an incompatible schema') from e
 
 
 if ENABLE_DB_MIGRATIONS:

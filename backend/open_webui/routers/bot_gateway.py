@@ -120,7 +120,7 @@ def _command_guide(title: str = 'Ryan AI 机器人常用指令') -> str:
     )
 
 
-def _first_binding_messages() -> list[str]:
+def _binding_messages() -> list[str]:
     return [
         (
             '【隐私协议】\n'
@@ -277,9 +277,10 @@ def _history_chat_title(chat: Any, created_at: int) -> str:
 
 async def _conversation_history_entries(
     user_id: str,
+    binding_id: str,
     limit: int = 20,
 ) -> list[tuple[BotGatewayConversationModel, str]]:
-    conversations = await BotGateway.list_conversations(user_id, limit=limit)
+    conversations = await BotGateway.list_conversations(user_id, limit=limit, binding_id=binding_id)
     entries: list[tuple[BotGatewayConversationModel, str]] = []
     for item in conversations:
         if not item.chat_id:
@@ -621,7 +622,11 @@ def _remote_credentials_configured(remote: dict[str, Any], fallback: bool) -> bo
     return fallback
 
 
-def _connection_response(connection: BotGatewayConnectionModel, remote: dict[str, Any] | None = None) -> dict:
+def _connection_response(
+    connection: BotGatewayConnectionModel,
+    remote: dict[str, Any] | None = None,
+    owner: UserModel | None = None,
+) -> dict:
     remote = remote or {}
     configured = _remote_credentials_configured(remote, connection.credentials_configured)
     return {
@@ -638,6 +643,9 @@ def _connection_response(connection: BotGatewayConnectionModel, remote: dict[str
         ),
         'last_error': remote.get('last_error', remote.get('detail', connection.last_error)),
         'owner_user_id': connection.owner_user_id,
+        'owner_name': owner.name if owner else None,
+        'owner_username': owner.username if owner else None,
+        'owner_email': owner.email if owner else None,
         'updated_at': remote.get('updated_at', remote.get('updatedAt', connection.updated_at)),
     }
 
@@ -668,14 +676,31 @@ async def _sync_connection(connection: BotGatewayConnectionModel, remote: dict[s
 
 
 @router.get('/admin/connections')
-async def get_connections(user=Depends(get_admin_user)):
+async def get_connections(
+    user=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
     # The admin view is backed by RyanAI's connection registry, not by the
     # sidecar's fixed channel defaults.  Legacy rows remain visible for
     # migration compatibility, while user-owned rows are listed as-is.
     connections = await BotGateway.list_connections()
+    owners = {
+        owner_id: await Users.get_user_by_id(owner_id, db=db)
+        for owner_id in {item.owner_user_id for item in connections if item.owner_user_id}
+    }
     if not _env_enabled():
-        return [_connection_response(connection) for connection in connections]
-    payload = await _sidecar_request('GET', '/v1/connections')
+        return [
+            _connection_response(connection, owner=owners.get(connection.owner_user_id))
+            for connection in connections
+        ]
+    try:
+        payload = await _sidecar_request('GET', '/v1/connections')
+    except HTTPException:
+        log.warning('Bot gateway sidecar is unavailable while listing admin connections')
+        return [
+            _connection_response(connection, owner=owners.get(connection.owner_user_id))
+            for connection in connections
+        ]
     remote_by_id = {
         str(item.get('id') or item.get('connection_id')): item for item in _remote_items(payload, 'connections')
     }
@@ -683,7 +708,13 @@ async def get_connections(user=Depends(get_admin_user)):
     for connection in connections:
         remote = remote_by_id.get(connection.id, {})
         connection = await _sync_connection(connection, remote)
-        response.append(_connection_response(connection, remote))
+        response.append(
+            _connection_response(
+                connection,
+                remote,
+                owner=owners.get(connection.owner_user_id),
+            )
+        )
     return response
 
 
@@ -1703,16 +1734,14 @@ async def _handle_command(  # noqa: C901
         if not argument:
             return '用法：/bind <绑定码>'
         try:
-            bound = await BotGateway.bind_with_code(
+            await BotGateway.bind_with_code(
                 connection_id=event.connection_id,
                 channel=event.channel,
                 external_user_id=event.sender.id,
                 display_name=event.sender.name,
                 code_hash=hash_bot_gateway_binding_code(argument),
             )
-            if bound.is_new_binding:
-                return _first_binding_messages()
-            return '绑定成功。现在可以直接发送消息调用 Ryan AI。'
+            return _binding_messages()
         except BotGatewayBindingError as exc:
             messages = {
                 'invalid_or_expired_code': '绑定码无效或已过期，请在 Ryan AI 中重新生成。',
@@ -1757,7 +1786,7 @@ async def _handle_command(  # noqa: C901
         suffix = '\n发送 /模型 <序号或名称> 切换模型。' if models else ''
         return f'可用模型：\n{available or "（无可用模型）"}{suffix}'
     if command == 'history':
-        entries = await _conversation_history_entries(user.id, limit=20)
+        entries = await _conversation_history_entries(user.id, binding.id, limit=20)
         if not entries:
             return '暂无 Ryan AI 历史会话。'
         lines = [
@@ -1770,13 +1799,13 @@ async def _handle_command(  # noqa: C901
             return '用法：/会话 <序号>，请先发送 /历史 查看列表。'
         title: str | None = None
         if argument.isdigit():
-            entries = await _conversation_history_entries(user.id, limit=20)
+            entries = await _conversation_history_entries(user.id, binding.id, limit=20)
             index = int(argument) - 1
             if index < 0 or index >= len(entries):
                 return '会话序号不存在，请重新发送 /历史 查看列表。'
             target, title = entries[index]
         else:
-            target = await BotGateway.get_conversation(argument, user.id)
+            target = await BotGateway.get_conversation(argument, user.id, binding_id=binding.id)
         if target is None or not target.chat_id:
             return '会话不存在，或尚未产生 Ryan AI 聊天记录。'
         await BotGateway.update_conversation(conversation.id, {'chat_id': target.chat_id, 'model_id': target.model_id})
@@ -1916,12 +1945,6 @@ async def receive_event(  # noqa: C901
                         )
 
                 binding = await BotGateway.get_enabled_binding(event.connection_id, event.sender.id)
-                if binding is None and connection.owner_user_id and event.conversation.type == 'private':
-                    binding = await BotGateway.ensure_owner_binding(
-                        event.connection_id,
-                        event.sender.id,
-                        display_name=event.sender.name,
-                    )
                 if event.conversation.type == 'group' and binding is None:
                     return await _complete(
                         record.id,

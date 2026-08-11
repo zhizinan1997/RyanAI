@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.8] - 2026-08-11
+
+### Fixed
+
+- Separated user-owned bot credentials from external messaging identity bindings, preventing unknown private contacts from inheriting the bot owner's Ryan AI account.
+- Isolated `/history` and `/conversation` results by messaging identity so WeChat and QQ bindings cannot access each other's conversations.
+- Made per-user bot connection creation idempotent under concurrent saves and kept administrator connection listings available when the gateway sidecar is temporarily unavailable.
+- Added administrator visibility for configured user-owned QQ and WeChat bots, including owner and account details immediately after credentials or login are saved.
+- Sent the privacy notice, usage tutorial, and common-command guide after every successful initial or repeated identity binding.
+- Serialized per-user OpenClaw host restoration to prevent concurrent WeChat credential materialization from crossing user state directories.
+- Kept Ryan AI and bridge request timeouts active until response bodies finish, reclaimed abandoned processing events after a short lease, and rejected connection IDs that could escape per-user directories.
+- Made database migration failures stop application startup instead of allowing a healthy-looking container with an incompatible schema.
+- Removed duplicate slim-image release triggers and excluded `.git` from Docker build contexts for reproducible lower-space builds.
+- Improved administrator credit history, credit adjustment, and audit management while preserving existing credit logs during upgrades.
+
 ## [0.11.0.7] - 2026-08-11
 
 ### Fixed

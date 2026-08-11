@@ -132,6 +132,25 @@ test('per-connection hosts trust their own media directories without trusting si
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('connection ids cannot escape their per-user OpenClaw directories', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
+	await Promise.all([state.initialize(), vault.initialize()]);
+	const adapter = new OpenClawAdapter(config, state, vault, quietLogger());
+
+	await assert.rejects(
+		adapter.createConnection({
+			channel: 'wechat',
+			ownerUserId: 'user-1',
+			id: 'user/../../escape'
+		}),
+		/invalid_connection_id/
+	);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('OpenClaw adapter restores encrypted QQ credentials and stays healthy without WeChat login', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir, { adapterMode: 'openclaw' });

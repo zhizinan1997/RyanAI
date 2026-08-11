@@ -44,17 +44,27 @@ export class OpenClawBridgeClient {
 				body: Uint8Array.from(multipart.body),
 				signal: controller.signal
 			});
-		} finally {
+		} catch (error) {
 			clearTimeout(timer);
+			throw error;
 		}
 
 		if (!response.ok) {
 			await response.body?.cancel().catch(() => undefined);
+			clearTimeout(timer);
 			throw new Error(`bridge_http_${response.status}`);
 		}
 		const contentLength = Number(response.headers.get('content-length') || '0');
-		if (contentLength > 1_048_576) throw new Error('bridge_response_too_large');
-		const raw = await response.text();
+		if (contentLength > 1_048_576) {
+			clearTimeout(timer);
+			throw new Error('bridge_response_too_large');
+		}
+		let raw: string;
+		try {
+			raw = await response.text();
+		} finally {
+			clearTimeout(timer);
+		}
 		if (Buffer.byteLength(raw, 'utf8') > 1_048_576) {
 			throw new Error('bridge_response_too_large');
 		}

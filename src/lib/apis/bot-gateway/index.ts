@@ -8,6 +8,9 @@ export type BotGatewayConnection = {
 	id: string;
 	channel: BotGatewayChannel;
 	owner_user_id: string | null;
+	owner_name: string | null;
+	owner_username: string | null;
+	owner_email: string | null;
 	enabled: boolean;
 	status: string;
 	configured: boolean;
@@ -160,6 +163,18 @@ const sanitizeConnection = (value: any): BotGatewayConnection => ({
 	id: String(value?.id ?? value?.connection_id ?? value?.channel ?? ''),
 	channel: asChannel(value?.channel),
 	owner_user_id: value?.owner_user_id == null && value?.ownerUserId == null ? null : String(value?.owner_user_id ?? value?.ownerUserId),
+	owner_name:
+		value?.owner_name == null && value?.ownerName == null
+			? null
+			: String(value?.owner_name ?? value?.ownerName),
+	owner_username:
+		value?.owner_username == null && value?.ownerUsername == null
+			? null
+			: String(value?.owner_username ?? value?.ownerUsername),
+	owner_email:
+		value?.owner_email == null && value?.ownerEmail == null
+			? null
+			: String(value?.owner_email ?? value?.ownerEmail),
 	enabled:
 		value?.enabled == null ? String(value?.status ?? '') !== 'disabled' : Boolean(value.enabled),
 	status: String(value?.status ?? 'disconnected'),
