@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import type { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -184,9 +184,10 @@ export class OpenClawHost {
 				recursive: true,
 				mode: 0o700
 			})
-		]);
+			]);
 
-		process.env.OPENCLAW_STATE_DIR = this.config.openClawStateDir;
+			await this.seedManagedWeixinProject();
+			process.env.OPENCLAW_STATE_DIR = this.config.openClawStateDir;
 		process.env.OPENCLAW_CONFIG_PATH = this.configPath;
 		await this.materializeWeixinCredentials(credentials.wechat);
 		await this.clearQqCredentialBackups();
@@ -351,6 +352,72 @@ export class OpenClawHost {
 			})
 		);
 		return Object.fromEntries(entries);
+	}
+
+	private async findManagedWeixinProject(projectsRoot: string): Promise<string | undefined> {
+		let entries;
+		try {
+			entries = await readdir(projectsRoot, { withFileTypes: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+			throw error;
+		}
+		for (const entry of entries) {
+			if (!entry.isDirectory() || !entry.name.startsWith('tencent-weixin-openclaw-weixin-')) continue;
+			const projectRoot = path.join(projectsRoot, entry.name);
+			try {
+				const metadata = JSON.parse(
+					await readFile(
+						path.join(
+							projectRoot,
+							'node_modules',
+							'@tencent-weixin',
+							'openclaw-weixin',
+							'package.json'
+						),
+						'utf8'
+					)
+				) as { version?: string };
+				if (metadata.version === PINNED_PACKAGES['@tencent-weixin/openclaw-weixin']) {
+					return projectRoot;
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			}
+		}
+		return undefined;
+	}
+
+	private async seedManagedWeixinProject(): Promise<void> {
+		if (!this.channelEnabled.wechat || !this.credentials.wechat) return;
+		const projectsRoot = path.join(this.config.openClawStateDir, 'npm', 'projects');
+		if (await this.findManagedWeixinProject(projectsRoot)) return;
+
+		const isolatedStateRoot = path.dirname(path.dirname(this.config.openClawStateDir));
+		let connectionDirs;
+		try {
+			connectionDirs = await readdir(isolatedStateRoot, { withFileTypes: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			throw error;
+		}
+		for (const connectionDir of connectionDirs) {
+			if (!connectionDir.isDirectory()) continue;
+			const siblingStateDir = path.join(isolatedStateRoot, connectionDir.name, 'state');
+			if (path.resolve(siblingStateDir) === path.resolve(this.config.openClawStateDir)) continue;
+			const sourceProject = await this.findManagedWeixinProject(
+				path.join(siblingStateDir, 'npm', 'projects')
+			);
+			if (!sourceProject) continue;
+
+			await rm(projectsRoot, { recursive: true, force: true });
+			await mkdir(projectsRoot, { recursive: true, mode: 0o700 });
+			await cp(sourceProject, path.join(projectsRoot, path.basename(sourceProject)), {
+				recursive: true
+			});
+			this.logger.info('Seeded managed WeChat plugin dependencies from an existing isolated host');
+			return;
+		}
 	}
 
 	private async writeConfig(): Promise<void> {

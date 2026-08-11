@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 
 import { OpenClawAdapter } from '../src/adapters/openclaw.js';
 import type { GatewayConfig } from '../src/config.js';
-import type { OpenClawCredentialSet } from '../src/openclaw/host.js';
+import { OpenClawHost, type OpenClawCredentialSet } from '../src/openclaw/host.js';
 import type {
 	PendingOfficialLogin,
 	WeixinLoginCredential
@@ -147,6 +147,59 @@ test('connection ids cannot escape their per-user OpenClaw directories', async (
 			id: 'user/../../escape'
 		}),
 		/invalid_connection_id/
+	);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('new WeChat hosts reuse a complete managed plugin project from an existing host', async () => {
+	const dataDir = await tempDataDir();
+	const isolatedStateRoot = path.join(dataDir, 'openclaw-state');
+	const sourceProject = path.join(
+		isolatedStateRoot,
+		'existing-user',
+		'state',
+		'npm',
+		'projects',
+		'tencent-weixin-openclaw-weixin-test'
+	);
+	await mkdir(
+		path.join(sourceProject, 'node_modules', '@tencent-weixin', 'openclaw-weixin'),
+		{ recursive: true }
+	);
+	await writeFile(
+		path.join(sourceProject, 'node_modules', '@tencent-weixin', 'openclaw-weixin', 'package.json'),
+		JSON.stringify({ version: '2.4.6' })
+	);
+	await writeFile(path.join(sourceProject, 'package-lock.json'), 'managed-project-marker');
+
+	const config = testConfig(dataDir, {
+		adapterMode: 'openclaw',
+		openClawStateDir: path.join(isolatedStateRoot, 'new-user', 'state'),
+		openClawHomeDir: path.join(dataDir, 'openclaw-home', 'new-user', 'home')
+	});
+	const host = new OpenClawHost(config, quietLogger());
+	const internalHost = host as unknown as {
+		credentials: OpenClawCredentialSet;
+		channelEnabled: Record<Channel, boolean>;
+		seedManagedWeixinProject(): Promise<void>;
+	};
+	internalHost.credentials = { wechat: { accountId: 'wx-account', botToken: 'token' } };
+	internalHost.channelEnabled = { wechat: true, qq: false };
+
+	await internalHost.seedManagedWeixinProject();
+
+	assert.equal(
+		await readFile(
+			path.join(
+				config.openClawStateDir,
+				'npm',
+				'projects',
+				path.basename(sourceProject),
+				'package-lock.json'
+			),
+			'utf8'
+		),
+		'managed-project-marker'
 	);
 	await rm(dataDir, { recursive: true, force: true });
 });

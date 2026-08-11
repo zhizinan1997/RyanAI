@@ -1953,6 +1953,16 @@ async def receive_event(  # noqa: C901
                         )
 
                 binding = await BotGateway.get_enabled_binding(event.connection_id, event.sender.id)
+                if (
+                    binding is None
+                    and event.conversation.type == 'private'
+                    and connection.owner_user_id
+                ):
+                    binding = await BotGateway.ensure_owner_binding(
+                        event.connection_id,
+                        event.sender.id,
+                        display_name=event.sender.name,
+                    )
                 if event.conversation.type == 'group' and binding is None:
                     return await _complete(
                         record.id,

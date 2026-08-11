@@ -15,6 +15,7 @@ from open_webui.models import chats as chat_models
 from open_webui.models.bot_gateway import (
     BotGatewayBinding,
     BotGatewayBindingCode,
+    BotGatewayBindingHistory,
     BotGatewayBindingError,
     BotGatewayConnection,
     BotGatewayConnectionModel,
@@ -44,6 +45,7 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
             BotGatewayBinding.__table__,
             BotGatewayConversation.__table__,
             BotGatewayBindingCode.__table__,
+            BotGatewayBindingHistory.__table__,
             BotGatewayRequestNonce.__table__,
             BotGatewayEvent.__table__,
         ]
@@ -148,6 +150,44 @@ class BotGatewayDatabaseTests(IsolatedAsyncioTestCase):
                 )
             )
         self.assertEqual(count, 1)
+
+    async def test_personal_connection_auto_binds_its_first_private_identity(self):
+        now = int(time.time())
+        async with self.sessions() as session:
+            session.add(
+                BotGatewayConnection(
+                    id='wechat-user-1',
+                    channel='wechat',
+                    name='WeChat',
+                    enabled=True,
+                    status='connected',
+                    credentials_configured=True,
+                    owner_user_id='user-1',
+                    config={},
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+        binding = await self.gateway.ensure_owner_binding(
+            'wechat-user-1',
+            'wechat-identity',
+            display_name='WeChat User',
+        )
+
+        self.assertIsNotNone(binding)
+        self.assertEqual(binding.user_id, 'user-1')
+        self.assertEqual(binding.external_user_id, 'wechat-identity')
+        self.assertTrue(binding.enabled)
+        self.assertFalse(binding.blocked)
+        self.assertIsNone(
+            await self.gateway.ensure_owner_binding(
+                'wechat-user-1',
+                'different-identity',
+                display_name='Unexpected User',
+            )
+        )
 
     async def test_failed_and_stale_events_can_be_retried_without_old_lease_writes(self):
         values = {
@@ -681,6 +721,78 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         self.assertEqual(response['status'], 'ignored')
         self.assertIsNone(response['reply'])
         handle_command.assert_not_awaited()
+        self.assertFalse(self.gateway_router._conversation_locks)
+
+    async def test_personal_private_message_auto_binds_before_command_handling(self):
+        now = int(time.time())
+        payload = {
+            'version': '1.0',
+            'event_id': 'personal-private-event',
+            'occurred_at': dt.datetime.now(dt.UTC).isoformat(),
+            'channel': 'wechat',
+            'connection_id': 'wechat-user-1',
+            'conversation': {'type': 'private', 'id': 'wechat-identity'},
+            'sender': {'id': 'wechat-identity', 'name': 'WeChat User'},
+            'message': {'text': '/状态'},
+            'attachments': [],
+        }
+        request = SimpleNamespace(form=AsyncMock(return_value={'event': json.dumps(payload)}))
+        connection = BotGatewayConnectionModel(
+            id='wechat-user-1',
+            channel='wechat',
+            name='WeChat',
+            enabled=True,
+            status='connected',
+            credentials_configured=True,
+            owner_user_id='user-1',
+            created_at=now,
+            updated_at=now,
+        )
+        event_record = BotGatewayEventModel(
+            id='personal-private-event-row',
+            connection_id=connection.id,
+            event_id=payload['event_id'],
+            request_hash='b' * 64,
+            request_nonce='personal-private-nonce-000001',
+            status='processing',
+            conversation_type='private',
+            external_conversation_id='wechat-identity',
+            external_sender_id='wechat-identity',
+            attempts=1,
+            received_at=now,
+            updated_at=now,
+        )
+        binding = SimpleNamespace(
+            id='auto-binding',
+            user_id='user-1',
+            external_user_id='wechat-identity',
+        )
+        auto_bind = AsyncMock(return_value=binding)
+        handle_command = AsyncMock(return_value='已自动绑定')
+        with (
+            patch.object(
+                self.gateway_router,
+                '_verify_internal_request',
+                AsyncMock(return_value=(event_record.request_nonce, 'hash', b'')),
+            ),
+            patch.object(self.gateway_router.BotGateway, 'claim_request_nonce', AsyncMock(return_value=True)),
+            patch.object(self.gateway_router.BotGateway, 'cleanup_expired_records', AsyncMock(return_value={})),
+            patch.object(self.gateway_router.BotGateway, 'get_connection', AsyncMock(return_value=connection)),
+            patch.object(self.gateway_router.BotGateway, 'claim_event', AsyncMock(return_value=(event_record, True))),
+            patch.object(self.gateway_router.BotGateway, 'get_enabled_binding', AsyncMock(return_value=None)),
+            patch.object(self.gateway_router.BotGateway, 'ensure_owner_binding', auto_bind),
+            patch.object(self.gateway_router.BotGateway, 'complete_event', AsyncMock(return_value=True)),
+            patch.object(self.gateway_router, '_handle_command', handle_command),
+        ):
+            response = await self.gateway_router.receive_event(request, db=None)
+
+        auto_bind.assert_awaited_once_with(
+            connection.id,
+            'wechat-identity',
+            display_name='WeChat User',
+        )
+        self.assertIs(handle_command.await_args.args[2], binding)
+        self.assertEqual(response['reply']['text'], '已自动绑定')
         self.assertFalse(self.gateway_router._conversation_locks)
 
     async def test_logout_clears_backend_credential_flag_after_sidecar_success(self):
