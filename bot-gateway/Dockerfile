@@ -16,8 +16,9 @@ ENV NODE_ENV=production \
     BOT_GATEWAY_ENABLED=false \
     BOT_GATEWAY_INTERNAL_PORT=8787 \
     BOT_GATEWAY_DATA_DIR=/data \
-    BOT_GATEWAY_OPENCLAW_STATE_DIR=/tmp/ryanai-openclaw/state \
-    BOT_GATEWAY_OPENCLAW_HOME_DIR=/tmp/ryanai-openclaw/home \
+    BOT_GATEWAY_OPENCLAW_STATE_DIR=/data/openclaw/state \
+    BOT_GATEWAY_OPENCLAW_HOME_DIR=/data/openclaw/home \
+    BOT_GATEWAY_OPENCLAW_STARTUP_TIMEOUT_MS=180000 \
     RYANAI_BASE_URL=http://ryanai:8080
 
 WORKDIR /app
@@ -32,12 +33,12 @@ COPY openclaw.plugin.json README.md ./
 
 RUN install -d -o node -g node -m 0700 \
       /data \
-      /tmp/ryanai-openclaw \
-      /tmp/ryanai-openclaw/state \
-      /tmp/ryanai-openclaw/state/media \
-      /tmp/ryanai-openclaw/home \
-      /tmp/ryanai-openclaw/home/.openclaw \
-      /tmp/ryanai-openclaw/home/.openclaw/media
+      /data/openclaw \
+      /data/openclaw/state \
+      /data/openclaw/state/media \
+      /data/openclaw/home \
+      /data/openclaw/home/.openclaw \
+      /data/openclaw/home/.openclaw/media
 USER node
 
 EXPOSE 8787

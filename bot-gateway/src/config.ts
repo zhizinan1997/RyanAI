@@ -187,7 +187,7 @@ export function loadConfig(
 		openClawStartupTimeoutMs: parseInteger(
 			'BOT_GATEWAY_OPENCLAW_STARTUP_TIMEOUT_MS',
 			env.BOT_GATEWAY_OPENCLAW_STARTUP_TIMEOUT_MS,
-			45_000,
+			180_000,
 			5_000,
 			180_000
 		),

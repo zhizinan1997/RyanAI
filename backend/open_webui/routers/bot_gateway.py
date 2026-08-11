@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import datetime as dt
 import hashlib
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import re
 import secrets
@@ -15,6 +18,7 @@ import string
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
@@ -35,15 +39,17 @@ from open_webui.models.bot_gateway import (
 )
 from open_webui.models.chats import ChatForm, Chats
 from open_webui.models.config import Config
+from open_webui.models.files import Files
 from open_webui.models.credits import Credits
 from open_webui.models.users import UserModel, Users
 from open_webui.utils.auth import create_token, get_admin_user, get_verified_user
 from open_webui.utils.misc import get_message_list, get_output_text
 from open_webui.utils.models import get_all_models, get_filtered_models
+from open_webui.storage.provider import Storage
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers, UploadFile
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +61,7 @@ BOT_GATEWAY_SIGNATURE_MAX_SKEW = 5 * 60
 BOT_GATEWAY_MAX_INTERNAL_BODY = 64 * 1024 * 1024
 BOT_GATEWAY_MAX_CONTROL_RESPONSE = 2 * 1024 * 1024
 BOT_GATEWAY_MAX_REPLY_CHARS = 100_000
+BOT_GATEWAY_MEDIA_TTL_SECONDS = 30 * 60
 BOT_GATEWAY_HMAC_VERSION = 'v1'
 BOT_GATEWAY_EVENT_LEASE_SECONDS = 3 * 60
 BOT_GATEWAY_EVENT_HEARTBEAT_SECONDS = 30
@@ -197,6 +204,58 @@ def _hmac_secret() -> str:
             detail='BOT_GATEWAY_HMAC_SECRET is not configured',
         )
     return secret
+
+
+def _public_media_base_url() -> str:
+    return os.getenv('BOT_GATEWAY_PUBLIC_BASE_URL', 'https://chat.zhizinan.top').rstrip('/')
+
+
+def _media_token(file_id: str, user_id: str, expires_at: int) -> str:
+    payload = json.dumps(
+        {'file_id': file_id, 'user_id': user_id, 'exp': expires_at},
+        separators=(',', ':'),
+    ).encode()
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip('=')
+    signature = hmac.new(_hmac_secret().encode(), encoded.encode(), hashlib.sha256).hexdigest()
+    return f'{encoded}.{signature}'
+
+
+def _media_url(file_id: str, user_id: str) -> str:
+    expires_at = int(time.time()) + BOT_GATEWAY_MEDIA_TTL_SECONDS
+    return f'{_public_media_base_url()}/api/internal/bot-gateway/media/{_media_token(file_id, user_id, expires_at)}'
+
+
+def _generated_image_urls(message: dict[str, Any], user_id: str) -> list[str]:
+    urls: list[str] = []
+    for item in message.get('files') or []:
+        if not isinstance(item, dict):
+            continue
+        content_type = str(item.get('type') or item.get('content_type') or '').lower()
+        file_id = item.get('id') or item.get('file_id')
+        raw_url = str(item.get('url') or '')
+        for marker in ('/api/v1/files/', '/api/files/'):
+            if not file_id and marker in raw_url:
+                file_id = raw_url.split(marker, 1)[1].split('/', 1)[0]
+        if file_id and (content_type.startswith('image/') or item.get('type') == 'image'):
+            urls.append(_media_url(str(file_id), user_id))
+    return list(dict.fromkeys(urls))
+
+
+def _decode_media_token(token: str) -> dict[str, Any] | None:
+    try:
+        encoded, signature = token.rsplit('.', 1)
+        expected = hmac.new(_hmac_secret().encode(), encoded.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        padded = encoded + '=' * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode())
+        if not isinstance(payload, dict) or int(payload.get('exp', 0)) < int(time.time()):
+            return None
+        if not payload.get('file_id') or not payload.get('user_id'):
+            return None
+        return payload
+    except (ValueError, TypeError, json.JSONDecodeError, UnicodeError, binascii.Error):
+        return None
 
 
 def format_bot_chat_title(channel: BotGatewayChannel, created_at: int, sequence: int) -> str:
@@ -1175,6 +1234,34 @@ def _wire_response(event_id: str, text: str | list[str] | None = None, *, ignore
     }
 
 
+@internal_router.get('/media/{token}')
+async def get_bot_media(token: str):
+    payload = _decode_media_token(token)
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media link expired or invalid')
+
+    file = await Files.get_file_by_id(str(payload['file_id']))
+    if not file or str(file.user_id) != str(payload['user_id']):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media not found')
+
+    metadata = file.meta if isinstance(file.meta, dict) else {}
+    content_type = str(metadata.get('content_type') or '').lower()
+    if not content_type.startswith('image/'):
+        guessed = mimetypes.guess_type(str(file.filename or ''))[0] or ''
+        content_type = guessed.lower()
+    if not content_type.startswith('image/'):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media type not allowed')
+
+    try:
+        file_path = Path(await asyncio.to_thread(Storage.get_file, file.path))
+    except Exception:
+        log.exception('Failed to resolve bot media file %s', file.id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media not found')
+    if not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media not found')
+    return FileResponse(file_path, media_type=content_type)
+
+
 async def _complete(record_id: str, request_nonce: str, response: dict[str, Any]) -> dict[str, Any]:
     if not await BotGateway.complete_event(record_id, request_nonce, response):
         raise HTTPException(
@@ -1467,7 +1554,7 @@ async def _run_chat(  # noqa: C901
     files: list[dict[str, Any]],
     event_record_id: str,
     event_request_nonce: str,
-) -> str:
+) -> str | list[str]:
     conversation, chat_id, user_message_id, parent_id = await _prepare_chat(
         event,
         user,
@@ -1568,6 +1655,12 @@ async def _run_chat(  # noqa: C901
         detail = error.get('content') if isinstance(error, dict) else str(error)
         return str(detail or 'Ryan AI 暂时无法处理这条消息。')
     text = message.get('content') or get_output_text(message.get('output'))
+    image_urls = _generated_image_urls(message, user.id)
+    if image_urls:
+        await BotGateway.update_conversation(conversation.id, {'last_event_at': int(time.time())})
+        if text:
+            return [str(text), *image_urls]
+        return image_urls
     if not text:
         text = 'Ryan AI 已完成处理，请在网页端查看该会话的结果。'
     await BotGateway.update_conversation(conversation.id, {'last_event_at': int(time.time())})
@@ -1707,7 +1800,10 @@ async def _handle_command(  # noqa: C901
     return '未知命令。发送 /help 查看帮助。'
 
 
-async def _recover_persisted_reply(record: BotGatewayEventModel) -> str | None:
+async def _recover_persisted_reply(
+    record: BotGatewayEventModel,
+    user_id: str,
+) -> str | list[str] | None:
     """Recover a reply persisted before a worker died, avoiding a second model call."""
     if not record.chat_id or not record.assistant_message_id:
         return None
@@ -1715,6 +1811,9 @@ async def _recover_persisted_reply(record: BotGatewayEventModel) -> str | None:
     if not message or message.get('done') is False:
         return None
     text = message.get('content') or get_output_text(message.get('output'))
+    image_urls = _generated_image_urls(message, user_id)
+    if image_urls:
+        return [str(text), *image_urls] if text else image_urls
     return str(text) if text else None
 
 
@@ -1814,7 +1913,7 @@ async def receive_event(  # noqa: C901
                     )
 
                 if binding is not None and record.binding_id == binding.id and record.attempts > 1:
-                    recovered_reply = await _recover_persisted_reply(record)
+                    recovered_reply = await _recover_persisted_reply(record, binding.user_id)
                     if recovered_reply is not None:
                         return await _complete(
                             record.id,

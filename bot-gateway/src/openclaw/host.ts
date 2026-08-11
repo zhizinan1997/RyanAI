@@ -238,7 +238,8 @@ export class OpenClawHost {
 		const deadline = Date.now() + this.config.openClawStartupTimeoutMs;
 		while (Date.now() < deadline) {
 			if (child.exitCode !== null) {
-				throw new Error('OpenClaw host exited during startup');
+				const startupDetail = stderrTail.trim().slice(-4_096);
+				throw new Error(startupDetail || 'OpenClaw host exited during startup');
 			}
 			if (await canConnect(this.config.openClawPort)) {
 				this.detail = 'OpenClaw host is running; RyanAI owns all message inference';

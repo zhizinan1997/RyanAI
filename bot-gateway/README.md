@@ -37,10 +37,10 @@ Required production configuration:
 | `BOT_GATEWAY_WECHAT_ENABLED`              | `false` unless explicitly enabled                                 |
 | `BOT_GATEWAY_QQ_ENABLED`                  | `false` unless explicitly enabled                                 |
 | `BOT_GATEWAY_ADAPTER`                     | `openclaw`; use `mock` only for tests                             |
-| `BOT_GATEWAY_OPENCLAW_STATE_DIR`          | OS temporary directory; Docker uses `/tmp/ryanai-openclaw/state`  |
-| `BOT_GATEWAY_OPENCLAW_HOME_DIR`           | OS temporary directory; Docker uses `/tmp/ryanai-openclaw/home`   |
+| `BOT_GATEWAY_OPENCLAW_STATE_DIR`          | OS temporary directory; Docker uses `/data/openclaw/state`        |
+| `BOT_GATEWAY_OPENCLAW_HOME_DIR`           | OS temporary directory; Docker uses `/data/openclaw/home`         |
 | `BOT_GATEWAY_OPENCLAW_PORT`               | `18789`, bound to loopback inside the sidecar                     |
-| `BOT_GATEWAY_OPENCLAW_STARTUP_TIMEOUT_MS` | `45000`                                                           |
+| `BOT_GATEWAY_OPENCLAW_STARTUP_TIMEOUT_MS` | `180000`                                                          |
 
 When `BOT_GATEWAY_ENABLED=false`, the process does not initialize the state store, credential vault, RyanAI client, or any channel adapter. `GET /health` returns HTTP 200 with `status: "disabled"`; every `/v1/*` request returns HTTP 503 with error code `disabled`. The HMAC and encryption keys are required only when `BOT_GATEWAY_ENABLED=true`.
 

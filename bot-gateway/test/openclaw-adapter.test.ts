@@ -23,6 +23,7 @@ class FakeOpenClawHost {
 	credentials: OpenClawCredentialSet = {};
 	enabled: Record<Channel, boolean> = { wechat: false, qq: false };
 	restartCount = 0;
+	restartFailures: Error[] = [];
 
 	isRunning(): boolean {
 		return this.running;
@@ -51,6 +52,8 @@ class FakeOpenClawHost {
 	): Promise<void> {
 		this.restartCount += 1;
 		await this.stop();
+		const failure = this.restartFailures.shift();
+		if (failure) throw failure;
 		await this.start(credentials, enabled);
 	}
 
@@ -142,6 +145,7 @@ test('OpenClaw adapter restores encrypted QQ credentials and stays healthy witho
 	await adapter.start();
 
 	assert.equal(adapter.health().ready, true);
+	await waitFor(() => state.getConnection('qq-default')?.status === 'connected');
 	assert.equal(host.credentials.qq?.appId, 'app-1');
 	assert.equal(state.getConnection('qq-default')?.status, 'connected');
 	assert.equal(state.getConnection('wechat-default')?.status, 'logged_out');
@@ -189,6 +193,48 @@ test('OpenClaw adapter persists an official WeChat QR result and removes it on l
 	assert.equal(loggedOut.status, 'logged_out');
 	assert.equal(await vault.get('wechat-default'), undefined);
 	assert.equal(host.credentials.wechat, undefined);
+	await adapter.stop();
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('OpenClaw adapter reconnects automatically after a transient startup migration lock', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
+	await Promise.all([state.initialize(), vault.initialize()]);
+	const host = new FakeOpenClawHost();
+	host.restartFailures.push(
+		new Error(
+			`OpenClaw startup migrations are already running for this state directory; retry after the other gateway finishes or after ${new Date(Date.now() + 20).toISOString()}.`
+		)
+	);
+	let resolveCredential!: (credential: WeixinLoginCredential) => void;
+	const completion = new Promise<WeixinLoginCredential>((resolve) => {
+		resolveCredential = resolve;
+	});
+	const pending: PendingOfficialLogin<WeixinLoginCredential> = {
+		qrCode: {
+			connectionId: 'wechat-default',
+			dataUrl: 'data:image/png;base64,AA==',
+			expiresAt: new Date(Date.now() + 60_000).toISOString()
+		},
+		completion,
+		cancel: () => undefined
+	};
+	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), {
+		host,
+		startWeixinLogin: async () => pending
+	});
+	await adapter.start();
+	await adapter.login('wechat-default', {});
+
+	resolveCredential({ accountId: 'wx-account', botToken: 'wx-token' });
+	await waitFor(() => state.getConnection('wechat-default')?.status === 'degraded');
+	assert.match(state.getConnection('wechat-default')?.detail || '', /migration lock/);
+	await waitFor(() => state.getConnection('wechat-default')?.status === 'connected');
+	assert.equal(host.restartCount, 2);
+
 	await adapter.stop();
 	await rm(dataDir, { recursive: true, force: true });
 });
