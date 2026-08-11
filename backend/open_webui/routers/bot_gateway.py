@@ -605,19 +605,32 @@ def _remote_object(payload: Any, key: str) -> dict[str, Any]:
     return nested if isinstance(nested, dict) else payload
 
 
+def _remote_credentials_configured(remote: dict[str, Any], fallback: bool) -> bool:
+    if 'credentials_configured' in remote:
+        return bool(remote['credentials_configured'])
+    if 'configured' in remote:
+        return bool(remote['configured'])
+    status_value = str(remote.get('status') or '').lower()
+    account_value = (
+        remote.get('account_id')
+        or remote.get('accountLabel')
+        or remote.get('account_label')
+    )
+    if account_value and status_value in {'connected', 'degraded', 'unavailable'}:
+        return True
+    return fallback
+
+
 def _connection_response(connection: BotGatewayConnectionModel, remote: dict[str, Any] | None = None) -> dict:
     remote = remote or {}
+    configured = _remote_credentials_configured(remote, connection.credentials_configured)
     return {
         'id': connection.id,
         'channel': connection.channel,
         'enabled': bool(remote.get('enabled', connection.enabled)),
         'status': str(remote.get('status') or connection.status),
-        'configured': bool(
-            remote.get('configured', remote.get('credentials_configured', connection.credentials_configured))
-        ),
-        'credentials_configured': bool(
-            remote.get('credentials_configured', remote.get('configured', connection.credentials_configured))
-        ),
+        'configured': configured,
+        'credentials_configured': configured,
         'account_id': remote.get('account_id', connection.account_id),
         'account_name': remote.get(
             'account_name',
@@ -645,6 +658,10 @@ async def _sync_connection(connection: BotGatewayConnectionModel, remote: dict[s
             values[target] = remote[source]
     if 'accountLabel' in remote or 'account_label' in remote:
         values['account_name'] = remote.get('accountLabel', remote.get('account_label'))
+    if 'credentials_configured' not in values:
+        configured = _remote_credentials_configured(remote, connection.credentials_configured)
+        if configured != connection.credentials_configured:
+            values['credentials_configured'] = configured
     if 'detail' in remote and 'last_error' not in remote:
         values['last_error'] = remote.get('detail')
     return await BotGateway.update_connection(connection.id, values) if values else connection

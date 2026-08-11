@@ -238,3 +238,43 @@ test('OpenClaw adapter reconnects automatically after a transient startup migrat
 	await adapter.stop();
 	await rm(dataDir, { recursive: true, force: true });
 });
+
+test('rescanning an already connected WeChat credential finishes without restarting the host', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
+	await Promise.all([state.initialize(), vault.initialize()]);
+	await vault.put('wechat-default', { accountId: 'wx-account', botToken: 'wx-token' });
+	const host = new FakeOpenClawHost();
+	let resolveCredential!: (credential: WeixinLoginCredential) => void;
+	const completion = new Promise<WeixinLoginCredential>((resolve) => {
+		resolveCredential = resolve;
+	});
+	const pending: PendingOfficialLogin<WeixinLoginCredential> = {
+		qrCode: {
+			connectionId: 'wechat-default',
+			dataUrl: 'data:image/png;base64,AA==',
+			expiresAt: new Date(Date.now() + 60_000).toISOString()
+		},
+		completion,
+		cancel: () => undefined
+	};
+	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), {
+		host,
+		startWeixinLogin: async () => pending
+	});
+	await adapter.start();
+	await waitFor(() => state.getConnection('wechat-default')?.status === 'connected');
+
+	const awaiting = await adapter.login('wechat-default', {});
+	assert.equal(awaiting.status, 'awaiting_scan');
+	resolveCredential({ accountId: 'wx-account', botToken: 'wx-token' });
+	await waitFor(() => state.getConnection('wechat-default')?.status === 'connected');
+	assert.equal(state.getConnection('wechat-default')?.detail, 'Channel is already connected');
+	assert.equal(host.restartCount, 0);
+	await assert.rejects(() => adapter.getQrCode('wechat-default'), /qr_code_not_available/);
+
+	await adapter.stop();
+	await rm(dataDir, { recursive: true, force: true });
+});

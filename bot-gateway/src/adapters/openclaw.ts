@@ -80,6 +80,17 @@ function parseQqCredential(value?: Record<string, unknown>): QqLoginCredential |
 
 type Credential = WeixinLoginCredential | QqLoginCredential;
 
+function sameCredential(left: Credential | undefined, right: Credential): boolean {
+	if (!left) return false;
+	if ('appId' in left && 'appId' in right) {
+		return left.appId === right.appId && left.appSecret === right.appSecret;
+	}
+	if ('accountId' in left && 'accountId' in right) {
+		return left.accountId === right.accountId && left.botToken === right.botToken;
+	}
+	return false;
+}
+
 interface RuntimeConnection {
 	snapshot: ConnectionSnapshot;
 	host: OpenClawHostController;
@@ -473,8 +484,27 @@ export class OpenClawAdapter implements ChannelAdapter {
 
 	private async completeLogin(runtime: RuntimeConnection, pending: OfficialLogin, credential: Credential): Promise<void> {
 		if (runtime.pending !== pending) return;
-		runtime.pending = undefined; runtime.qrCode = undefined; runtime.credentials = credential;
+		const unchangedCredential = sameCredential(runtime.credentials, credential);
+		runtime.pending = undefined;
+		runtime.credentials = credential;
 		await this.vault.put(runtime.snapshot.id, credential as unknown as Record<string, unknown>);
+		if (unchangedCredential && runtime.host.isRunning()) {
+			runtime.snapshot = await this.setStatus(
+				runtime,
+				'connected',
+				'Channel is already connected',
+				this.accountLabel(credential)
+			);
+			runtime.qrCode = undefined;
+			return;
+		}
+		runtime.snapshot = await this.setStatus(
+			runtime,
+			'degraded',
+			'Credentials saved; channel is reconnecting',
+			this.accountLabel(credential)
+		);
+		runtime.qrCode = undefined;
 		try { await this.restartRuntime(runtime); } catch (error) { runtime.snapshot = await this.setStatus(runtime, 'degraded', 'Credentials saved but channel could not connect'); this.logger.error('QR login restart failed', safeErrorFields(error)); }
 	}
 

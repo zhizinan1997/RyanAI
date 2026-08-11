@@ -681,6 +681,38 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
         values = update_connection.await_args.args[1]
         self.assertFalse(values['credentials_configured'])
 
+    async def test_sidecar_account_label_marks_a_completed_wechat_login_as_configured(self):
+        now = int(time.time())
+        connection = BotGatewayConnectionModel(
+            id='wechat-default',
+            channel='wechat',
+            name='WeChat',
+            enabled=True,
+            status='awaiting_scan',
+            credentials_configured=False,
+            created_at=now,
+            updated_at=now,
+        )
+        remote = {
+            'status': 'connected',
+            'accountLabel': '797045aa61de@im.bot',
+            'detail': 'Channel is already connected',
+        }
+        updated = connection.model_copy(
+            update={
+                'status': 'connected',
+                'credentials_configured': True,
+                'account_name': remote['accountLabel'],
+            }
+        )
+        update_connection = AsyncMock(return_value=updated)
+        with patch.object(self.gateway_router.BotGateway, 'update_connection', update_connection):
+            result = await self.gateway_router._sync_connection(connection, remote)
+
+        values = update_connection.await_args.args[1]
+        self.assertTrue(values['credentials_configured'])
+        self.assertTrue(self.gateway_router._connection_response(result, remote)['configured'])
+
     async def test_conversation_lock_registry_releases_entries_after_waiters_finish(self):
         active = 0
         maximum_active = 0
