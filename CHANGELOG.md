@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.13] - 2026-08-12
+
+### Added
+
+- Added shared OpenClaw shard topology for hosting multiple WeChat or QQ accounts in one process, with configurable shard capacity and persistent per-connection routing metadata.
+- Added authoritative shard bridge validation so account events are accepted only for the connection assigned to the signed shard.
+
+### Fixed
+
+- Rejected duplicate QQ AppIDs and WeChat accounts across connections instead of allowing one channel account to be bound twice.
+- Kept sibling accounts available when one shared-shard member logs out or is deleted, and restored crashed shard processes through the existing supervisor.
+- Migrated isolated WeChat account state into shared shard directories without overwriting newer shard data.
+
 ## [0.11.0.12] - 2026-08-12
 
 ### Fixed

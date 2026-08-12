@@ -293,6 +293,49 @@ export function mapOpenClawConnectionId(channel: Channel): string {
 	return `${channel}-default`;
 }
 
+/** Shard id when this process is a shared multi-account shard host. */
+export function mapOpenClawShardId(): string | undefined {
+	const configured = process.env.BOT_GATEWAY_OPENCLAW_SHARD_ID?.trim();
+	if (!configured) return undefined;
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/.test(configured)) {
+		throw new EventValidationError(
+			'invalid_openclaw_shard',
+			'Configured OpenClaw shard id is invalid'
+		);
+	}
+	return configured;
+}
+
+interface EventRouting {
+	connectionId: string;
+	accountKey?: string;
+	shardId?: string;
+}
+
+/**
+ * On a shared shard the owning connection is not known inside this process;
+ * the event carries its account id and the gateway's control server resolves
+ * the connection from its authoritative registry. The sentinel connection id
+ * is never accepted by the control server without that resolution.
+ */
+function resolveEventRouting(
+	channel: Channel,
+	accountId: string | undefined,
+	bridge: UnknownRecord
+): EventRouting {
+	const shardId = mapOpenClawShardId();
+	if (shardId) {
+		if (!accountId) {
+			throw new EventValidationError(
+				'missing_openclaw_account',
+				'OpenClaw account id is required on a shared shard'
+			);
+		}
+		return { connectionId: `shard:${shardId}`, accountKey: accountId, shardId };
+	}
+	return { connectionId: resolveConnectionId(channel, bridge) };
+}
+
 function assertSingleOpenClawAccount(
 	event: MessageHookLike,
 	ctx: AgentContextLike,
@@ -620,12 +663,19 @@ export async function normalizeMessageHook(
 		text(bridge.sender_name) ||
 		text(metadata.senderName) ||
 		text(facts.sender.name);
+	const routing = resolveEventRouting(
+		channel,
+		text(event.accountId) || text(ctx.accountId) || text(metadata.accountId) || text(bridge.account_id),
+		bridge
+	);
 
 	return {
 		eventId,
 		occurredAt,
 		channel,
-		connectionId: resolveConnectionId(channel, bridge),
+		connectionId: routing.connectionId,
+		...(routing.accountKey ? { accountKey: routing.accountKey } : {}),
+		...(routing.shardId ? { shardId: routing.shardId } : {}),
 		conversation: {
 			type: isGroup ? 'group' : 'private',
 			id: conversationId,
@@ -800,6 +850,7 @@ export function normalizeBeforeAgentReply(
 	if (!senderId) {
 		throw new EventValidationError('missing_openclaw_context', 'OpenClaw sender is missing');
 	}
+	const routing = resolveEventRouting(channel, text(ctx.accountId), {});
 
 	return {
 		eventId: normalizedEventId(ctx.runId, [
@@ -811,7 +862,9 @@ export function normalizeBeforeAgentReply(
 		]),
 		occurredAt: Date.now(),
 		channel,
-		connectionId: mapOpenClawConnectionId(channel),
+		connectionId: routing.connectionId,
+		...(routing.accountKey ? { accountKey: routing.accountKey } : {}),
+		...(routing.shardId ? { shardId: routing.shardId } : {}),
 		conversation: { type: isGroup ? 'group' : 'private', id: conversationId },
 		sender: { id: senderId },
 		message: {

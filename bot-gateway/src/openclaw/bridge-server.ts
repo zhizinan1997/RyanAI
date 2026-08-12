@@ -134,11 +134,15 @@ export async function parseOpenClawBridgeEvent(
 		}
 	}
 
+	const accountId = optionalString(raw.account_id);
+	const shardId = optionalString(raw.shard_id);
 	return {
 		eventId: string(raw.event_id, 'event_id'),
 		occurredAt,
 		channel: raw.channel,
 		connectionId: string(raw.connection_id, 'connection_id'),
+		...(accountId ? { accountKey: accountId } : {}),
+		...(shardId ? { shardId } : {}),
 		conversation: {
 			type: conversation.type,
 			id: string(conversation.id, 'conversation.id'),

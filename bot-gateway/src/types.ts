@@ -13,6 +13,10 @@ export interface GatewayInboundEvent {
 	occurredAt: number;
 	channel: Channel;
 	connectionId: string;
+	/** Normalized provider account id; set by shared-shard hosts for routing. */
+	accountKey?: string;
+	/** Shard that produced this event in shared topology. */
+	shardId?: string;
 	conversation: {
 		type: ConversationType;
 		id: string;
@@ -41,6 +45,8 @@ export interface WireAttachmentDescriptor {
 export interface RyanAiWireEvent {
 	version: '1.0';
 	event_id: string;
+	account_id?: string;
+	shard_id?: string;
 	occurred_at: string;
 	channel: Channel;
 	connection_id: string;
@@ -85,6 +91,10 @@ export interface ConnectionSnapshot {
 	enabled: boolean;
 	status: ConnectionStatus;
 	accountLabel?: string;
+	/** Normalized provider account id; unique per channel in shared topology. */
+	accountKey?: string;
+	/** Shared shard this connection's account is hosted on. */
+	shardId?: string;
 	updatedAt: string;
 	detail?: string;
 }

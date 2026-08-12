@@ -39,6 +39,12 @@ export class OpenClawBridgeClient {
 					...signed,
 					'content-type': multipart.contentType,
 					'x-ryanai-event-id': event.eventId,
+					// Names the shard-scoped key the control server must verify with; a
+					// forged value fails verification because the body is signed with
+					// this shard's own derived secret.
+					...(this.config.openClawShardId
+						? { 'x-ryanai-shard-id': this.config.openClawShardId }
+						: {}),
 					accept: 'application/json'
 				},
 				body: Uint8Array.from(multipart.body),

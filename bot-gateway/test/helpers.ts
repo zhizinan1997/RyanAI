@@ -24,6 +24,8 @@ export function testConfig(dataDir: string, overrides: Partial<GatewayConfig> = 
 		eventPath: RYANAI_EVENT_PATH,
 		bridgePath: OPENCLAW_BRIDGE_PATH,
 		adapterMode: 'mock',
+		openClawTopology: 'isolated',
+		openClawShardCapacity: 12,
 		openClawStateDir: path.join(dataDir, 'openclaw-state'),
 		openClawHomeDir: path.join(dataDir, 'openclaw-home'),
 		openClawPort: 18_789,

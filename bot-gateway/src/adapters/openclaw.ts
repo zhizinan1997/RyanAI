@@ -5,9 +5,12 @@ import type { GatewayConfig } from '../config.js';
 import { Logger, safeErrorFields } from '../logger.js';
 import {
 	OpenClawHost,
+	normalizeWeixinAccountKey,
 	type OpenClawAccountStatus,
-	type OpenClawCredentialSet
+	type OpenClawCredentialSet,
+	type OpenClawShardMember
 } from '../openclaw/host.js';
+import { assignShard, migrateIsolatedWeixinState } from '../openclaw/shard-manager.js';
 import {
 	startQqOfficialLogin,
 	startWeixinOfficialLogin,
@@ -39,7 +42,22 @@ interface OpenClawHostController {
 	stop(): Promise<void>;
 	clearCredentials?(): Promise<void>;
 	restart(credentials?: OpenClawCredentialSet, channelEnabled?: Record<Channel, boolean>): Promise<void>;
-	status(channel: Channel): Promise<OpenClawAccountStatus>;
+	status(channel: Channel, accountKey?: string): Promise<OpenClawAccountStatus>;
+}
+
+/** Controller surface of one shared shard process hosting many accounts. */
+export interface ShardHostController {
+	isRunning(): boolean;
+	healthDetail(): string;
+	startShard(
+		shardId: string,
+		channel: Channel,
+		members: readonly OpenClawShardMember[]
+	): Promise<void>;
+	restartShard(members?: readonly OpenClawShardMember[]): Promise<void>;
+	stop(): Promise<void>;
+	status(channel: Channel, accountKey?: string): Promise<OpenClawAccountStatus>;
+	shardMembers(): OpenClawShardMember[];
 }
 
 type OfficialLogin =
@@ -48,6 +66,7 @@ type OfficialLogin =
 
 export interface OpenClawAdapterDependencies {
 	host?: OpenClawHostController;
+	createShardHost?: (config: GatewayConfig, logger: Logger) => ShardHostController;
 	startWeixinLogin?: typeof startWeixinOfficialLogin;
 	startQqLogin?: typeof startQqOfficialLogin;
 }
@@ -80,6 +99,24 @@ function parseQqCredential(value?: Record<string, unknown>): QqLoginCredential |
 }
 
 type Credential = WeixinLoginCredential | QqLoginCredential;
+
+function sameShardMembers(
+	left: readonly OpenClawShardMember[],
+	right: readonly OpenClawShardMember[]
+): boolean {
+	if (left.length !== right.length) return false;
+	const key = (member: OpenClawShardMember): string =>
+		JSON.stringify([
+			member.connectionId,
+			member.wechat
+				? [member.wechat.accountId, member.wechat.botToken, member.wechat.baseUrl, member.wechat.userId]
+				: null,
+			member.qq ? [member.qq.appId, member.qq.appSecret, member.qq.userOpenid] : null
+		]);
+	const leftKeys = left.map(key).sort();
+	const rightKeys = right.map(key).sort();
+	return leftKeys.every((entry, index) => entry === rightKeys[index]);
+}
 
 function sameCredential(left: Credential | undefined, right: Credential): boolean {
 	if (!left) return false;
@@ -149,6 +186,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 	private readonly runtimes = new Map<string, RuntimeConnection>();
 	private readonly startWeixinLogin: typeof startWeixinOfficialLogin;
 	private readonly startQqLogin: typeof startQqOfficialLogin;
+	private readonly createShardHost: (config: GatewayConfig, logger: Logger) => ShardHostController;
 	private readonly legacyHostMode: boolean;
 	private started = false;
 	private detail = 'OpenClaw adapter has not started';
@@ -158,6 +196,9 @@ export class OpenClawAdapter implements ChannelAdapter {
 	private readonly assignedPorts = new Map<string, number>();
 	private readonly portOwners = new Map<number, string>();
 	private readonly blockedPorts = new Set<number>();
+	private readonly shardHosts = new Map<string, ShardHostController>();
+	private readonly shardTails = new Map<string, Promise<void>>();
+	private readonly pendingShardSyncs = new Map<string, Promise<void>>();
 
 	constructor(
 		private readonly config: GatewayConfig,
@@ -168,9 +209,17 @@ export class OpenClawAdapter implements ChannelAdapter {
 	) {
 		this.startWeixinLogin = dependencies.startWeixinLogin || startWeixinOfficialLogin;
 		this.startQqLogin = dependencies.startQqLogin || startQqOfficialLogin;
+		this.createShardHost =
+			dependencies.createShardHost ||
+			((config, logger) => new OpenClawHost(config, logger));
 		this.legacyHostMode = Boolean(dependencies.host);
 		// The injected host remains supported for the existing adapter fixture.
 		if (dependencies.host) this.runtimes.set('__legacy_host__', { snapshot: {} as ConnectionSnapshot, host: dependencies.host });
+	}
+
+	/** Shared shards replace one-process-per-connection when enabled. */
+	private get sharedTopology(): boolean {
+		return this.config.openClawTopology === 'shared' && !this.legacyHostMode;
 	}
 
 	async start(): Promise<void> {
@@ -203,11 +252,15 @@ export class OpenClawAdapter implements ChannelAdapter {
 			this.started = true;
 			try {
 				this.detail = 'Per-user OpenClaw channel hosts are restoring; RyanAI owns all inference';
-				// Credential materialization temporarily points OpenClaw's parent-process
-				// environment at a connection-specific directory. Restore hosts in order
-				// so two users can never write WeChat credentials into each other's state.
-				for (const connection of this.state.listConnections()) {
-					await this.serializeConnection(connection.id, () => this.ensureRuntime(connection));
+				if (this.sharedTopology) {
+					await this.startSharedTopology();
+				} else {
+					// Credential materialization temporarily points OpenClaw's parent-process
+					// environment at a connection-specific directory. Restore hosts in order
+					// so two users can never write WeChat credentials into each other's state.
+					for (const connection of this.state.listConnections()) {
+						await this.serializeConnection(connection.id, () => this.ensureRuntime(connection));
+					}
 				}
 				this.startSupervisor();
 			} catch (error) {
@@ -259,18 +312,23 @@ export class OpenClawAdapter implements ChannelAdapter {
 	async deleteConnection(connectionId: string): Promise<void> {
 		await this.serializeConnection(connectionId, async () => {
 			const runtime = this.runtimes.get(connectionId);
+			const snapshot = runtime?.snapshot ?? this.state.getConnection(connectionId);
+			const shardId = snapshot?.shardId;
 			if (runtime) {
 				this.clearRetry(runtime);
 				const pending = runtime.pending;
 				runtime.pending = undefined;
 				runtime.qrCode = undefined;
 				pending?.cancel();
-				await runtime.host.stop();
+				if (!this.sharedTopology) await runtime.host.stop();
 				this.runtimes.delete(connectionId);
 			}
 			await this.vault.delete(connectionId);
 			const deleted = await this.state.deleteConnection(connectionId);
 			this.releasePort(connectionId);
+			if (this.sharedTopology && shardId && snapshot) {
+				await this.syncShard(shardId, snapshot.channel);
+			}
 			if (!deleted) throw new AdapterError('connection_not_found', 404);
 		});
 	}
@@ -317,12 +375,19 @@ export class OpenClawAdapter implements ChannelAdapter {
 				if (raw) {
 					const credential = parseQqCredential(raw);
 					if (!credential) throw new AdapterError('invalid_qq_credentials', 400);
+					if (this.sharedTopology && (await this.findAccountConflict(runtime, credential))) {
+						throw new AdapterError('account_already_bound', 409);
+					}
 					await this.vault.put(connectionId, credential as unknown as Record<string, unknown>);
 					runtime.credentials = credential;
+					await this.ensureAccountRegistration(runtime);
 					await this.restartRuntime(runtime);
 					return structuredClone(runtime.snapshot);
 				}
 			}
+			// The WeChat QR flow writes its session bookkeeping into the state dir
+			// that will host the account, so the shard must be assigned up front.
+			if (this.sharedTopology) await this.ensureShardAssigned(runtime);
 			const pending = runtime.snapshot.channel === 'wechat'
 				? await this.startWeixinLogin(this.connectionConfig(runtime.snapshot), this.logger, parseWeixinCredential(await this.vault.get(connectionId)), connectionId)
 				: await this.startQqLogin(this.logger, connectionId);
@@ -344,6 +409,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 			this.clearRetry(runtime);
 			const raw = await this.vault.get(connectionId);
 			runtime.credentials = runtime.snapshot.channel === 'qq' ? parseQqCredential(raw) : parseWeixinCredential(raw);
+			if (!(await this.ensureAccountRegistration(runtime))) return structuredClone(runtime.snapshot);
 			await this.restartRuntime(runtime);
 			return structuredClone(runtime.snapshot);
 		});
@@ -358,9 +424,27 @@ export class OpenClawAdapter implements ChannelAdapter {
 			runtime.qrCode = undefined;
 			pending?.cancel();
 			runtime.credentials = undefined;
-			const { trustedOwnerExternalId: _trustedOwnerExternalId, ...withoutTrustedIdentity } = runtime.snapshot;
-			runtime.snapshot = withoutTrustedIdentity;
+			const previousShardId = runtime.snapshot.shardId;
+			const {
+				trustedOwnerExternalId: _trustedOwnerExternalId,
+				accountKey: _accountKey,
+				shardId: _shardId,
+				...withoutBoundIdentity
+			} = runtime.snapshot;
+			runtime.snapshot = withoutBoundIdentity;
 			await this.vault.delete(connectionId);
+			if (this.sharedTopology) {
+				// The shard slot is freed before the shard resync so a fresh login can
+				// land anywhere; the shard itself keeps serving its other members.
+				const result = await this.setStatus(
+					runtime,
+					runtime.snapshot.enabled ? 'logged_out' : 'disabled',
+					'Official channel credentials were removed'
+				);
+				runtime.snapshot = result;
+				if (previousShardId) await this.syncShard(previousShardId, runtime.snapshot.channel);
+				return result;
+			}
 			if (runtime.host.clearCredentials) {
 				await runtime.host.clearCredentials();
 			} else {
@@ -384,25 +468,34 @@ export class OpenClawAdapter implements ChannelAdapter {
 		return this.state.listGroups({ connectionId });
 	}
 
-	private async ensureRuntime(snapshot: ConnectionSnapshot): Promise<RuntimeConnection> {
+	private async ensureRuntime(
+		snapshot: ConnectionSnapshot,
+		startHosts = true
+	): Promise<RuntimeConnection> {
 		const existing = this.runtimes.get(snapshot.id);
 		if (existing) { existing.snapshot = snapshot; return existing; }
 		const legacy = this.runtimes.get('__legacy_host__');
-		const host = legacy && snapshot.id.endsWith('-default') ? legacy.host : new OpenClawHost(this.connectionConfig(snapshot), this.logger.child(snapshot.id));
+		const host = this.sharedTopology
+			? this.createMemberFacade(snapshot.id)
+			: legacy && snapshot.id.endsWith('-default')
+				? legacy.host
+				: new OpenClawHost(this.connectionConfig(snapshot), this.logger.child(snapshot.id));
 		const runtime: RuntimeConnection = { snapshot, host };
 		this.runtimes.set(snapshot.id, runtime);
 		const raw = await this.vault.get(snapshot.id);
 		runtime.credentials = snapshot.channel === 'qq' ? parseQqCredential(raw) : parseWeixinCredential(raw);
 		await this.persistCredentialIdentity(runtime);
+		if (!(await this.ensureAccountRegistration(runtime))) return runtime;
 		// A user can start a fresh QR flow while persisted connections are still
 		// restoring. Keep that new flow authoritative and do not start the old
 		// credential host underneath it.
 		if (runtime.pending) return runtime;
-		if (!snapshot.enabled) return runtime;
+		if (!runtime.snapshot.enabled) return runtime;
 		if (!runtime.credentials) {
 			runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured');
 			return runtime;
 		}
+		if (!startHosts) return runtime;
 		try {
 			if (!runtime.host.isRunning()) {
 				try {
@@ -418,6 +511,324 @@ export class OpenClawAdapter implements ChannelAdapter {
 			this.logger.error('OpenClaw connection host failed', { connection_id: snapshot.id, ...safeErrorFields(error) });
 		}
 		return runtime;
+	}
+
+	/**
+	 * Shared-topology startup: load every connection's credentials and registry
+	 * entries first so each populated shard process boots exactly once, then
+	 * refresh member statuses. A shard that fails to boot leaves its members
+	 * unavailable for the supervisor to retry.
+	 */
+	private async startSharedTopology(): Promise<void> {
+		for (const connection of this.state.listConnections()) {
+			await this.serializeConnection(connection.id, async () => {
+				await this.ensureRuntime(connection, false);
+			});
+		}
+		const shardChannels = new Map<string, Channel>();
+		for (const runtime of this.runtimes.values()) {
+			if (!runtime.snapshot.id || !runtime.snapshot.enabled || !runtime.credentials) continue;
+			if (runtime.snapshot.shardId) {
+				shardChannels.set(runtime.snapshot.shardId, runtime.snapshot.channel);
+			}
+		}
+		for (const [shardId, channel] of shardChannels) {
+			try {
+				await this.syncShard(shardId, channel);
+			} catch (error) {
+				this.logger.error('Shared OpenClaw shard failed to start', {
+					shard_id: shardId,
+					...safeErrorFields(error)
+				});
+			}
+		}
+		for (const runtime of this.runtimes.values()) {
+			if (!runtime.snapshot.id || !runtime.snapshot.enabled || !runtime.credentials) continue;
+			await this.serializeConnection(runtime.snapshot.id, async () => {
+				try {
+					if (runtime.host.isRunning()) await this.refresh(runtime);
+					else {
+						runtime.snapshot = await this.setStatus(
+							runtime,
+							'unavailable',
+							'OpenClaw connection host failed to start'
+						);
+					}
+				} catch (error) {
+					runtime.snapshot = await this.setStatus(runtime, 'degraded', 'Channel status probe failed');
+					this.logger.warn('Shared shard member refresh failed', {
+						connection_id: runtime.snapshot.id,
+						...safeErrorFields(error)
+					});
+				}
+			});
+		}
+	}
+
+	/**
+	 * Per-connection view of the shared shard hosting its account. Lifecycle
+	 * verbs all converge on "make the shard match current membership", so the
+	 * adapter's isolated-mode control flow keeps working unchanged.
+	 */
+	private createMemberFacade(connectionId: string): OpenClawHostController {
+		const shardHost = (): ShardHostController | undefined => {
+			const shardId =
+				this.runtimes.get(connectionId)?.snapshot.shardId ??
+				this.state.getConnection(connectionId)?.shardId;
+			return shardId ? this.shardHosts.get(shardId) : undefined;
+		};
+		return {
+			isRunning: () => shardHost()?.isRunning() ?? false,
+			healthDetail: () => shardHost()?.healthDetail() ?? 'Shard host has not started',
+			start: () => this.syncShardForConnection(connectionId),
+			restart: () => this.syncShardForConnection(connectionId),
+			stop: () => this.syncShardForConnection(connectionId),
+			clearCredentials: () => this.syncShardForConnection(connectionId),
+			status: (channel: Channel, accountKey?: string) => {
+				const host = shardHost();
+				const runtime = this.runtimes.get(connectionId);
+				if (!host) {
+					return Promise.resolve({
+						configured: Boolean(runtime?.credentials),
+						running: false,
+						connected: false
+					});
+				}
+				return host.status(channel, accountKey ?? runtime?.snapshot.accountKey);
+			}
+		};
+	}
+
+	private async syncShardForConnection(connectionId: string): Promise<void> {
+		const runtime = this.runtimes.get(connectionId);
+		const snapshot = runtime?.snapshot ?? this.state.getConnection(connectionId);
+		if (!snapshot) return;
+		let shardId = snapshot.shardId;
+		if (!shardId && runtime?.credentials && runtime.snapshot.enabled) {
+			shardId = await this.ensureShardAssigned(runtime);
+		}
+		if (!shardId) return;
+		await this.syncShard(shardId, snapshot.channel);
+	}
+
+	private shardHostFor(shardId: string, channel: Channel): ShardHostController {
+		let host = this.shardHosts.get(shardId);
+		if (!host) {
+			host = this.createShardHost(this.shardConfig(shardId, channel), this.logger.child(shardId));
+			this.shardHosts.set(shardId, host);
+		}
+		return host;
+	}
+
+	/**
+	 * Bring one shard process in line with its current member set. Calls made
+	 * while a sync is still queued join it instead of stacking restarts, since
+	 * membership is computed when the sync actually runs.
+	 */
+	private syncShard(shardId: string, channel: Channel): Promise<void> {
+		const pending = this.pendingShardSyncs.get(shardId);
+		if (pending) return pending;
+		const task: Promise<void> = this.serializeShard(shardId, async () => {
+			if (this.pendingShardSyncs.get(shardId) === task) this.pendingShardSyncs.delete(shardId);
+			await this.runShardSync(shardId, channel);
+		});
+		this.pendingShardSyncs.set(shardId, task);
+		task.catch(() => {
+			if (this.pendingShardSyncs.get(shardId) === task) this.pendingShardSyncs.delete(shardId);
+		});
+		return task;
+	}
+
+	private async runShardSync(shardId: string, channel: Channel): Promise<void> {
+		if (!this.started) return;
+		const members = this.eligibleShardMembers(shardId);
+		let host = this.shardHostFor(shardId, channel);
+		if (members.length === 0) {
+			if (host.isRunning()) await host.stop();
+			return;
+		}
+		if (host.isRunning() && sameShardMembers(host.shardMembers(), members)) return;
+		await this.migrateIsolatedStateFor(shardId, members);
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			try {
+				if (host.isRunning()) await host.restartShard(members);
+				else await host.startShard(shardId, channel, members);
+				return;
+			} catch (error) {
+				if (!isPortConflict(error) || !this.rebindShard(shardId)) throw error;
+				host = this.shardHostFor(shardId, channel);
+			}
+		}
+		throw new Error('OpenClaw shard could not acquire a free port');
+	}
+
+	private rebindShard(shardId: string): boolean {
+		const portKey = `shard:${shardId}`;
+		const port = this.assignedPorts.get(portKey);
+		if (port !== undefined) this.blockedPorts.add(port);
+		this.releasePort(portKey);
+		this.shardHosts.delete(shardId);
+		this.logger.warn('OpenClaw shard host moved to a free port', {
+			shard_id: shardId,
+			previous_port: port
+		});
+		return true;
+	}
+
+	private eligibleShardMembers(shardId: string): OpenClawShardMember[] {
+		const members: OpenClawShardMember[] = [];
+		for (const runtime of this.runtimes.values()) {
+			if (
+				!runtime.snapshot.id ||
+				runtime.snapshot.shardId !== shardId ||
+				!runtime.snapshot.enabled ||
+				!runtime.credentials
+			) {
+				continue;
+			}
+			if (runtime.snapshot.channel === 'qq') {
+				members.push({
+					connectionId: runtime.snapshot.id,
+					qq: runtime.credentials as QqLoginCredential
+				});
+			} else {
+				members.push({
+					connectionId: runtime.snapshot.id,
+					wechat: runtime.credentials as WeixinLoginCredential
+				});
+			}
+		}
+		return members.sort((left, right) => left.connectionId.localeCompare(right.connectionId));
+	}
+
+	private async migrateIsolatedStateFor(
+		shardId: string,
+		members: readonly OpenClawShardMember[]
+	): Promise<void> {
+		const shardStateDir = path.join(this.config.openClawStateDir, 'shards', shardId, 'state');
+		for (const member of members) {
+			if (!member.wechat) continue;
+			const rawId = member.wechat.accountId;
+			const normalized = await normalizeWeixinAccountKey(rawId).catch(() => rawId);
+			await migrateIsolatedWeixinState({
+				isolatedStateDir: path.join(this.config.openClawStateDir, member.connectionId, 'state'),
+				shardStateDir,
+				accountIds: [rawId, normalized],
+				logger: this.logger
+			});
+		}
+	}
+
+	private async ensureShardAssigned(runtime: RuntimeConnection): Promise<string> {
+		const existing = runtime.snapshot.shardId;
+		if (existing) return existing;
+		const shardId = assignShard(
+			runtime.snapshot.channel,
+			this.state.listConnections(),
+			this.config.openClawShardCapacity
+		);
+		runtime.snapshot = { ...runtime.snapshot, shardId, updatedAt: new Date().toISOString() };
+		await this.state.upsertConnection(runtime.snapshot);
+		return shardId;
+	}
+
+	/**
+	 * One bot account may serve only one connection in shared topology: the
+	 * account→connection registry could not attribute events otherwise, and two
+	 * live sessions for one account evict each other's login state anyway.
+	 */
+	private async findAccountConflict(
+		runtime: RuntimeConnection,
+		credential: Credential
+	): Promise<string | undefined> {
+		for (const other of this.runtimes.values()) {
+			const otherCredential = other.credentials;
+			if (other === runtime || !other.snapshot.id || !otherCredential) continue;
+			if (other.snapshot.channel !== runtime.snapshot.channel) continue;
+			if ('appId' in credential) {
+				if ('appId' in otherCredential && otherCredential.appId === credential.appId) {
+					return other.snapshot.id;
+				}
+			} else if (!('appId' in otherCredential)) {
+				const [left, right] = await Promise.all([
+					normalizeWeixinAccountKey(credential.accountId).catch(() => credential.accountId),
+					normalizeWeixinAccountKey(otherCredential.accountId).catch(() => otherCredential.accountId)
+				]);
+				if (left === right) return other.snapshot.id;
+			}
+		}
+		return undefined;
+	}
+
+	private async ensureAccountRegistration(runtime: RuntimeConnection): Promise<boolean> {
+		if (!this.sharedTopology || !runtime.credentials) return true;
+		const conflict = await this.findAccountConflict(runtime, runtime.credentials);
+		if (conflict) {
+			this.logger.warn('Bot account is already bound to another connection', {
+				connection_id: runtime.snapshot.id,
+				bound_connection_id: conflict
+			});
+			// Drop the in-memory credential so the supervisor and shard membership
+			// can never resurrect the duplicate; the vault copy stays for operators.
+			runtime.credentials = undefined;
+			runtime.snapshot = await this.setStatus(
+				runtime,
+				'unavailable',
+				'This bot account is already bound to another connection'
+			);
+			return false;
+		}
+		const accountKey =
+			'appId' in runtime.credentials
+				? runtime.snapshot.id
+				: await normalizeWeixinAccountKey(runtime.credentials.accountId).catch(
+						() => (runtime.credentials as WeixinLoginCredential).accountId
+					);
+		await this.ensureShardAssigned(runtime);
+		if (runtime.snapshot.accountKey !== accountKey) {
+			runtime.snapshot = { ...runtime.snapshot, accountKey, updatedAt: new Date().toISOString() };
+			await this.state.upsertConnection(runtime.snapshot);
+		}
+		return true;
+	}
+
+	private shardConfig(shardId: string, channel: Channel): GatewayConfig {
+		const openClawStateDir = path.join(this.config.openClawStateDir, 'shards', shardId, 'state');
+		const openClawHomeDir = path.join(this.config.openClawHomeDir, 'shards', shardId, 'home');
+		const parentGeneratedRoots = new Set([
+			path.join(this.config.openClawStateDir, 'media'),
+			path.join(this.config.openClawHomeDir, '.openclaw', 'media')
+		]);
+		const attachmentRoots = [
+			...this.config.attachmentRoots.filter((root) => !parentGeneratedRoots.has(root)),
+			path.join(openClawStateDir, 'media'),
+			path.join(openClawHomeDir, '.openclaw', 'media')
+		];
+		const shardConfig: GatewayConfig = {
+			...this.config,
+			enabledChannels: new Set<Channel>([channel]),
+			openClawPort: this.allocatePort(`shard:${shardId}`),
+			openClawStateDir,
+			openClawHomeDir,
+			attachmentRoots: [...new Set(attachmentRoots)]
+		};
+		delete shardConfig.openClawConnectionId;
+		return shardConfig;
+	}
+
+	/** Per-shard exclusive section, mirroring the per-connection queues. */
+	private serializeShard<T>(shardId: string, operation: () => Promise<T>): Promise<T> {
+		const previous = this.shardTails.get(shardId) || Promise.resolve();
+		const result = previous.then(operation);
+		const tail = result.then(
+			() => undefined,
+			() => undefined
+		);
+		this.shardTails.set(shardId, tail);
+		void tail.then(() => {
+			if (this.shardTails.get(shardId) === tail) this.shardTails.delete(shardId);
+		});
+		return result;
 	}
 
 	private scheduleRuntimeInitialization(snapshot: ConnectionSnapshot): void {
@@ -525,7 +936,12 @@ export class OpenClawAdapter implements ChannelAdapter {
 		const status = await runtime.host.status(runtime.snapshot.channel);
 		const detail = status.lastError || (status.connected ? 'Channel is connected' : 'Credentials are configured but channel is not connected');
 		const probedAccountId = status.accountId?.trim();
-		const accountLabel = probedAccountId && probedAccountId.toLowerCase() !== 'default'
+		// A shared QQ shard keys its accounts by connection id, so a probe echoing
+		// the connection id is not a human-meaningful label; fall back to the
+		// credential-derived label in that case.
+		const accountLabel = probedAccountId &&
+			probedAccountId.toLowerCase() !== 'default' &&
+			probedAccountId !== runtime.snapshot.id
 			? probedAccountId
 			: this.accountLabel(runtime.credentials);
 		runtime.snapshot = await this.setStatus(runtime, status.connected ? 'connected' : 'degraded', detail, accountLabel);
@@ -539,10 +955,28 @@ export class OpenClawAdapter implements ChannelAdapter {
 			runtime.pending !== pending
 		) return;
 		const unchangedCredential = sameCredential(runtime.credentials, credential);
+		if (this.sharedTopology) {
+			const conflict = await this.findAccountConflict(runtime, credential);
+			if (conflict) {
+				runtime.pending = undefined;
+				runtime.qrCode = undefined;
+				this.logger.warn('QR login rejected: bot account already bound elsewhere', {
+					connection_id: runtime.snapshot.id,
+					bound_connection_id: conflict
+				});
+				runtime.snapshot = await this.setStatus(
+					runtime,
+					runtime.credentials ? 'degraded' : 'logged_out',
+					'This bot account is already bound to another connection'
+				);
+				return;
+			}
+		}
 		runtime.pending = undefined;
 		runtime.credentials = credential;
 		await this.persistCredentialIdentity(runtime);
 		await this.vault.put(runtime.snapshot.id, credential as unknown as Record<string, unknown>);
+		await this.ensureAccountRegistration(runtime);
 		if (unchangedCredential && runtime.host.isRunning()) {
 			runtime.snapshot = await this.setStatus(
 				runtime,
@@ -582,6 +1016,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 	private channelFlags(snapshot: ConnectionSnapshot): Record<Channel, boolean> { return { wechat: snapshot.channel === 'wechat' && snapshot.enabled, qq: snapshot.channel === 'qq' && snapshot.enabled }; }
 
 	private connectionConfig(snapshot: ConnectionSnapshot): GatewayConfig {
+		if (this.sharedTopology) {
+			const shardId = snapshot.shardId ?? this.state.getConnection(snapshot.id)?.shardId;
+			if (!shardId) throw new AdapterError('shard_not_assigned', 500);
+			return this.shardConfig(shardId, snapshot.channel);
+		}
 		const openClawStateDir = path.join(this.config.openClawStateDir, snapshot.id, 'state');
 		const openClawHomeDir = path.join(this.config.openClawHomeDir, snapshot.id, 'home');
 		const parentGeneratedRoots = new Set([
@@ -648,7 +1087,12 @@ export class OpenClawAdapter implements ChannelAdapter {
 	 */
 	private async rebindRuntime(runtime: RuntimeConnection): Promise<boolean> {
 		const connectionId = runtime.snapshot.id;
-		if (!connectionId || this.legacyHostMode || this.runtimes.get(connectionId) !== runtime) {
+		if (
+			!connectionId ||
+			this.legacyHostMode ||
+			this.sharedTopology ||
+			this.runtimes.get(connectionId) !== runtime
+		) {
 			return false;
 		}
 		const port = this.assignedPorts.get(connectionId);
@@ -749,7 +1193,10 @@ export class OpenClawAdapter implements ChannelAdapter {
 			runtime.pending = undefined;
 			runtime.qrCode = undefined;
 			pending?.cancel();
-			if (runtime.host.isRunning()) await runtime.host.stop();
+			if (!this.sharedTopology && runtime.host.isRunning()) await runtime.host.stop();
+		}
+		for (const host of this.shardHosts.values()) {
+			if (host.isRunning()) await host.stop();
 		}
 	}
 	/** Adapter-wide exclusive section, for whole-adapter lifecycle only. */

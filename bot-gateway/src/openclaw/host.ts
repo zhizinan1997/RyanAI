@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import type { GatewayConfig } from '../config.js';
+import { deriveShardBridgeSecret } from '../config.js';
 import { Logger, safeErrorFields } from '../logger.js';
 import type { Channel } from '../types.js';
 import { withOpenClawEnv } from './env-mutex.js';
@@ -40,6 +41,19 @@ export interface OpenClawAccountStatus {
 	connected: boolean;
 	accountId?: string;
 	lastError?: string;
+}
+
+/** One bot account hosted on a shared shard process. */
+export interface OpenClawShardMember {
+	connectionId: string;
+	wechat?: OpenClawCredentialSet['wechat'];
+	qq?: OpenClawCredentialSet['qq'];
+}
+
+interface ShardAssignment {
+	shardId: string;
+	channel: Channel;
+	members: OpenClawShardMember[];
 }
 
 interface PackageInfo {
@@ -118,6 +132,21 @@ function wait(delayMs: number): Promise<void> {
 	});
 }
 
+function killProcessTree(
+	child: ChildProcessByStdio<null, Readable, Readable>,
+	signal: NodeJS.Signals
+): void {
+	if (child.pid !== undefined && process.platform !== 'win32') {
+		try {
+			process.kill(-child.pid, signal);
+			return;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+		}
+	}
+	child.kill(signal);
+}
+
 async function canConnect(port: number): Promise<boolean> {
 	return new Promise((resolve) => {
 		const socket = createConnection({ host: '127.0.0.1', port });
@@ -146,6 +175,28 @@ function firstRecord(value: unknown): Record<string, unknown> | undefined {
 	return undefined;
 }
 
+/** Find the status entry belonging to one account in a status payload. */
+function accountRecordFor(value: unknown, accountKey: string): Record<string, unknown> | undefined {
+	if (Array.isArray(value)) {
+		return value.find(
+			(entry): entry is Record<string, unknown> =>
+				Boolean(entry) &&
+				typeof entry === 'object' &&
+				!Array.isArray(entry) &&
+				text((entry as Record<string, unknown>).accountId) === accountKey
+		);
+	}
+	if (value && typeof value === 'object') {
+		const record = value as Record<string, unknown>;
+		const nested = record[accountKey];
+		if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+			return nested as Record<string, unknown>;
+		}
+		if (text(record.accountId) === accountKey) return record;
+	}
+	return undefined;
+}
+
 function bool(value: unknown): boolean {
 	return value === true;
 }
@@ -154,11 +205,24 @@ function text(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+/**
+ * Normalize a WeChat account id with the pinned SDK's rules so the registry,
+ * the materialized credential store, and inbound event accountIds all agree.
+ */
+export async function normalizeWeixinAccountKey(value: string): Promise<string> {
+	const moduleSpecifier = 'openclaw/plugin-sdk/account-id';
+	const accountIds = (await import(moduleSpecifier)) as {
+		normalizeAccountId(value: string): string;
+	};
+	return accountIds.normalizeAccountId(value);
+}
+
 export class OpenClawHost {
 	private child: ChildProcessByStdio<null, Readable, Readable> | undefined;
 	private packageRoots: Record<string, PackageInfo> | undefined;
 	private credentials: OpenClawCredentialSet = {};
 	private channelEnabled: Record<Channel, boolean> = { wechat: false, qq: false };
+	private shard: ShardAssignment | undefined;
 	private detail = 'OpenClaw host has not started';
 	private commandTail: Promise<void> = Promise.resolve();
 
@@ -185,12 +249,37 @@ export class OpenClawHost {
 		credentials: OpenClawCredentialSet,
 		channelEnabled: Record<Channel, boolean>
 	): Promise<void> {
+		this.shard = undefined;
+		this.credentials = structuredClone(credentials);
+		this.channelEnabled = { ...channelEnabled };
+		await this.launch();
+	}
+
+	/**
+	 * Start this host as a shared shard serving every member account of one
+	 * channel. Event attribution then relies on per-event account ids instead
+	 * of a process-wide connection id.
+	 */
+	async startShard(
+		shardId: string,
+		channel: Channel,
+		members: readonly OpenClawShardMember[]
+	): Promise<void> {
+		this.shard = { shardId, channel, members: structuredClone([...members]) };
+		this.credentials = {};
+		this.channelEnabled = { wechat: channel === 'wechat', qq: channel === 'qq' };
+		await this.launch();
+	}
+
+	shardMembers(): OpenClawShardMember[] {
+		return structuredClone(this.shard?.members ?? []);
+	}
+
+	private async launch(): Promise<void> {
 		if (this.isRunning()) throw new Error('OpenClaw host is already running');
 		if (await canConnect(this.config.openClawPort)) {
 			throw new Error(`OpenClaw port ${this.config.openClawPort} is already in use`);
 		}
-		this.credentials = structuredClone(credentials);
-		this.channelEnabled = { ...channelEnabled };
 		this.packageRoots = await this.verifyPackages();
 		await Promise.all([
 			mkdir(this.config.openClawStateDir, { recursive: true, mode: 0o700 }),
@@ -213,7 +302,8 @@ export class OpenClawHost {
 				OPENCLAW_CONFIG_PATH: this.configPath
 			},
 			async () => {
-				await this.materializeWeixinCredentials(credentials.wechat);
+				if (this.shard) await this.materializeWeixinShardCredentials(this.shard.members);
+				else await this.materializeWeixinCredentials(this.credentials.wechat);
 				await this.clearQqCredentialBackups();
 				await this.writeConfig();
 			}
@@ -237,6 +327,7 @@ export class OpenClawHost {
 			{
 				cwd: appRoot(),
 				env: this.childEnvironment(),
+				detached: process.platform !== 'win32',
 				stdio: ['ignore', 'pipe', 'pipe']
 			}
 		);
@@ -300,12 +391,12 @@ export class OpenClawHost {
 			const child = this.child;
 			this.child = undefined;
 			if (!child || child.exitCode !== null) return;
-		child.kill('SIGTERM');
+		killProcessTree(child, 'SIGTERM');
 		const exited = new Promise<boolean>((resolve) => {
 			child.once('exit', () => resolve(true));
 		});
 		if (!(await Promise.race([exited, wait(10_000).then(() => false)]))) {
-			child.kill('SIGKILL');
+			killProcessTree(child, 'SIGKILL');
 			await Promise.race([exited, wait(2_000)]);
 		}
 			this.detail = 'OpenClaw host is stopped';
@@ -315,6 +406,7 @@ export class OpenClawHost {
 		await this.stop();
 		this.credentials = {};
 		this.channelEnabled = { wechat: false, qq: false };
+		this.shard = undefined;
 		this.packageRoots = undefined;
 		this.detail = 'OpenClaw host credentials are cleared';
 	}
@@ -325,13 +417,29 @@ export class OpenClawHost {
 	): Promise<void> {
 		await this.serialize(async () => {
 			await this.stop();
-			await this.start(credentials, channelEnabled);
+			if (this.shard) await this.startShard(this.shard.shardId, this.shard.channel, this.shard.members);
+			else await this.start(credentials, channelEnabled);
 		});
 	}
 
-	async status(channel: Channel): Promise<OpenClawAccountStatus> {
-		const configured =
-			channel === 'wechat' ? Boolean(this.credentials.wechat) : Boolean(this.credentials.qq);
+	/** Replace the member set and restart the shard process with it. */
+	async restartShard(members?: readonly OpenClawShardMember[]): Promise<void> {
+		await this.serialize(async () => {
+			const shard = this.shard;
+			if (!shard) throw new Error('OpenClaw host is not running as a shard');
+			await this.stop();
+			await this.startShard(shard.shardId, shard.channel, members ?? shard.members);
+		});
+	}
+
+	async status(channel: Channel, accountKey?: string): Promise<OpenClawAccountStatus> {
+		const configured = this.shard
+			? this.shard.members.some((member) =>
+					channel === 'wechat' ? Boolean(member.wechat) : Boolean(member.qq)
+				)
+			: channel === 'wechat'
+				? Boolean(this.credentials.wechat)
+				: Boolean(this.credentials.qq);
 		if (!this.isRunning()) return { configured, running: false, connected: false };
 		const channelId = channel === 'wechat' ? 'openclaw-weixin' : 'qqbot';
 		try {
@@ -351,23 +459,34 @@ export class OpenClawHost {
 			const payload = JSON.parse(output) as Record<string, unknown>;
 			const accountsByChannel = firstRecord(payload.channelAccounts);
 			const accounts = accountsByChannel?.[channelId];
-			const account = firstRecord(accounts);
+			const account = accountKey
+				? accountRecordFor(accounts, accountKey)
+				: firstRecord(accounts);
 			const summaryByChannel = firstRecord(payload.channels);
 			const summary = firstRecord(summaryByChannel?.[channelId]);
-			const running = bool(account?.running) || bool(summary?.running);
-			const lastError = text(account?.lastError) || text(summary?.lastError);
+			if (accountKey && !account) {
+				// A successful probe that does not list the account means the shard is
+				// not actually hosting it; the channel-level summary must not mask that.
+				return { configured, running: false, connected: false };
+			}
+			// With a specific account resolved, channel-level summary fields must not
+			// leak one member's health onto another member of the same shard.
+			const running = bool(account?.running) || (!accountKey && bool(summary?.running));
+			const lastError =
+				text(account?.lastError) || (!accountKey ? text(summary?.lastError) : undefined);
 			// The WeChat plugin exposes a long-poll monitor as `running` and does not
 			// include a separate `connected` flag. QQ exposes both fields, so retain
 			// its explicit probe while treating a healthy WeChat monitor as connected.
 			const connected =
 				bool(account?.connected) ||
-				bool(summary?.connected) ||
+				(!accountKey && bool(summary?.connected)) ||
 				(channel === 'wechat' && running && !lastError);
 			return {
-				configured: bool(account?.configured) || bool(summary?.configured) || configured,
+				configured:
+					bool(account?.configured) || (!accountKey && bool(summary?.configured)) || configured,
 				running,
 				connected,
-				accountId: text(account?.accountId) || text(summary?.accountId),
+				accountId: text(account?.accountId) || (!accountKey ? text(summary?.accountId) : accountKey),
 				lastError
 			};
 			} catch (error) {
@@ -464,40 +583,67 @@ export class OpenClawHost {
 		return undefined;
 	}
 
+	private hasWeixinCredential(): boolean {
+		return this.shard
+			? this.shard.members.some((member) => Boolean(member.wechat))
+			: Boolean(this.credentials.wechat);
+	}
+
 	private async seedManagedWeixinProject(): Promise<void> {
-		if (!this.channelEnabled.wechat || !this.credentials.wechat) return;
+		if (!this.channelEnabled.wechat || !this.hasWeixinCredential()) return;
 		const projectsRoot = path.join(this.config.openClawStateDir, 'npm', 'projects');
 		if (await this.findManagedWeixinProject(projectsRoot)) return;
 
-		const isolatedStateRoot = path.dirname(path.dirname(this.config.openClawStateDir));
-		let connectionDirs;
-		try {
-			connectionDirs = await readdir(isolatedStateRoot, { withFileTypes: true });
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-			throw error;
-		}
-		for (const connectionDir of connectionDirs) {
-			if (!connectionDir.isDirectory()) continue;
-			const siblingStateDir = path.join(isolatedStateRoot, connectionDir.name, 'state');
-			if (path.resolve(siblingStateDir) === path.resolve(this.config.openClawStateDir)) continue;
-			const sourceProject = await this.findManagedWeixinProject(
-				path.join(siblingStateDir, 'npm', 'projects')
-			);
-			if (!sourceProject) continue;
+		const levelRoot = path.dirname(path.dirname(this.config.openClawStateDir));
+		// A shard lives under <root>/shards/<shardId>/state; its grandparent root
+		// still holds the old isolated per-connection trees worth seeding from.
+		const searchRoots =
+			path.basename(levelRoot) === 'shards'
+				? [levelRoot, path.dirname(levelRoot)]
+				: [levelRoot];
+		for (const searchRoot of searchRoots) {
+			let connectionDirs;
+			try {
+				connectionDirs = await readdir(searchRoot, { withFileTypes: true });
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+				throw error;
+			}
+			for (const connectionDir of connectionDirs) {
+				if (!connectionDir.isDirectory()) continue;
+				const siblingStateDir = path.join(searchRoot, connectionDir.name, 'state');
+				if (path.resolve(siblingStateDir) === path.resolve(this.config.openClawStateDir)) continue;
+				const sourceProject = await this.findManagedWeixinProject(
+					path.join(siblingStateDir, 'npm', 'projects')
+				);
+				if (!sourceProject) continue;
 
-			await rm(projectsRoot, { recursive: true, force: true });
-			await mkdir(projectsRoot, { recursive: true, mode: 0o700 });
-			await cp(sourceProject, path.join(projectsRoot, path.basename(sourceProject)), {
-				recursive: true
-			});
-			this.logger.info('Seeded managed WeChat plugin dependencies from an existing isolated host');
-			return;
+				await rm(projectsRoot, { recursive: true, force: true });
+				await mkdir(projectsRoot, { recursive: true, mode: 0o700 });
+				await cp(sourceProject, path.join(projectsRoot, path.basename(sourceProject)), {
+					recursive: true
+				});
+				this.logger.info('Seeded managed WeChat plugin dependencies from an existing isolated host');
+				return;
+			}
 		}
 	}
 
 	private async writeConfig(): Promise<void> {
 		if (!this.packageRoots) throw new Error('OpenClaw package roots are unavailable');
+		const channelPlugins = [
+			...(this.channelEnabled.wechat ? ['openclaw-weixin'] : []),
+			...(this.channelEnabled.qq ? ['openclaw-qqbot'] : [])
+		];
+		const pluginPaths = [
+			...(this.channelEnabled.wechat
+				? [this.packageRoots['@tencent-weixin/openclaw-weixin']!.root]
+				: []),
+			...(this.channelEnabled.qq
+				? [this.packageRoots['@tencent-connect/openclaw-qqbot']!.root]
+				: []),
+			appRoot()
+		];
 		const qqConfig: Record<string, unknown> = {
 			enabled: this.channelEnabled.qq,
 			dmPolicy: 'open',
@@ -507,9 +653,25 @@ export class OpenClawHost {
 			upgradeMode: 'doc',
 			streaming: { mode: 'off' },
 			stt: { enabled: false },
-			tts: { enabled: false },
-			...(this.credentials.qq ? { appId: this.credentials.qq.appId } : {})
+			tts: { enabled: false }
 		};
+		if (this.shard) {
+			// Shared shards key the accounts map by connection id, so inbound QQ
+			// events carry the owning connection id as their accountId directly.
+			const qqAccounts: Record<string, unknown> = {};
+			for (const member of this.shard.members) {
+				if (!member.qq) continue;
+				qqAccounts[member.connectionId] = {
+					enabled: true,
+					appId: member.qq.appId,
+					clientSecret: member.qq.appSecret
+				};
+			}
+			qqConfig.enabled = this.channelEnabled.qq && Object.keys(qqAccounts).length > 0;
+			qqConfig.accounts = qqAccounts;
+		} else if (this.credentials.qq) {
+			qqConfig.appId = this.credentials.qq.appId;
+		}
 		await writeJsonAtomic(this.configPath, {
 			gateway: {
 				mode: 'local',
@@ -522,17 +684,13 @@ export class OpenClawHost {
 			session: { dmScope: 'per-account-channel-peer' },
 			plugins: {
 				enabled: true,
-				allow: ['openclaw-weixin', 'openclaw-qqbot', 'ryanai-bridge'],
+				allow: [...channelPlugins, 'ryanai-bridge'],
 				load: {
-					paths: [
-						this.packageRoots['@tencent-weixin/openclaw-weixin']!.root,
-						this.packageRoots['@tencent-connect/openclaw-qqbot']!.root,
-						appRoot()
-					]
+					paths: pluginPaths
 				},
 				entries: {
-					'openclaw-weixin': { enabled: true },
-					'openclaw-qqbot': { enabled: true },
+					'openclaw-weixin': { enabled: this.channelEnabled.wechat },
+					'openclaw-qqbot': { enabled: this.channelEnabled.qq },
 					'ryanai-bridge': {
 						enabled: true,
 						hooks: { allowConversationAccess: true, allowPromptInjection: false }
@@ -587,7 +745,9 @@ export class OpenClawHost {
 			BOT_GATEWAY_ENABLED: 'true',
 			BOT_GATEWAY_ADAPTER: 'openclaw',
 			BOT_GATEWAY_INTERNAL_PORT: String(this.config.internalPort),
-			BOT_GATEWAY_HMAC_SECRET: this.config.bridgeHmacSecret,
+			BOT_GATEWAY_HMAC_SECRET: this.shard
+				? deriveShardBridgeSecret(this.config.hmacSecret, this.shard.shardId)
+				: this.config.bridgeHmacSecret,
 			BOT_GATEWAY_DATA_DIR: this.config.dataDir,
 			BOT_GATEWAY_OPENCLAW_STATE_DIR: this.config.openClawStateDir,
 			BOT_GATEWAY_OPENCLAW_HOME_DIR: this.config.openClawHomeDir,
@@ -605,8 +765,10 @@ export class OpenClawHost {
 			BOT_GATEWAY_SAFE_ERROR_MESSAGE: this.config.safeErrorMessage,
 			BOT_GATEWAY_WECHAT_ENABLED: this.config.enabledChannels.has('wechat') ? 'true' : 'false',
 			BOT_GATEWAY_QQ_ENABLED: this.config.enabledChannels.has('qq') ? 'true' : 'false',
-			BOT_GATEWAY_OPENCLAW_CONNECTION_ID: this.config.openClawConnectionId || '',
-			...(this.credentials.qq
+			...(this.shard
+				? { BOT_GATEWAY_OPENCLAW_SHARD_ID: this.shard.shardId }
+				: { BOT_GATEWAY_OPENCLAW_CONNECTION_ID: this.config.openClawConnectionId || '' }),
+			...(!this.shard && this.credentials.qq
 				? {
 						QQBOT_APP_ID: this.credentials.qq.appId,
 						QQBOT_CLIENT_SECRET: this.credentials.qq.appSecret
@@ -682,12 +844,42 @@ export class OpenClawHost {
 		accounts.registerWeixinAccountId(accountId);
 	}
 
-	private async normalizeAccountId(value: string): Promise<string> {
-		const moduleSpecifier = 'openclaw/plugin-sdk/account-id';
-		const accountIds = (await import(moduleSpecifier)) as {
-			normalizeAccountId(value: string): string;
+	private async materializeWeixinShardCredentials(
+		members: readonly OpenClawShardMember[]
+	): Promise<void> {
+		const accounts = (await import(WEIXIN_ACCOUNTS_MODULE)) as {
+			clearWeixinAccount(accountId: string): void;
+			listIndexedWeixinAccountIds(): string[];
+			registerWeixinAccountId(accountId: string): void;
+			saveWeixinAccount(
+				accountId: string,
+				update: { token?: string; baseUrl?: string; userId?: string }
+			): void;
+			unregisterWeixinAccountId(accountId: string): void;
 		};
-		return accountIds.normalizeAccountId(value);
+		const wanted = new Map<string, NonNullable<OpenClawCredentialSet['wechat']>>();
+		for (const member of members) {
+			if (!member.wechat) continue;
+			wanted.set(await this.normalizeAccountId(member.wechat.accountId), member.wechat);
+		}
+		for (const existingId of accounts.listIndexedWeixinAccountIds()) {
+			if (!wanted.has(existingId)) {
+				accounts.clearWeixinAccount(existingId);
+				accounts.unregisterWeixinAccountId(existingId);
+			}
+		}
+		for (const [accountId, credential] of wanted) {
+			accounts.saveWeixinAccount(accountId, {
+				token: credential.botToken,
+				baseUrl: credential.baseUrl,
+				userId: credential.userId
+			});
+			accounts.registerWeixinAccountId(accountId);
+		}
+	}
+
+	private async normalizeAccountId(value: string): Promise<string> {
+		return normalizeWeixinAccountKey(value);
 	}
 
 	private async clearQqCredentialBackups(): Promise<void> {

@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { ChannelAdapter, MockInjectableAdapter } from './adapters/types.js';
 import { AdapterError } from './adapters/types.js';
 import type { GatewayConfig } from './config.js';
+import { deriveShardBridgeSecret } from './config.js';
 import { EventValidationError } from './event.js';
 import type { RyanAiGateway } from './gateway.js';
 import { Logger, safeErrorFields } from './logger.js';
@@ -11,6 +12,7 @@ import { parseOpenClawBridgeEvent } from './openclaw/bridge-server.js';
 import { NonceReplayCache, verifyRequest } from './security/hmac.js';
 import type { CredentialVault } from './security/vault.js';
 import type { GatewayStateStore } from './state.js';
+import type { ConnectionSnapshot } from './types.js';
 
 class HttpError extends Error {
 	constructor(
@@ -169,7 +171,8 @@ export class ControlServer {
 				response,
 				requestId,
 				headerValue(request, 'content-type'),
-				headerValue(request, 'x-ryanai-event-id')
+				headerValue(request, 'x-ryanai-event-id'),
+				headerValue(request, 'x-ryanai-shard-id')?.trim() || undefined
 			);
 		} catch (error) {
 			const mapped = this.mapError(error);
@@ -209,11 +212,22 @@ export class ControlServer {
 		pathWithQuery: string,
 		body: Buffer
 	): void {
+		const isBridgePath = pathWithQuery.split('?', 1)[0] === this.config.bridgePath;
+		const shardId = isBridgePath
+			? headerValue(request, 'x-ryanai-shard-id')?.trim() || undefined
+			: undefined;
+		if (shardId && !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/.test(shardId)) {
+			throw new HttpError(401, 'invalid_shard_id');
+		}
+		// Selecting the shard-derived key by header is itself the authentication:
+		// a request signed with another shard's key cannot verify under this one.
+		const secret = isBridgePath
+			? shardId
+				? deriveShardBridgeSecret(this.config.hmacSecret, shardId)
+				: this.config.bridgeHmacSecret
+			: this.config.hmacSecret;
 		const verification = verifyRequest({
-			secret:
-				pathWithQuery.split('?', 1)[0] === this.config.bridgePath
-					? this.config.bridgeHmacSecret
-					: this.config.hmacSecret,
+			secret,
 			method,
 			pathWithQuery,
 			body,
@@ -234,7 +248,8 @@ export class ControlServer {
 		response: ServerResponse,
 		requestId: string,
 		contentType?: string,
-		eventIdHeader?: string
+		eventIdHeader?: string,
+		shardIdHeader?: string
 	): Promise<number> {
 		if (method === 'GET' && url.pathname === '/v1/connections') {
 			const ownerUserId = url.searchParams.get('owner_user_id') || url.searchParams.get('user_id') || undefined;
@@ -273,7 +288,30 @@ export class ControlServer {
 			if (eventIdHeader && eventIdHeader !== event.eventId) {
 				throw new HttpError(400, 'event_id_mismatch');
 			}
-			const connection = this.state.getConnection(event.connectionId);
+			let connection: ConnectionSnapshot | undefined;
+			if (event.shardId || shardIdHeader) {
+				// Shared-shard events: the shard id verified by the HMAC key selection
+				// must match the event's claim, and the account→connection mapping is
+				// resolved here, never trusted from the shard process.
+				if (!event.shardId || event.shardId !== shardIdHeader || !event.accountKey) {
+					throw new HttpError(400, 'shard_event_mismatch');
+				}
+				connection = this.state
+					.listConnections()
+					.find(
+						(entry) =>
+							entry.channel === event.channel &&
+							entry.accountKey === event.accountKey &&
+							entry.shardId === event.shardId
+					);
+				if (connection) {
+					event.connectionId = connection.id;
+					delete event.accountKey;
+					delete event.shardId;
+				}
+			} else {
+				connection = this.state.getConnection(event.connectionId);
+			}
 			const reply =
 				!connection || !connection.enabled
 					? {

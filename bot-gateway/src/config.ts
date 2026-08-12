@@ -20,6 +20,10 @@ export interface GatewayConfig {
 	eventPath: typeof RYANAI_EVENT_PATH;
 	bridgePath: typeof OPENCLAW_BRIDGE_PATH;
 	adapterMode: 'mock' | 'openclaw';
+	openClawTopology: 'isolated' | 'shared';
+	openClawShardCapacity: number;
+	/** Set only inside a shared shard's child process environment. */
+	openClawShardId?: string;
 	openClawStateDir: string;
 	openClawHomeDir: string;
 	openClawPort: number;
@@ -72,6 +76,16 @@ function requireSecret(name: string, value: string | undefined): string {
 	return value;
 }
 
+/**
+ * Bridge secret for one shared shard. A compromised shard process can then
+ * only claim events for accounts the control server maps to that shard.
+ */
+export function deriveShardBridgeSecret(hmacSecret: string, shardId: string): string {
+	return createHmac('sha256', hmacSecret)
+		.update(`ryanai-openclaw-bridge-v1:${shardId}`)
+		.digest('hex');
+}
+
 export function parseEncryptionKey(value: string | undefined): Buffer {
 	if (!value) {
 		throw new Error('BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY is required');
@@ -114,6 +128,14 @@ export function loadConfig(
 	const adapterValue = (env.BOT_GATEWAY_ADAPTER || 'openclaw').trim().toLowerCase();
 	if (adapterValue !== 'mock' && adapterValue !== 'openclaw') {
 		throw new Error('BOT_GATEWAY_ADAPTER must be either mock or openclaw');
+	}
+	const topologyValue = (env.BOT_GATEWAY_OPENCLAW_TOPOLOGY || 'isolated').trim().toLowerCase();
+	if (topologyValue !== 'isolated' && topologyValue !== 'shared') {
+		throw new Error('BOT_GATEWAY_OPENCLAW_TOPOLOGY must be either isolated or shared');
+	}
+	const shardIdValue = env.BOT_GATEWAY_OPENCLAW_SHARD_ID?.trim();
+	if (shardIdValue && !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/.test(shardIdValue)) {
+		throw new Error('BOT_GATEWAY_OPENCLAW_SHARD_ID is invalid');
 	}
 
 	const configuredChannels = new Set<Channel>();
@@ -175,6 +197,15 @@ export function loadConfig(
 		eventPath: RYANAI_EVENT_PATH,
 		bridgePath: OPENCLAW_BRIDGE_PATH,
 		adapterMode: adapterValue,
+		openClawTopology: topologyValue,
+		openClawShardCapacity: parseInteger(
+			'BOT_GATEWAY_OPENCLAW_SHARD_CAPACITY',
+			env.BOT_GATEWAY_OPENCLAW_SHARD_CAPACITY,
+			12,
+			1,
+			50
+		),
+		...(shardIdValue ? { openClawShardId: shardIdValue } : {}),
 		openClawStateDir,
 		openClawHomeDir,
 		openClawPort: parseInteger(

@@ -48,6 +48,11 @@ export function buildWireEvent(event: GatewayInboundEvent): RyanAiWireEvent {
 	return {
 		version: '1.0',
 		event_id: event.eventId,
+		// Shard routing metadata rides only on the shard→gateway bridge leg; the
+		// control server strips it after resolving the owning connection, so the
+		// backend (extra='forbid') never sees these fields.
+		...(event.accountKey ? { account_id: event.accountKey } : {}),
+		...(event.shardId ? { shard_id: event.shardId } : {}),
 		occurred_at: new Date(event.occurredAt).toISOString(),
 		channel: event.channel,
 		connection_id: event.connectionId,

@@ -5,4 +5,5 @@ import './client.test.js';
 import './control.test.js';
 import './openclaw.test.js';
 import './openclaw-adapter.test.js';
+import './shard.test.js';
 import './plugin.test.js';
