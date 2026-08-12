@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0.12] - 2026-08-12
+
+### Fixed
+
+- Kept configured QQ bots shown as connected when a transient OpenClaw status CLI probe times out while the live channel host continues handling messages.
+
 ## [0.11.0.11] - 2026-08-11
 
 ### Fixed

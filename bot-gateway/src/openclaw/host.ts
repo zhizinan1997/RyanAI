@@ -376,13 +376,14 @@ export class OpenClawHost {
 					...safeErrorFields(error)
 				});
 				const running = this.isRunning();
-				// The WeChat plugin is a long-poll monitor. A busy monitor can time out
-				// the CLI probe while it is still receiving messages, so do not turn a
-				// live process into a false disconnected status on one transient probe.
+				// A busy channel can time out the CLI probe while it is still receiving
+				// messages. Keep a live, configured host online until a successful probe
+				// reports a real channel error; otherwise a transient CLI failure makes
+				// the administrator view disagree with a bot that is replying normally.
 				return {
 					configured,
 					running,
-					connected: channel === 'wechat' && running
+					connected: configured && running
 				};
 			}
 	}

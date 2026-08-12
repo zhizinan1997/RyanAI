@@ -285,6 +285,29 @@ test('OpenClaw adapter replaces the generic QQ account id with the configured ap
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('a transient QQ status probe failure keeps a live configured host connected', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const host = new OpenClawHost(config, quietLogger());
+	const internals = host as unknown as {
+		child: { exitCode: null; killed: false };
+		credentials: OpenClawCredentialSet;
+		runCli(args: string[], timeoutMs: number): Promise<string>;
+	};
+	internals.child = { exitCode: null, killed: false };
+	internals.credentials = { qq: { appId: 'qq-app-1', appSecret: 'secret-1' } };
+	internals.runCli = async () => {
+		throw new Error('status probe timed out');
+	};
+
+	assert.deepEqual(await host.status('qq'), {
+		configured: true,
+		running: true,
+		connected: true
+	});
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('OpenClaw adapter persists an official WeChat QR result and removes it on logout', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
