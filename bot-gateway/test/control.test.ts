@@ -68,6 +68,7 @@ test('canonical control API paths require HMAC and drive the mock adapter', asyn
 			app_id: 'mock-id',
 			app_secret: 'mock-secret'
 		});
+		assert.equal((await runtime.state.getConnection('qq-default'))?.credentialsConfigured, true);
 
 		const loginPath = '/v1/connections/qq-default/login';
 		const loginResponse = await fetch(

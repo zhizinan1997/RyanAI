@@ -208,9 +208,12 @@ def extract_account_key(channel: str, credentials: dict[str, Any]) -> str:
     if not isinstance(credentials, dict):
         raise BotGatewayCredentialError('credentials must be a JSON object')
     if channel == 'wechat':
-        account_key = credentials.get('accountId')
+        account_key = credentials.get('accountId', credentials.get('account_id'))
     elif channel == 'qq':
-        account_key = credentials.get('app_id')
+        # The public API uses snake_case while the legacy sidecar cache keeps
+        # the official SDK's camelCase names. Accept both during migration so
+        # an existing, live account is never mistaken for an invalid credential.
+        account_key = credentials.get('app_id', credentials.get('appId'))
     if not account_key or not isinstance(account_key, str):
         raise BotGatewayCredentialError(
             f'channel {channel} credentials are missing the account identity key'

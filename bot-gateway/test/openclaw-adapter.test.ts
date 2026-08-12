@@ -292,6 +292,7 @@ test('OpenClaw adapter restores encrypted QQ credentials and stays healthy witho
 	await waitFor(async () => (await state.getConnection('qq-default'))?.status === 'connected');
 	assert.equal(host.credentials.qq?.appId, 'app-1');
 	assert.equal((await state.getConnection('qq-default'))?.status, 'connected');
+	assert.equal((await state.getConnection('qq-default'))?.credentialsConfigured, true);
 	assert.equal((await state.getConnection('wechat-default'))?.status, 'logged_out');
 	await adapter.stop();
 	await rm(dataDir, { recursive: true, force: true });
@@ -377,6 +378,7 @@ test('OpenClaw adapter persists an official WeChat QR result and removes it on l
 	resolveCredential({ accountId: 'wx-account', botToken: 'wx-token' });
 	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'connected');
 	assert.equal((await vault.get('wechat-default'))?.botToken, 'wx-token');
+	assert.equal((await state.getConnection('wechat-default'))?.credentialsConfigured, true);
 	assert.equal(host.credentials.wechat?.accountId, 'wx-account');
 	assert.ok(host.restartCount >= 1);
 

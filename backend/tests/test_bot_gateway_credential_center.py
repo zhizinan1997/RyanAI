@@ -107,7 +107,9 @@ class BotGatewayCredentialCryptoTests(TestCase):
 
     def test_extract_account_key_uses_app_id_or_account_id(self):
         self.assertEqual(extract_account_key('qq', {'app_id': '10001'}), '10001')
+        self.assertEqual(extract_account_key('qq', {'appId': '10001'}), '10001')
         self.assertEqual(extract_account_key('wechat', {'accountId': 'wx-id'}), 'wx-id')
+        self.assertEqual(extract_account_key('wechat', {'account_id': 'wx-id'}), 'wx-id')
         with self.assertRaises(BotGatewayCredentialError):
             extract_account_key('qq', {})
         with self.assertRaises(BotGatewayCredentialError):

@@ -446,6 +446,11 @@ export class ControlServer {
 					? (input.credentials as Record<string, unknown>)
 					: input;
 			await this.vault.put(connectionId, credentials);
+			// The encrypted vault write itself is sufficient evidence that this
+			// connection has credentials, even before a QR/login flow starts.
+			// Keep the control-plane status truthful instead of waiting for a later
+			// process restart to rediscover the local vault entry.
+			await this.state.patchConnection(connectionId, { credentialsConfigured: true });
 			sendJson(response, 204, null, requestId);
 			return 204;
 		}

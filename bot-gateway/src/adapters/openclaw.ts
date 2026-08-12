@@ -548,6 +548,7 @@ async start(): Promise<void> {
 					}
 					await this.vault.put(connectionId, credential as unknown as Record<string, unknown>);
 					runtime.credentials = credential;
+					await this.markCredentialsConfigured(runtime);
 					await this.ensureAccountRegistration(runtime);
 					await this.restartRuntime(runtime);
 					return structuredClone(runtime.snapshot);
@@ -646,6 +647,14 @@ async start(): Promise<void> {
 			if (this.coordinator.mode === 'redis' && !snapshot.credentialsConfigured) {
 				existing.credentials = undefined;
 			}
+			if (existing.credentials && !existing.snapshot.credentialsConfigured) {
+				existing.snapshot = {
+					...existing.snapshot,
+					credentialsConfigured: true,
+					updatedAt: new Date().toISOString()
+				};
+				await this.state.upsertConnection(existing.snapshot);
+			}
 			return existing;
 		}
 		const legacy = this.runtimes.get('__legacy_host__');
@@ -661,6 +670,17 @@ async start(): Promise<void> {
 		// must never be enough to start polling an account.
 		const raw = this.coordinator.mode === 'redis' ? undefined : await this.vault.get(snapshot.id);
 		runtime.credentials = snapshot.channel === 'qq' ? parseQqCredential(raw) : parseWeixinCredential(raw);
+		// A successfully decrypted local vault entry is authoritative evidence that
+		// this gateway can restore the account. Keep the cached marker in sync so
+		// a legacy deployment does not report an already-connected bot as unconfigured.
+		if (runtime.credentials && !runtime.snapshot.credentialsConfigured) {
+			runtime.snapshot = {
+				...runtime.snapshot,
+				credentialsConfigured: true,
+				updatedAt: new Date().toISOString()
+			};
+			await this.state.upsertConnection(runtime.snapshot);
+		}
 		await this.persistCredentialIdentity(runtime);
 		if (!(await this.ensureAccountRegistration(runtime))) return runtime;
 		// A user can start a fresh QR flow while persisted connections are still
@@ -1363,6 +1383,7 @@ async start(): Promise<void> {
 		}
 		runtime.pending = undefined;
 		runtime.credentials = credential;
+		await this.markCredentialsConfigured(runtime);
 		await this.persistCredentialIdentity(runtime);
 		await this.vault.put(runtime.snapshot.id, credential as unknown as Record<string, unknown>);
 		await this.ensureAccountRegistration(runtime);
@@ -1435,6 +1456,16 @@ async start(): Promise<void> {
 	private async setStatus(runtime: RuntimeConnection, status: ConnectionStatus, detail: string, accountLabel?: string): Promise<ConnectionSnapshot> {
 		const next: ConnectionSnapshot = { ...runtime.snapshot, status, detail, updatedAt: new Date().toISOString(), ...(accountLabel ? { accountLabel } : {}) };
 		await this.state.upsertConnection(next); return next;
+	}
+
+	private async markCredentialsConfigured(runtime: RuntimeConnection): Promise<void> {
+		if (runtime.snapshot.credentialsConfigured) return;
+		runtime.snapshot = {
+			...runtime.snapshot,
+			credentialsConfigured: true,
+			updatedAt: new Date().toISOString()
+		};
+		await this.state.upsertConnection(runtime.snapshot);
 	}
 
 	private async removeIsolatedConnectionState(connectionId: string): Promise<void> {
