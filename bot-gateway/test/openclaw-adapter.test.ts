@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
@@ -71,9 +71,9 @@ class FakeOpenClawHost {
 	}
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
 	const deadline = Date.now() + 2_000;
-	while (!predicate()) {
+	while (!(await predicate())) {
 		if (Date.now() >= deadline) throw new Error('condition_timeout');
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
@@ -114,9 +114,9 @@ test('per-connection hosts trust their own media directories without trusting si
 		status: 'connected',
 		updatedAt: new Date().toISOString()
 	};
-	const childConfig = (
+	const childConfig = await (
 		adapter as unknown as {
-			connectionConfig(snapshot: ConnectionSnapshot): GatewayConfig;
+			connectionConfig(snapshot: ConnectionSnapshot): Promise<GatewayConfig>;
 		}
 	).connectionConfig(snapshot);
 
@@ -187,6 +187,42 @@ test('connection ids cannot escape their per-user OpenClaw directories', async (
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('deleting a connection removes its isolated OpenClaw state and credentials', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
+	await Promise.all([state.initialize(), vault.initialize()]);
+	const connectionId = 'bot-qq-user-1';
+	const stateDir = path.join(config.openClawStateDir, connectionId, 'state');
+	const homeDir = path.join(config.openClawHomeDir, connectionId, 'home');
+	await Promise.all([mkdir(stateDir, { recursive: true }), mkdir(homeDir, { recursive: true })]);
+	await Promise.all([
+		state.upsertConnection({
+			id: connectionId,
+			channel: 'qq',
+			ownerUserId: 'user-1',
+			enabled: true,
+			status: 'logged_out',
+			credentialsConfigured: true,
+			updatedAt: new Date().toISOString()
+		}),
+		vault.put(connectionId, { app_id: 'app-1', app_secret: 'secret-1' }),
+		writeFile(path.join(stateDir, 'openclaw.json'), '{}'),
+		writeFile(path.join(homeDir, 'session.json'), '{}')
+	]);
+	const adapter = new OpenClawAdapter(config, state, vault, quietLogger());
+
+	await adapter.deleteConnection(connectionId);
+
+	assert.equal(await state.getConnection(connectionId), undefined);
+	assert.equal(await vault.get(connectionId), undefined);
+	await assert.rejects(access(path.join(config.openClawStateDir, connectionId)));
+	await assert.rejects(access(path.join(config.openClawHomeDir, connectionId)));
+	await state.close();
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('new WeChat hosts reuse a complete managed plugin project from an existing host', async () => {
 	const dataDir = await tempDataDir();
 	const isolatedStateRoot = path.join(dataDir, 'openclaw-state');
@@ -253,10 +289,10 @@ test('OpenClaw adapter restores encrypted QQ credentials and stays healthy witho
 	await adapter.start();
 
 	assert.equal(adapter.health().ready, true);
-	await waitFor(() => state.getConnection('qq-default')?.status === 'connected');
+	await waitFor(async () => (await state.getConnection('qq-default'))?.status === 'connected');
 	assert.equal(host.credentials.qq?.appId, 'app-1');
-	assert.equal(state.getConnection('qq-default')?.status, 'connected');
-	assert.equal(state.getConnection('wechat-default')?.status, 'logged_out');
+	assert.equal((await state.getConnection('qq-default'))?.status, 'connected');
+	assert.equal((await state.getConnection('wechat-default'))?.status, 'logged_out');
 	await adapter.stop();
 	await rm(dataDir, { recursive: true, force: true });
 });
@@ -278,9 +314,9 @@ test('OpenClaw adapter replaces the generic QQ account id with the configured ap
 	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), { host });
 
 	await adapter.start();
-	await waitFor(() => state.getConnection('qq-default')?.status === 'connected');
+	await waitFor(async () => (await state.getConnection('qq-default'))?.status === 'connected');
 
-	assert.equal(state.getConnection('qq-default')?.accountLabel, 'qq-app-1');
+	assert.equal((await state.getConnection('qq-default'))?.accountLabel, 'qq-app-1');
 	await adapter.stop();
 	await rm(dataDir, { recursive: true, force: true });
 });
@@ -339,7 +375,7 @@ test('OpenClaw adapter persists an official WeChat QR result and removes it on l
 	assert.equal((await adapter.getQrCode('wechat-default')).dataUrl, pending.qrCode.dataUrl);
 
 	resolveCredential({ accountId: 'wx-account', botToken: 'wx-token' });
-	await waitFor(() => state.getConnection('wechat-default')?.status === 'connected');
+	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'connected');
 	assert.equal((await vault.get('wechat-default'))?.botToken, 'wx-token');
 	assert.equal(host.credentials.wechat?.accountId, 'wx-account');
 	assert.ok(host.restartCount >= 1);
@@ -385,9 +421,9 @@ test('OpenClaw adapter reconnects automatically after a transient startup migrat
 	await adapter.login('wechat-default', {});
 
 	resolveCredential({ accountId: 'wx-account', botToken: 'wx-token' });
-	await waitFor(() => state.getConnection('wechat-default')?.status === 'degraded');
-	assert.match(state.getConnection('wechat-default')?.detail || '', /migration lock/);
-	await waitFor(() => state.getConnection('wechat-default')?.status === 'connected');
+	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'degraded');
+	assert.match((await state.getConnection('wechat-default'))?.detail || '', /migration lock/);
+	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'connected');
 	assert.equal(host.restartCount, 2);
 
 	await adapter.stop();
@@ -420,13 +456,13 @@ test('rescanning an already connected WeChat credential finishes without restart
 		startWeixinLogin: async () => pending
 	});
 	await adapter.start();
-	await waitFor(() => state.getConnection('wechat-default')?.status === 'connected');
+	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'connected');
 
 	const awaiting = await adapter.login('wechat-default', {});
 	assert.equal(awaiting.status, 'awaiting_scan');
 	resolveCredential({ accountId: 'wx-account', botToken: 'wx-token' });
-	await waitFor(() => state.getConnection('wechat-default')?.status === 'connected');
-	assert.equal(state.getConnection('wechat-default')?.detail, 'Channel is already connected');
+	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'connected');
+	assert.equal((await state.getConnection('wechat-default'))?.detail, 'Channel is already connected');
 	assert.equal(host.restartCount, 0);
 	await assert.rejects(() => adapter.getQrCode('wechat-default'), /qr_code_not_available/);
 

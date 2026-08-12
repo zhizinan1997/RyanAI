@@ -23,6 +23,27 @@ test('configuration follows the fixed environment contract', () => {
 	assert.equal(config.eventPath, '/api/v1/internal/bot-gateway/events');
 	assert.deepEqual([...config.enabledChannels], ['wechat']);
 	assert.equal(config.adapterMode, 'openclaw');
+	assert.equal(config.openClawTopology, 'shared');
+	assert.equal(config.maxGlobalActiveEvents, 16);
+	assert.equal(config.maxConnectionActiveEvents, 4);
+});
+
+test('queue configuration rejects impossible per-connection limits', () => {
+	const base = {
+		BOT_GATEWAY_ENABLED: 'true',
+		BOT_GATEWAY_HMAC_SECRET: 'a-secret-with-at-least-thirty-two-characters',
+		BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY: Buffer.alloc(32).toString('base64')
+	};
+	assert.throws(() => loadConfig({
+		...base,
+		BOT_GATEWAY_MAX_GLOBAL_ACTIVE_EVENTS: '2',
+		BOT_GATEWAY_MAX_CONNECTION_ACTIVE_EVENTS: '3'
+	}), /must not exceed/);
+	assert.throws(() => loadConfig({
+		...base,
+		BOT_GATEWAY_MAX_GLOBAL_QUEUED_EVENTS: '2',
+		BOT_GATEWAY_MAX_CONNECTION_QUEUED_EVENTS: '3'
+	}), /must not exceed/);
 });
 
 test('secrets are mandatory and encryption key must be 32 bytes', () => {

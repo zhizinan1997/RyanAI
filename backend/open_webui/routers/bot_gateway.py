@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -26,7 +27,12 @@ from uuid import uuid4
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
-from open_webui.env import UVICORN_WORKERS
+from open_webui.env import (
+    BOT_GATEWAY_SCHEDULER_MODE,
+    BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY,
+    BOT_GATEWAY_SHARD_LOAD_CAPACITY,
+    UVICORN_WORKERS,
+)
 from open_webui.internal.db import get_async_db, get_async_session
 from open_webui.models.bot_gateway import (
     BotGateway,
@@ -35,6 +41,8 @@ from open_webui.models.bot_gateway import (
     BotGatewayChannel,
     BotGatewayConnectionModel,
     BotGatewayConversationModel,
+    BotGatewayCheckpoints,
+    BotGatewayCredentials,
     BotGatewayEventConflictError,
     BotGatewayEventModel,
 )
@@ -44,14 +52,30 @@ from open_webui.models.files import Files
 from open_webui.models.credits import Credits
 from open_webui.models.users import UserModel, Users
 from open_webui.utils.auth import create_token, get_admin_user, get_verified_user
+from open_webui.utils.bot_gateway_crypto import (
+    BotGatewayCredentialError,
+    bot_gateway_credential_master_key,
+)
+from open_webui.utils.bot_gateway_scheduler import (
+    SchedulingConnection,
+    build_rebalance_plan,
+    calculate_load_units,
+    load_sample_from_config,
+)
+from open_webui.utils.bot_gateway_coordination import (
+    coordination_mode,
+    current_shard_lease,
+    ensure_shard_targets,
+    validate_event_fence,
+)
 from open_webui.utils.misc import get_message_list, get_output_text
 from open_webui.utils.models import get_all_models, get_filtered_models
 from open_webui.storage.provider import Storage
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import Headers, UploadFile
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +94,9 @@ BOT_GATEWAY_EVENT_HEARTBEAT_SECONDS = 30
 BOT_GATEWAY_CONVERSATION_LOCK_TIMEOUT_SECONDS = 60
 BOT_GATEWAY_NONCE_RETENTION_SECONDS = 2 * BOT_GATEWAY_SIGNATURE_MAX_SKEW + 60
 BOT_GATEWAY_CHAT_TIMEZONE = dt.timezone(dt.timedelta(hours=8), name='Asia/Shanghai')
+BOT_GATEWAY_MAX_CHECKPOINT_BYTES = 1024 * 1024
+BOT_GATEWAY_REBALANCE_MIN_INTERVAL_SECONDS = 2 * 60
+BOT_GATEWAY_REBALANCE_HOURLY_WINDOW_SECONDS = 60 * 60
 
 _COMMAND_ALIASES = {
     '绑定': 'bind',
@@ -163,9 +190,7 @@ class _EventLeaseLostError(RuntimeError):
 
 def _advisory_lock_key(key: str) -> int:
     """Map a lock name onto the signed 64-bit space PostgreSQL advisory locks use."""
-    return int.from_bytes(
-        hashlib.blake2b(key.encode(), digest_size=8).digest(), 'big', signed=True
-    )
+    return int.from_bytes(hashlib.blake2b(key.encode(), digest_size=8).digest(), 'big', signed=True)
 
 
 def _distributed_locking_enabled() -> bool:
@@ -201,9 +226,7 @@ async def _database_conversation_lock(key: str, timeout: float):
             if bool(await session.scalar(text('SELECT pg_try_advisory_lock(:key)'), {'key': lock_key})):
                 break
             if time.monotonic() >= deadline:
-                raise _ConversationLockTimeoutError(
-                    f'Timed out waiting for bot conversation lock {key}'
-                )
+                raise _ConversationLockTimeoutError(f'Timed out waiting for bot conversation lock {key}')
             await asyncio.sleep(0.1)
         # Session-level advisory locks outlive their transaction, so commit to
         # release the connection from "idle in transaction" while still holding it.
@@ -235,9 +258,7 @@ async def _conversation_lock(
             await asyncio.wait_for(entry.lock.acquire(), timeout=timeout)
             acquired = True
         except TimeoutError as exc:
-            raise _ConversationLockTimeoutError(
-                f'Timed out waiting for bot conversation lock {key}'
-            ) from exc
+            raise _ConversationLockTimeoutError(f'Timed out waiting for bot conversation lock {key}') from exc
         # Both stages share one budget so a caller can never wait 2x the timeout.
         async with _database_conversation_lock(key, max(0.0, deadline - time.monotonic())):
             yield
@@ -536,10 +557,17 @@ async def _verify_internal_request(request: Request) -> tuple[str, str, bytes]:
     return nonce, body_hash, body
 
 
-async def _sidecar_request(method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
+async def _sidecar_request(
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    base_url: str | None = None,
+    timeout_seconds: float = 30,
+) -> Any:
     _require_enabled()
     secret = _hmac_secret()
-    base_url = _internal_url()
+    base_url = (base_url or _internal_url()).rstrip('/')
     body = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode() if payload is not None else b''
     url = f'{base_url}{path}'
     parsed = urlsplit(url)
@@ -551,7 +579,7 @@ async def _sidecar_request(method: str, path: str, payload: dict[str, Any] | Non
     if payload is not None:
         headers['content-type'] = 'application/json'
     try:
-        timeout = aiohttp.ClientTimeout(total=30)
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.request(method, url, headers=headers, data=body or None) as response:
                 raw = await response.content.read(BOT_GATEWAY_MAX_CONTROL_RESPONSE + 1)
@@ -585,6 +613,84 @@ async def _sidecar_request(method: str, path: str, payload: dict[str, Any] | Non
         ) from exc
 
 
+def _credential_center_enabled() -> bool:
+    """The credential center fails closed unless a master key is configured."""
+    try:
+        bot_gateway_credential_master_key()
+        return True
+    except BotGatewayCredentialError:
+        return False
+
+
+async def _save_authoritative_credential(
+    db: AsyncSession | None,
+    connection: BotGatewayConnectionModel,
+    credentials: dict[str, Any],
+) -> None:
+    """Write SQL first when enabled, then maintain the legacy sidecar cache."""
+    if _credential_center_enabled():
+        try:
+            await BotGatewayCredentials.save_credential(
+                db,
+                connection.id,
+                connection.channel,
+                credentials,
+            )
+        except BotGatewayBindingError as exc:
+            if exc.code == 'account_already_bound':
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail='account_already_bound',
+                ) from exc
+            raise
+        except BotGatewayCredentialError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Invalid bot credentials',
+            ) from exc
+    await _sidecar_request(
+        'PUT',
+        f'/v1/connections/{quote(connection.id, safe="")}/credentials',
+        credentials,
+    )
+
+
+def _internal_error_response(status_code: int, code: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={'version': '1.0', 'error': {'code': code}})
+
+
+async def _require_current_connection_lease_owner(
+    connection: BotGatewayConnectionModel,
+    request: Request,
+) -> JSONResponse | None:
+    if coordination_mode() != 'redis':
+        return None
+    requester_node_id = request.headers.get('x-ryanai-node-id', '').strip()
+    if not requester_node_id or not connection.shard_id:
+        return _internal_error_response(status.HTTP_409_CONFLICT, 'stale_fence')
+    try:
+        lease = await current_shard_lease(connection.shard_id)
+    except Exception:
+        return _internal_error_response(status.HTTP_409_CONFLICT, 'stale_fence')
+    if (
+        lease is None
+        or lease.node_id != requester_node_id
+        or lease.assignment_generation != int(connection.assignment_generation or 0)
+    ):
+        return _internal_error_response(status.HTTP_409_CONFLICT, 'stale_fence')
+    return None
+
+
+def _parse_internal_form(form_type: type[BaseModel], body: bytes):
+    try:
+        return form_type.model_validate_json(body)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid bot gateway control payload',
+        ) from exc
+
+
 class ConnectionUpdateForm(BaseModel):
     enabled: bool
     model_config = ConfigDict(extra='forbid')
@@ -593,6 +699,44 @@ class ConnectionUpdateForm(BaseModel):
 class CredentialsForm(BaseModel):
     app_id: str = Field(min_length=1, max_length=512)
     app_secret: str = Field(min_length=1, max_length=4096)
+    model_config = ConfigDict(extra='forbid')
+
+
+class InternalCredentialStoreForm(BaseModel):
+    connection_id: str = Field(min_length=1, max_length=512)
+    channel: BotGatewayChannel
+    credentials: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra='forbid')
+
+
+class InternalCredentialOverwriteForm(BaseModel):
+    channel: BotGatewayChannel
+    credentials: dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra='forbid')
+
+
+class InternalCheckpointForm(BaseModel):
+    payload_base64: str = Field(min_length=1, max_length=2 * 1024 * 1024)
+    payload_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    model_config = ConfigDict(extra='forbid')
+
+
+class InternalNodeUpsertForm(BaseModel):
+    node_id: str = Field(min_length=1, max_length=512)
+    advertise_url: str | None = Field(default=None, max_length=2048)
+    capabilities: dict[str, Any] | None = None
+    model_config = ConfigDict(extra='forbid')
+
+
+class InternalNodeHeartbeatForm(BaseModel):
+    advertise_url: str | None = Field(default=None, max_length=2048)
+    capabilities: dict[str, Any] | None = None
+    metrics: dict[str, Any] | None = None
+    model_config = ConfigDict(extra='forbid')
+
+
+class RebalanceApplyForm(BaseModel):
+    moves: list[dict[str, Any]] | None = None
     model_config = ConfigDict(extra='forbid')
 
 
@@ -650,11 +794,15 @@ class InboundAttachment(BaseModel):
 
 
 class InboundEvent(BaseModel):
-    version: Literal['1.0']
+    version: Literal['1.0', '1.1']
     event_id: str = Field(min_length=1, max_length=256)
     occurred_at: dt.datetime
     channel: BotGatewayChannel
     connection_id: str = Field(min_length=1, max_length=512)
+    shard_id: str | None = Field(default=None, max_length=128)
+    node_id: str | None = Field(default=None, max_length=128)
+    lease_epoch: int | None = Field(default=None, ge=0)
+    assignment_generation: int | None = Field(default=None, ge=0)
     conversation: InboundConversation
     sender: InboundSender
     message: InboundMessage
@@ -714,11 +862,7 @@ def _remote_credentials_configured(remote: dict[str, Any], fallback: bool) -> bo
     if 'configured' in remote:
         return bool(remote['configured'])
     status_value = str(remote.get('status') or '').lower()
-    account_value = (
-        remote.get('account_id')
-        or remote.get('accountLabel')
-        or remote.get('account_label')
-    )
+    account_value = remote.get('account_id') or remote.get('accountLabel') or remote.get('account_label')
     if account_value and status_value in {'connected', 'degraded', 'unavailable'}:
         return True
     return fallback
@@ -774,6 +918,19 @@ async def _sync_connection(connection: BotGatewayConnectionModel, remote: dict[s
             values['credentials_configured'] = configured
     if 'detail' in remote and 'last_error' not in remote:
         values['last_error'] = remote.get('detail')
+    runtime_values = {
+        'shard_id': remote.get('shardId', remote.get('shard_id')),
+        'account_key': remote.get('accountKey', remote.get('account_key')),
+        'assignment_generation': remote.get('assignmentGeneration', remote.get('assignment_generation')),
+    }
+    if any(value is not None for value in runtime_values.values()):
+        await BotGateway.set_connection_runtime(
+            None,
+            connection.id,
+            shard_id=runtime_values['shard_id'],
+            account_key=runtime_values['account_key'],
+            assignment_generation=runtime_values['assignment_generation'],
+        )
     trusted_external_user_id = remote.get(
         'trustedOwnerExternalId',
         remote.get('trusted_owner_external_id'),
@@ -810,16 +967,14 @@ async def get_connections(
     }
     if not _env_enabled():
         return [
-            _connection_response(connection, owner=owners.get(connection.owner_user_id))
-            for connection in connections
+            _connection_response(connection, owner=owners.get(connection.owner_user_id)) for connection in connections
         ]
     try:
         payload = await _sidecar_request('GET', '/v1/connections')
     except HTTPException:
         log.warning('Bot gateway sidecar is unavailable while listing admin connections')
         return [
-            _connection_response(connection, owner=owners.get(connection.owner_user_id))
-            for connection in connections
+            _connection_response(connection, owner=owners.get(connection.owner_user_id)) for connection in connections
         ]
     remote_by_id = {
         str(item.get('id') or item.get('connection_id')): item for item in _remote_items(payload, 'connections')
@@ -862,12 +1017,8 @@ async def update_connection(connection_id: str, form_data: ConnectionUpdateForm,
 @router.put('/admin/connections/{connection_id}/credentials')
 async def set_credentials(connection_id: str, form_data: CredentialsForm, user=Depends(get_admin_user)):
     connection = await _get_connection_or_404(connection_id)
-    remote = await _sidecar_request(
-        'PUT',
-        f'/v1/connections/{quote(connection_id, safe="")}/credentials',
-        form_data.model_dump(),
-    )
-    remote = remote if isinstance(remote, dict) else {}
+    await _save_authoritative_credential(None, connection, form_data.model_dump())
+    remote = {}
     connection = await BotGateway.update_connection(connection.id, {'credentials_configured': True}) or connection
     connection = await _sync_connection(connection, remote)
     return _connection_response(connection, remote)
@@ -905,11 +1056,7 @@ def _login_response(payload: Any) -> dict:
     qr_code_value = _qr_code_value(qr_code) or _qr_code_value(
         value.get('qr_code_data_url') or value.get('dataUrl') or value.get('qrcodeUrl')
     )
-    expires_at = (
-        qr_code.get('expires_at') or qr_code.get('expiresAt')
-        if isinstance(qr_code, dict)
-        else None
-    )
+    expires_at = qr_code.get('expires_at') or qr_code.get('expiresAt') if isinstance(qr_code, dict) else None
     return {
         'state': str(
             connection.get('status')
@@ -1155,7 +1302,9 @@ async def get_admin_bot_audit(user=Depends(get_admin_user)):
 
 @router.put('/settings/model')
 async def set_bot_model(form_data: UserBotModelForm, request: Request, user=Depends(get_verified_user)):
-    if form_data.model_id and form_data.model_id not in {item['id'] for item in await _accessible_models(request, user)}:
+    if form_data.model_id and form_data.model_id not in {
+        item['id'] for item in await _accessible_models(request, user)
+    }:
         raise HTTPException(status_code=400, detail='Model is not available to this user')
     return (await BotGateway.update_user_setting(user.id, form_data.model_id)).model_dump()
 
@@ -1251,15 +1400,20 @@ async def create_user_bot_alias(channel: BotGatewayChannel, user=Depends(get_ver
 async def set_user_qq_credentials(form_data: UserBotCredentialsForm, user=Depends(get_verified_user)):
     connection = await _user_connection_or_create(user.id, 'qq')
     if not form_data.app_id or not form_data.app_secret:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='QQ AppID and AppSecret are required')
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='QQ AppID and AppSecret are required'
+        )
     await _ensure_sidecar_connection(connection)
-    await _sidecar_request(
-        'PUT', f'/v1/connections/{quote(connection.id, safe="")}/credentials',
+    await _save_authoritative_credential(
+        None,
+        connection,
         {'app_id': form_data.app_id, 'app_secret': form_data.app_secret},
     )
     connection = await BotGateway.update_connection(connection.id, {'credentials_configured': True}) or connection
     _schedule_background_login(connection.id, connection.updated_at)
-    await BotGateway.add_binding_history(channel='qq', action='credentials_saved', user_id=user.id, connection_id=connection.id, actor_user_id=user.id)
+    await BotGateway.add_binding_history(
+        channel='qq', action='credentials_saved', user_id=user.id, connection_id=connection.id, actor_user_id=user.id
+    )
     return _user_connection_response(connection)
 
 
@@ -1268,7 +1422,9 @@ async def begin_user_wechat_login(user=Depends(get_verified_user)):
     connection = await _user_connection_or_create(user.id, 'wechat')
     await _ensure_sidecar_connection(connection)
     payload = await _sidecar_request('POST', f'/v1/connections/{quote(connection.id, safe="")}/login')
-    await BotGateway.add_binding_history(channel='wechat', action='login_started', user_id=user.id, connection_id=connection.id, actor_user_id=user.id)
+    await BotGateway.add_binding_history(
+        channel='wechat', action='login_started', user_id=user.id, connection_id=connection.id, actor_user_id=user.id
+    )
     return _login_response(payload)
 
 
@@ -1284,35 +1440,74 @@ async def get_user_wechat_login(user=Depends(get_verified_user)):
     return _login_response(payload)
 
 
+@router.delete('/user/connections/{channel}', status_code=status.HTTP_204_NO_CONTENT)
 @router.post('/user/connections/{channel}/logout', status_code=status.HTTP_204_NO_CONTENT)
 async def logout_user_bot(channel: BotGatewayChannel, user=Depends(get_verified_user)):
     connection = await BotGateway.get_user_connection(user.id, channel)
     if connection is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
-    await _sidecar_request('POST', f'/v1/connections/{quote(connection.id, safe="")}/logout')
-    await BotGateway.update_connection(connection.id, {'status': 'logged_out', 'credentials_configured': False, 'account_id': None, 'account_name': None, 'last_error': None})
-    await BotGateway.add_binding_history(channel=channel, action='logged_out', user_id=user.id, connection_id=connection.id, actor_user_id=user.id)
+    # A personal connection must be removed rather than merely logged out.
+    # Otherwise the sidecar retains its local state and a later desired-state
+    # sync can make a supposedly unbound account appear configured again.
+    try:
+        await _sidecar_request('DELETE', f'/v1/connections/{quote(connection.id, safe="")}')
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            log.warning('Could not immediately remove user bot from sidecar %s: %s', connection.id, exc.detail)
+    async with get_async_db() as db:
+        result = await db.execute(
+            text(
+                'DELETE FROM bot_gateway_connection '
+                'WHERE id = :connection_id AND owner_user_id = :user_id'
+            ),
+            {'connection_id': connection.id, 'user_id': user.id},
+        )
+        await db.commit()
+    if result.rowcount != 1:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post('/settings/bots')
 async def create_user_bot(form_data: UserBotForm, user=Depends(get_verified_user)):
     connection = await BotGateway.ensure_user_connection(user.id, form_data.channel, enabled=form_data.enabled)
-    await BotGateway.add_binding_history(channel=form_data.channel, action='created', user_id=user.id, connection_id=connection.id, actor_user_id=user.id)
-    remote = await _sidecar_request('POST', '/v1/connections', {'channel': form_data.channel, 'owner_user_id': user.id, 'connection_id': connection.id, 'enabled': form_data.enabled})
+    await BotGateway.add_binding_history(
+        channel=form_data.channel, action='created', user_id=user.id, connection_id=connection.id, actor_user_id=user.id
+    )
+    remote = await _sidecar_request(
+        'POST',
+        '/v1/connections',
+        {
+            'channel': form_data.channel,
+            'owner_user_id': user.id,
+            'connection_id': connection.id,
+            'enabled': form_data.enabled,
+        },
+    )
     remote_connection = _remote_object(remote, 'connection')
     if remote_connection:
-        await BotGateway.update_connection(connection.id, {'status': remote_connection.get('status', connection.status)})
+        await BotGateway.update_connection(
+            connection.id, {'status': remote_connection.get('status', connection.status)}
+        )
     return _connection_response(await BotGateway.get_connection(connection.id) or connection)
 
 
 @router.put('/settings/bots/{connection_id}/credentials')
-async def set_user_bot_credentials(connection_id: str, form_data: UserBotCredentialsForm, user=Depends(get_verified_user)):
+async def set_user_bot_credentials(
+    connection_id: str, form_data: UserBotCredentialsForm, user=Depends(get_verified_user)
+):
     connection = await _get_connection_or_404(connection_id)
-    if connection.owner_user_id != user.id or connection.channel != 'qq' or not form_data.app_id or not form_data.app_secret:
+    if (
+        connection.owner_user_id != user.id
+        or connection.channel != 'qq'
+        or not form_data.app_id
+        or not form_data.app_secret
+    ):
         raise HTTPException(status_code=404, detail='QQ bot connection not found')
-    await _sidecar_request('PUT', f'/v1/connections/{quote(connection_id, safe="")}/credentials', form_data.model_dump())
-    return _connection_response(await BotGateway.update_connection(connection_id, {'credentials_configured': True}) or connection)
+    await _save_authoritative_credential(None, connection, form_data.model_dump())
+    return _connection_response(
+        await BotGateway.update_connection(connection_id, {'credentials_configured': True}) or connection
+    )
 
 
 @router.post('/settings/bots/{connection_id}/login')
@@ -1614,9 +1809,7 @@ def _conversation_context_files(
         if message.get('role') != 'user':
             continue
         inherited_documents = [
-            {**file, 'context': 'full'}
-            for file in message.get('files', [])
-            if _is_document_attachment(file)
+            {**file, 'context': 'full'} for file in message.get('files', []) if _is_document_attachment(file)
         ]
         if inherited_documents:
             break
@@ -1900,9 +2093,7 @@ async def _handle_command(  # noqa: C901
         return f'当前积分：{credit.credit}'
     if command == 'models':
         models = await _accessible_models(request, user)
-        available = '\n'.join(
-            f'{index}. {_model_display_name(item)}' for index, item in enumerate(models, start=1)
-        )
+        available = '\n'.join(f'{index}. {_model_display_name(item)}' for index, item in enumerate(models, start=1))
         suffix = '\n发送 /模型 <序号或名称> 切换模型。' if models else ''
         return f'可用模型：\n{available or "（无可用模型）"}{suffix}'
     if command == 'history':
@@ -1936,14 +2127,12 @@ async def _handle_command(  # noqa: C901
     model_id, models = await _resolve_model(request, user, conversation)
     if command == 'status':
         return (
-            f'已绑定 Ryan AI；渠道：{event.channel}；'
-            f'当前模型：{_model_name_for_id(model_id, models)}；连接状态正常。'
+            f'已绑定 Ryan AI；渠道：{event.channel}；当前模型：{_model_name_for_id(model_id, models)}；连接状态正常。'
         )
     if command == 'model':
         if not argument:
             available = '\n'.join(
-                f'{index}. {_model_display_name(model)}'
-                for index, model in enumerate(models[:20], start=1)
+                f'{index}. {_model_display_name(model)}' for index, model in enumerate(models[:20], start=1)
             )
             return (
                 f'当前模型：{_model_name_for_id(model_id, models)}\n'
@@ -2025,6 +2214,20 @@ async def receive_event(  # noqa: C901
     connection = await BotGateway.get_connection(event.connection_id)
     if connection is None or connection.channel != event.channel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
+    try:
+        fence_valid = await validate_event_fence(
+            shard_id=event.shard_id,
+            node_id=event.node_id,
+            lease_epoch=event.lease_epoch,
+            assignment_generation=event.assignment_generation,
+            expected_shard_id=connection.shard_id,
+            expected_assignment_generation=int(connection.assignment_generation or 0),
+        )
+    except Exception as exc:
+        log.error('Bot gateway fencing validation unavailable for connection %s', event.connection_id)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='stale_fence') from exc
+    if not fence_valid:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='stale_fence')
     policy = await _gateway_policy()
     if not policy['enabled'] or not policy[f'{event.channel}_enabled']:
         return _wire_response(event.event_id, ignored=True)
@@ -2088,11 +2291,7 @@ async def receive_event(  # noqa: C901
                         )
 
                 binding = await BotGateway.get_enabled_binding(event.connection_id, event.sender.id)
-                if (
-                    binding is None
-                    and event.conversation.type == 'private'
-                    and connection.owner_user_id
-                ):
+                if binding is None and event.conversation.type == 'private' and connection.owner_user_id:
                     binding = await BotGateway.ensure_owner_binding(
                         event.connection_id,
                         event.sender.id,
@@ -2192,3 +2391,526 @@ async def receive_event(  # noqa: C901
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail='RyanAI failed to process the event',
         ) from exc
+
+
+@internal_router.post('/credentials')
+async def store_internal_credential(request: Request, db: AsyncSession = Depends(get_async_session)):
+    await _verify_internal_request(request)
+    if not _credential_center_enabled():
+        return _internal_error_response(status.HTTP_503_SERVICE_UNAVAILABLE, 'credential_center_disabled')
+    form = _parse_internal_form(InternalCredentialStoreForm, await request.body())
+    if await BotGateway.get_connection(form.connection_id, db=db) is None:
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'connection_not_found')
+    try:
+        result = await BotGatewayCredentials.save_credential(db, form.connection_id, form.channel, form.credentials)
+    except BotGatewayBindingError as exc:
+        if exc.code == 'account_already_bound':
+            return _internal_error_response(status.HTTP_409_CONFLICT, 'account_already_bound')
+        raise
+    except BotGatewayCredentialError as exc:
+        log.warning('Bot gateway credential store rejected %s: %s', form.connection_id, exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid credentials') from exc
+    return {'version': '1.0', 'stored': True, 'account_digest': result['account_digest']}
+
+
+@internal_router.get('/credentials/{connection_id}')
+async def get_internal_credential(connection_id: str, request: Request, db: AsyncSession = Depends(get_async_session)):
+    await _verify_internal_request(request)
+    if not _credential_center_enabled():
+        return _internal_error_response(status.HTTP_503_SERVICE_UNAVAILABLE, 'credential_center_disabled')
+    connection = await BotGateway.get_connection(connection_id, db=db)
+    if connection is None:
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'connection_not_found')
+    if error := await _require_current_connection_lease_owner(connection, request):
+        return error
+    try:
+        credentials = await BotGatewayCredentials.get_credential(db, connection_id)
+    except BotGatewayCredentialError as exc:
+        log.error('Bot gateway credential decryption failed for %s: %s', connection_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='Bot gateway credential could not be decrypted',
+        ) from exc
+    if credentials is None:
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'credential_not_found')
+    return {'version': '1.0', 'credentials': credentials}
+
+
+@internal_router.get('/checkpoints/{connection_id}')
+async def get_internal_checkpoint(connection_id: str, request: Request, db: AsyncSession = Depends(get_async_session)):
+    await _verify_internal_request(request)
+    connection = await BotGateway.get_connection(connection_id, db=db)
+    if connection is None:
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'connection_not_found')
+    if error := await _require_current_connection_lease_owner(connection, request):
+        return error
+    try:
+        checkpoint = await BotGatewayCheckpoints.get(db, connection_id)
+    except BotGatewayCredentialError:
+        return _internal_error_response(status.HTTP_502_BAD_GATEWAY, 'checkpoint_decryption_failed')
+    if checkpoint is None:
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'checkpoint_not_found')
+    payload, sha256 = checkpoint
+    return {
+        'version': '1.0',
+        'payload_base64': base64.b64encode(payload).decode(),
+        'payload_sha256': sha256,
+    }
+
+
+@internal_router.put('/checkpoints/{connection_id}')
+async def put_internal_checkpoint(connection_id: str, request: Request, db: AsyncSession = Depends(get_async_session)):
+    await _verify_internal_request(request)
+    connection = await BotGateway.get_connection(connection_id, db=db)
+    if connection is None:
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'connection_not_found')
+    if error := await _require_current_connection_lease_owner(connection, request):
+        return error
+    form = _parse_internal_form(InternalCheckpointForm, await request.body())
+    try:
+        payload = base64.b64decode(form.payload_base64, validate=True)
+    except (binascii.Error, ValueError):
+        return _internal_error_response(status.HTTP_400_BAD_REQUEST, 'invalid_checkpoint')
+    if len(payload) > BOT_GATEWAY_MAX_CHECKPOINT_BYTES:
+        return _internal_error_response(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, 'checkpoint_too_large')
+    if not hmac.compare_digest(hashlib.sha256(payload).hexdigest(), form.payload_sha256):
+        return _internal_error_response(status.HTTP_400_BAD_REQUEST, 'checkpoint_hash_mismatch')
+    await BotGatewayCheckpoints.save(db, connection_id, payload, form.payload_sha256)
+    return {'version': '1.0', 'stored': True, 'payload_sha256': form.payload_sha256}
+
+
+@internal_router.post('/credentials/{connection_id}')
+async def overwrite_internal_credential(
+    connection_id: str, request: Request, db: AsyncSession = Depends(get_async_session)
+):
+    await _verify_internal_request(request)
+    if not _credential_center_enabled():
+        return _internal_error_response(status.HTTP_503_SERVICE_UNAVAILABLE, 'credential_center_disabled')
+    form = _parse_internal_form(InternalCredentialOverwriteForm, await request.body())
+    if await BotGateway.get_connection(connection_id, db=db) is None:
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'connection_not_found')
+    try:
+        result = await BotGatewayCredentials.save_credential(db, connection_id, form.channel, form.credentials)
+    except BotGatewayBindingError as exc:
+        if exc.code == 'account_already_bound':
+            return _internal_error_response(status.HTTP_409_CONFLICT, 'account_already_bound')
+        raise
+    except BotGatewayCredentialError as exc:
+        log.warning('Bot gateway credential store rejected %s: %s', connection_id, exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid credentials') from exc
+    return {'version': '1.0', 'stored': True, 'account_digest': result['account_digest']}
+
+
+@internal_router.delete('/credentials/{connection_id}', status_code=status.HTTP_204_NO_CONTENT)
+async def delete_internal_credential(
+    connection_id: str, request: Request, db: AsyncSession = Depends(get_async_session)
+):
+    await _verify_internal_request(request)
+    if not _credential_center_enabled():
+        return _internal_error_response(status.HTTP_503_SERVICE_UNAVAILABLE, 'credential_center_disabled')
+    await BotGatewayCredentials.delete_credential(db, connection_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@internal_router.post('/nodes')
+async def register_gateway_node(request: Request, db: AsyncSession = Depends(get_async_session)):
+    await _verify_internal_request(request)
+    form = _parse_internal_form(InternalNodeUpsertForm, await request.body())
+    node = await BotGateway.upsert_node(
+        form.node_id,
+        advertise_url=form.advertise_url,
+        capabilities=form.capabilities,
+        db=db,
+    )
+    return {
+        'version': '1.0',
+        'node': {
+            'id': node.id,
+            'advertise_url': node.advertise_url,
+            'capabilities': node.capabilities,
+            'last_seen_at': node.last_seen_at,
+        },
+    }
+
+
+@internal_router.post('/nodes/{node_id}/heartbeat')
+async def gateway_node_heartbeat(node_id: str, request: Request, db: AsyncSession = Depends(get_async_session)):
+    await _verify_internal_request(request)
+    form = _parse_internal_form(InternalNodeHeartbeatForm, await request.body())
+    # Node rows keep stable capabilities only; sanitized per-connection load samples
+    # are stored with the authoritative SQL connection assignment below.
+    if not await BotGateway.touch_node(
+        node_id,
+        advertise_url=form.advertise_url,
+        capabilities=form.capabilities,
+        db=db,
+    ):
+        return _internal_error_response(status.HTTP_404_NOT_FOUND, 'node_not_found')
+    connections = form.metrics.get('connections') if isinstance(form.metrics, dict) else None
+    if isinstance(connections, dict):
+        desired_connections = {item.id: item for item in await BotGateway.list_connections(db=db)}
+        leases_by_shard = {}
+        cleaned: dict[str, dict[str, float | int]] = {}
+        for connection_id, raw in list(connections.items())[:1000]:
+            if not isinstance(connection_id, str) or not isinstance(raw, dict):
+                continue
+            connection = desired_connections.get(connection_id)
+            if connection is None:
+                continue
+            if coordination_mode() == 'redis':
+                if not connection.shard_id:
+                    continue
+                if connection.shard_id not in leases_by_shard:
+                    leases_by_shard[connection.shard_id] = await current_shard_lease(connection.shard_id)
+                lease = leases_by_shard[connection.shard_id]
+                if (
+                    lease is None
+                    or lease.node_id != node_id
+                    or lease.assignment_generation != int(connection.assignment_generation or 0)
+                ):
+                    continue
+            values = {
+                key: value
+                for key, value in raw.items()
+                if key
+                in {
+                    'event_rate_5m',
+                    'event_rate_30m',
+                    'processing_seconds_per_minute',
+                    'processing_seconds_per_minute_30m',
+                    'attachment_mib_per_minute',
+                    'attachment_mib_per_minute_30m',
+                    'account_errors_10m',
+                    'account_error_streak',
+                }
+                and isinstance(value, (int, float))
+                and math.isfinite(value)
+                and 0 <= value <= 1_000_000
+            }
+            cleaned[connection_id] = values
+        await BotGateway.update_connection_runtime_metrics(
+            node_id,
+            cleaned,
+            load_capacity=BOT_GATEWAY_SHARD_LOAD_CAPACITY,
+            db=db,
+        )
+    return {'version': '1.0', 'node_id': node_id}
+
+
+@internal_router.get('/desired-state')
+async def get_desired_state(request: Request, db: AsyncSession = Depends(get_async_session)):
+    await _verify_internal_request(request)
+    connections = await BotGateway.list_connections(db=db)
+    digests = await BotGatewayCredentials.list_credential_digests(db)
+    # 一次查询全部 digest，避免逐连接 N+1。
+    configured = {item['connection_id'] for item in digests}
+    if coordination_mode() == 'redis':
+        try:
+            await ensure_shard_targets(
+                [connection.shard_id for connection in connections if connection.enabled and connection.shard_id]
+            )
+        except Exception as exc:
+            log.error('Bot gateway shard target scheduling failed: %s', exc)
+            return _internal_error_response(status.HTTP_503_SERVICE_UNAVAILABLE, 'coordination_unavailable')
+    return {
+        'version': '1.0',
+        'connections': [
+            {
+                'id': connection.id,
+                'channel': connection.channel,
+                'owner_user_id': connection.owner_user_id,
+                'enabled': connection.enabled,
+                'status': connection.status,
+                'shard_id': connection.shard_id,
+                'account_key': connection.account_key,
+                'assignment_generation': connection.assignment_generation,
+                'credentials_configured': connection.id in configured,
+            }
+            for connection in connections
+        ],
+    }
+
+
+@router.get('/admin/operations/overview')
+async def get_operations_overview(user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)):
+    # 单节点模式直接从 SQL 读节点/分片；集群模式在此补充 Redis 实时指标。
+    nodes = await BotGateway.list_nodes(db=db)
+    shards = await BotGateway.list_shards(db=db)
+    connections = await BotGateway.list_connections(db=db)
+    digests = await BotGatewayCredentials.list_credential_digests(db)
+    configured = {item['connection_id'] for item in digests}
+    runtime_by_node: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        if not node.advertise_url:
+            continue
+        try:
+            runtime = await _sidecar_request('GET', '/v1/operations', base_url=node.advertise_url, timeout_seconds=2)
+        except HTTPException:
+            continue
+        if isinstance(runtime, dict):
+            runtime_by_node[node.id] = runtime
+    if not runtime_by_node:
+        try:
+            runtime = await _sidecar_request('GET', '/v1/operations', timeout_seconds=2)
+        except HTTPException:
+            runtime = None
+        if isinstance(runtime, dict):
+            runtime_by_node[str(runtime.get('node_id') or 'single-node')] = runtime
+
+    known_shards = {shard.id: shard for shard in shards}
+    for connection in connections:
+        if connection.shard_id and connection.shard_id not in known_shards:
+            known_shards[connection.shard_id] = None
+    for runtime in runtime_by_node.values():
+        for item in runtime.get('shards', []):
+            if isinstance(item, dict) and item.get('shard_id'):
+                known_shards.setdefault(str(item['shard_id']), None)
+    shard_rows = []
+    for shard_id, shard in sorted(known_shards.items()):
+        lease = None
+        if coordination_mode() == 'redis':
+            try:
+                lease = await current_shard_lease(shard_id)
+            except Exception:
+                lease = None
+        runtime_shard = next(
+            (
+                item
+                for snapshot in runtime_by_node.values()
+                for item in snapshot.get('shards', [])
+                if isinstance(item, dict) and item.get('shard_id') == shard_id
+            ),
+            None,
+        )
+        shard_rows.append(
+            {
+                **(
+                    shard.model_dump()
+                    if shard is not None
+                    else {
+                        'id': shard_id,
+                        'channel': next(
+                            (item.channel for item in connections if item.shard_id == shard_id),
+                            shard_id.split('-', 1)[0],
+                        ),
+                        'account_capacity': BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY,
+                        'load_capacity': BOT_GATEWAY_SHARD_LOAD_CAPACITY,
+                    }
+                ),
+                'runtime': runtime_shard,
+                'lease': (
+                    {
+                        'node_id': lease.node_id,
+                        'epoch': lease.epoch,
+                        'assignment_generation': lease.assignment_generation,
+                        'ttl_ms': lease.ttl_ms,
+                    }
+                    if lease
+                    else None
+                ),
+            }
+        )
+    return {
+        'version': '1.0',
+        'coordination_mode': coordination_mode(),
+        'nodes': [
+            {
+                **node.model_dump(),
+                'runtime': runtime_by_node.get(node.id),
+            }
+            for node in nodes
+        ]
+        + [
+            {
+                'id': node_id,
+                'advertise_url': None,
+                'capabilities': None,
+                'created_at': None,
+                'updated_at': None,
+                'last_seen_at': None,
+                'runtime': runtime,
+            }
+            for node_id, runtime in runtime_by_node.items()
+            if all(node.id != node_id for node in nodes)
+        ],
+        'shards': shard_rows,
+        'connections': [
+            {
+                'id': connection.id,
+                'channel': connection.channel,
+                'enabled': connection.enabled,
+                'shard_id': connection.shard_id,
+                'account_key': connection.account_key,
+                'assignment_generation': connection.assignment_generation,
+                'status': connection.status,
+                'last_runtime_node_id': connection.last_runtime_node_id,
+                'credentials_configured': connection.id in configured,
+            }
+            for connection in connections
+        ],
+    }
+
+
+def _rebalance_plan(connections: list[BotGatewayConnectionModel]) -> dict[str, Any]:
+    scheduled = []
+    for connection in connections:
+        config = connection.config if isinstance(connection.config, dict) else {}
+        scheduled.append(
+            SchedulingConnection(
+                id=connection.id,
+                channel=connection.channel,
+                shard_id=connection.shard_id,
+                enabled=connection.enabled,
+                status=connection.status,
+                load_units=calculate_load_units(load_sample_from_config(config)),
+                config=config,
+            )
+        )
+    return build_rebalance_plan(
+        scheduled,
+        account_capacity=BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY,
+        load_capacity=BOT_GATEWAY_SHARD_LOAD_CAPACITY,
+    )
+
+
+@router.post('/admin/operations/rebalance/preview')
+async def preview_rebalance(user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)):
+    plan = _rebalance_plan(await BotGateway.list_connections(db=db))
+    return {
+        'version': '1.0',
+        'mode': BOT_GATEWAY_SCHEDULER_MODE,
+        'plan': plan,
+        'generated_at': int(time.time()),
+    }
+
+
+@router.post('/admin/operations/rebalance/apply')
+async def apply_rebalance(
+    form_data: RebalanceApplyForm,
+    user=Depends(get_admin_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    if BOT_GATEWAY_SCHEDULER_MODE != 'auto':
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'Bot scheduler is in {BOT_GATEWAY_SCHEDULER_MODE} mode',
+        )
+    connections = await BotGateway.list_connections(db=db)
+    current = _rebalance_plan(connections)
+    allowed = {(move['connection_id'], move['to_shard_id']) for move in current['moves']}
+    requested = form_data.moves if form_data.moves is not None else current['moves']
+    if len(requested) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Bot scheduler moves at most one connection per run',
+        )
+    now = int(time.time())
+    recent = await BotGateway.list_control_operations(
+        kind='rebalance_apply',
+        since=now - BOT_GATEWAY_REBALANCE_HOURLY_WINDOW_SECONDS,
+        db=db,
+    )
+    if recent and recent[0].created_at > now - BOT_GATEWAY_REBALANCE_MIN_INTERVAL_SECONDS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Bot scheduler move interval has not elapsed',
+        )
+    active_shards = len({item.shard_id for item in connections if item.enabled and item.shard_id})
+    hourly_budget = max(1, (active_shards + 9) // 10)
+    moves_in_window = sum(
+        len(operation.payload.get('moves', []))
+        for operation in recent
+        if isinstance(operation.payload, dict) and isinstance(operation.payload.get('moves'), list)
+    )
+    if requested and moves_in_window >= hourly_budget:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail='Bot scheduler hourly move budget is exhausted',
+        )
+    assignments: dict[str, str] = {}
+    for move in requested:
+        connection_id = str(move.get('connection_id', ''))
+        target = str(move.get('to_shard_id', ''))
+        if (connection_id, target) not in allowed:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Rebalance plan is stale')
+        assignments[connection_id] = target
+    updated = await BotGateway.apply_shard_assignments(assignments, db=db)
+    operation = await BotGateway.record_control_operation(
+        kind='rebalance_apply',
+        payload={'moves': requested},
+        actor_user_id=user.id,
+        db=db,
+    )
+    return {
+        'version': '1.0',
+        'operation_id': operation.id,
+        'updated': [item.model_dump() for item in updated],
+    }
+
+
+@router.post('/admin/connections/{connection_id}/circuit/reset')
+async def reset_connection_circuit(
+    connection_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
+):
+    connection = await BotGateway.get_connection(connection_id, db=db)
+    if connection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
+    target_url = None
+    if connection.last_runtime_node_id:
+        target = next(
+            (node for node in await BotGateway.list_nodes(db=db) if node.id == connection.last_runtime_node_id),
+            None,
+        )
+        target_url = target.advertise_url if target else None
+    await _sidecar_request(
+        'POST',
+        f'/v1/operations/connections/{quote(connection_id, safe="")}/circuit/reset',
+        base_url=target_url,
+    )
+    await BotGateway.record_control_operation(
+        kind='circuit_reset',
+        payload={'connection_id': connection_id},
+        actor_user_id=user.id,
+        db=db,
+    )
+    return {'version': '1.0', 'reset': True}
+
+
+async def _set_gateway_node_draining(
+    node_id: str,
+    draining: bool,
+    user: Any,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    target = next((node for node in await BotGateway.list_nodes(db=db) if node.id == node_id), None)
+    if target is None and coordination_mode() == 'redis':
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot gateway node not found')
+    result = await _sidecar_request(
+        'POST',
+        f'/v1/operations/{"drain" if draining else "resume"}',
+        base_url=target.advertise_url if target else None,
+    )
+    await BotGateway.record_control_operation(
+        kind='node_drain' if draining else 'node_resume',
+        payload={'node_id': node_id},
+        actor_user_id=user.id,
+        db=db,
+    )
+    return {
+        'version': '1.0',
+        'drained': draining,
+        'node_id': node_id,
+        'gateway': result,
+    }
+
+
+@router.post('/admin/nodes/{node_id}/drain')
+async def drain_gateway_node(node_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)):
+    return await _set_gateway_node_draining(node_id, True, user, db)
+
+
+@router.post('/admin/nodes/{node_id}/resume')
+async def resume_gateway_node(
+    node_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
+):
+    return await _set_gateway_node_draining(node_id, False, user, db)

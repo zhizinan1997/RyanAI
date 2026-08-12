@@ -310,6 +310,9 @@ interface EventRouting {
 	connectionId: string;
 	accountKey?: string;
 	shardId?: string;
+	nodeId?: string;
+	leaseEpoch?: number;
+	assignmentGeneration?: number;
 }
 
 /**
@@ -331,7 +334,17 @@ function resolveEventRouting(
 				'OpenClaw account id is required on a shared shard'
 			);
 		}
-		return { connectionId: `shard:${shardId}`, accountKey: accountId, shardId };
+		const nodeId = process.env.BOT_GATEWAY_NODE_ID?.trim();
+		const leaseEpoch = Number(process.env.BOT_GATEWAY_LEASE_EPOCH);
+		const assignmentGeneration = Number(process.env.BOT_GATEWAY_ASSIGNMENT_GENERATION);
+		return {
+			connectionId: `shard:${shardId}`,
+			accountKey: accountId,
+			shardId,
+			...(nodeId ? { nodeId } : {}),
+			...(Number.isSafeInteger(leaseEpoch) ? { leaseEpoch } : {}),
+			...(Number.isSafeInteger(assignmentGeneration) ? { assignmentGeneration } : {})
+		};
 	}
 	return { connectionId: resolveConnectionId(channel, bridge) };
 }
@@ -676,6 +689,11 @@ export async function normalizeMessageHook(
 		connectionId: routing.connectionId,
 		...(routing.accountKey ? { accountKey: routing.accountKey } : {}),
 		...(routing.shardId ? { shardId: routing.shardId } : {}),
+		...(routing.nodeId ? { nodeId: routing.nodeId } : {}),
+		...(routing.leaseEpoch !== undefined ? { leaseEpoch: routing.leaseEpoch } : {}),
+		...(routing.assignmentGeneration !== undefined
+			? { assignmentGeneration: routing.assignmentGeneration }
+			: {}),
 		conversation: {
 			type: isGroup ? 'group' : 'private',
 			id: conversationId,
@@ -865,6 +883,11 @@ export function normalizeBeforeAgentReply(
 		connectionId: routing.connectionId,
 		...(routing.accountKey ? { accountKey: routing.accountKey } : {}),
 		...(routing.shardId ? { shardId: routing.shardId } : {}),
+		...(routing.nodeId ? { nodeId: routing.nodeId } : {}),
+		...(routing.leaseEpoch !== undefined ? { leaseEpoch: routing.leaseEpoch } : {}),
+		...(routing.assignmentGeneration !== undefined
+			? { assignmentGeneration: routing.assignmentGeneration }
+			: {}),
 		conversation: { type: isGroup ? 'group' : 'private', id: conversationId },
 		sender: { id: senderId },
 		message: {

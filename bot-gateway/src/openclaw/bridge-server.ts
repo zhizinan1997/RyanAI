@@ -136,6 +136,10 @@ export async function parseOpenClawBridgeEvent(
 
 	const accountId = optionalString(raw.account_id);
 	const shardId = optionalString(raw.shard_id);
+	const nodeId = optionalString(raw.node_id);
+	const leaseEpoch = typeof raw.lease_epoch === 'number' ? raw.lease_epoch : undefined;
+	const assignmentGeneration = typeof raw.assignment_generation === 'number'
+		? raw.assignment_generation : undefined;
 	return {
 		eventId: string(raw.event_id, 'event_id'),
 		occurredAt,
@@ -143,6 +147,9 @@ export async function parseOpenClawBridgeEvent(
 		connectionId: string(raw.connection_id, 'connection_id'),
 		...(accountId ? { accountKey: accountId } : {}),
 		...(shardId ? { shardId } : {}),
+		...(nodeId ? { nodeId } : {}),
+		...(leaseEpoch !== undefined ? { leaseEpoch } : {}),
+		...(assignmentGeneration !== undefined ? { assignmentGeneration } : {}),
 		conversation: {
 			type: conversation.type,
 			id: string(conversation.id, 'conversation.id'),

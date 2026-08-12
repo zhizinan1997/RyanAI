@@ -45,6 +45,19 @@ export class OpenClawBridgeClient {
 					...(this.config.openClawShardId
 						? { 'x-ryanai-shard-id': this.config.openClawShardId }
 						: {}),
+					...(this.config.openClawNodeId
+						? { 'x-ryanai-node-id': this.config.openClawNodeId }
+						: {}),
+					...(this.config.openClawLeaseEpoch !== undefined
+						? { 'x-ryanai-lease-epoch': String(this.config.openClawLeaseEpoch) }
+						: {}),
+					...(this.config.openClawAssignmentGeneration !== undefined
+						? {
+								'x-ryanai-assignment-generation': String(
+									this.config.openClawAssignmentGeneration
+								)
+							}
+						: {}),
 					accept: 'application/json'
 				},
 				body: Uint8Array.from(multipart.body),

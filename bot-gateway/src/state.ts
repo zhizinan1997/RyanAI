@@ -1,81 +1,149 @@
-import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 
 import type { ConnectionSnapshot, DiscoveredGroup, GatewayReply } from './types.js';
 
-interface ReplayRecord {
-	state: 'processing' | 'completed';
-	expiresAt: number;
-	reply?: Pick<GatewayReply, 'chunks' | 'isError' | 'reason'>;
+import type { ConnectionPatch, ReplayClaim } from './state-common.js';
+export type { ConnectionPatch, ReplayClaim };
+
+const STORE_SCHEMA_VERSION = '1';
+const STATE_FILE_NAME = 'gateway-state.json';
+const STORE_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Asynchronous local state store. Every method serializes onto the store's
+ * worker thread, so SQLite's synchronous driver can never block the gateway's
+ * event loop. SQLite is only a local cache: the RyanAI backend remains the
+ * authority for connections, groups and credentials.
+ */
+export interface GatewayStateStore {
+	initialize(): Promise<void>;
+	claimEvent(eventId: string, now?: number): Promise<ReplayClaim>;
+	completeEvent(
+		eventId: string,
+		reply: Pick<GatewayReply, 'chunks' | 'isError' | 'reason'>,
+		now?: number
+	): Promise<void>;
+	releaseEvent(eventId: string): Promise<void>;
+	upsertConnection(connection: ConnectionSnapshot): Promise<void>;
+	deleteConnection(id: string): Promise<boolean>;
+	patchConnection(id: string, patch: ConnectionPatch): Promise<ConnectionSnapshot | undefined>;
+	listConnections(): Promise<ConnectionSnapshot[]>;
+	getConnection(id: string): Promise<ConnectionSnapshot | undefined>;
+	upsertGroup(group: DiscoveredGroup): Promise<void>;
+	getGroup(channel: string, connectionId: string, groupId: string): Promise<DiscoveredGroup | undefined>;
+	patchGroup(
+		channel: string,
+		connectionId: string,
+		groupId: string,
+		patch: Pick<Partial<DiscoveredGroup>, 'enabled' | 'name'>
+	): Promise<DiscoveredGroup | undefined>;
+	listGroups(filters?: { channel?: string; connectionId?: string }): Promise<DiscoveredGroup[]>;
+	/** Opaque JSON value per well-known key (circuit state, backoff budgets...). */
+	setRuntimeState(key: string, value: unknown): Promise<void>;
+	getRuntimeState<T = unknown>(key: string): Promise<T | undefined>;
+	deleteRuntimeState(key: string): Promise<void>;
+	close(): Promise<void>;
 }
 
-interface PersistedState {
-	version: 1;
-	replays: Record<string, ReplayRecord>;
-	connections: Record<string, ConnectionSnapshot>;
-	groups: Record<string, DiscoveredGroup>;
+interface StoreMessage {
+	requestId: number;
+	ok: boolean;
+	value?: unknown;
+	error?: string;
 }
 
-const EMPTY_STATE: PersistedState = {
-	version: 1,
-	replays: {},
-	connections: {},
-	groups: {}
-};
+class StoreConnectionError extends Error {
+	override name = 'StoreConnectionError';
+}
 
-const PROCESSING_LEASE_MS = 15 * 60 * 1000;
-
-export type ReplayClaim =
-	| { status: 'new' }
-	| { status: 'processing' }
-	| { status: 'completed'; reply: Pick<GatewayReply, 'chunks' | 'isError' | 'reason'> };
+function storeError(message: string): StoreConnectionError {
+	return new StoreConnectionError(message);
+}
 
 export class GatewayStateStore {
-	private readonly filePath: string;
-	private state: PersistedState = structuredClone(EMPTY_STATE);
-	private tail: Promise<void> = Promise.resolve();
+	private readonly dbPath: string;
+	private readonly stateFilePath: string;
+	private worker: Worker | undefined;
+	private purgeTimer: NodeJS.Timeout | undefined;
+	private requestId = 0;
+	private readonly pending = new Map<
+		number,
+		{
+			resolve: (value: unknown) => void;
+			reject: (reason: Error) => void;
+			timer: NodeJS.Timeout;
+		}
+	>();
+	private closed = false;
 
 	constructor(
 		dataDir: string,
 		private readonly replayTtlMs: number
 	) {
-		this.filePath = path.join(dataDir, 'state', 'gateway-state.json');
+		const stateDir = path.join(dataDir, 'state');
+		this.stateFilePath = path.join(stateDir, STATE_FILE_NAME);
+		this.dbPath = path.join(stateDir, 'gateway-state.db');
 	}
 
 	async initialize(): Promise<void> {
-		await mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
-		try {
-			const raw = await readFile(this.filePath, 'utf8');
-			const parsed = JSON.parse(raw) as PersistedState;
-			if (parsed.version !== 1) throw new Error('Unsupported gateway state version');
-			this.state = parsed;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-			await this.persist();
+		await mkdir(path.dirname(this.dbPath), { recursive: true, mode: 0o700 });
+		this.worker = new Worker(workerEntryUrl(), {
+			workerData: {
+				dbPath: this.dbPath,
+				schemaVersion: STORE_SCHEMA_VERSION,
+				replayTtlMs: this.replayTtlMs
+			}
+		});
+		// Explicit close remains the production ownership contract. Unref only
+		// prevents short-lived tooling from being held open by an idle worker.
+		this.worker.unref();
+		this.worker.on('message', (message: StoreMessage) => this.settle(message));
+		this.worker.on('error', (error) => this.failAll(error));
+		this.worker.on('exit', (code) => {
+			if (!this.closed && code !== 0) {
+				this.failAll(storeError(`State store worker exited unexpectedly (${code})`));
+			}
+		});
+		await this.send('open');
+		await this.migrateLegacyJson();
+		await this.send('purgeExpired', { now: Date.now() });
+		this.purgeTimer = setInterval(() => {
+			void this.send('purgeExpired', { now: Date.now() }).catch(() => undefined);
+		}, 60_000);
+		this.purgeTimer.unref();
+	}
+
+	async close(): Promise<void> {
+		if (this.closed) return;
+		if (this.purgeTimer) clearInterval(this.purgeTimer);
+		this.purgeTimer = undefined;
+		const worker = this.worker;
+		if (!worker) {
+			this.closed = true;
+			return;
 		}
-		await this.mutate(() => this.purgeExpired(Date.now()));
+		try {
+			await this.send('close');
+		} finally {
+			this.closed = true;
+			this.worker = undefined;
+		}
+		for (const { reject, timer } of this.pending.values()) {
+			clearTimeout(timer);
+			reject(storeError('State store is closed'));
+		}
+		this.pending.clear();
+		await worker.terminate().catch(() => undefined);
 	}
 
 	async claimEvent(eventId: string, now = Date.now()): Promise<ReplayClaim> {
-		let result: ReplayClaim = { status: 'new' };
-		await this.mutate(() => {
-			this.purgeExpired(now);
-			const record = this.state.replays[eventId];
-			if (record?.state === 'completed' && record.reply) {
-				result = { status: 'completed', reply: structuredClone(record.reply) };
-				return false;
-			}
-			if (record?.state === 'processing') {
-				result = { status: 'processing' };
-				return false;
-			}
-			this.state.replays[eventId] = {
-				state: 'processing',
-				expiresAt: now + Math.min(this.replayTtlMs, PROCESSING_LEASE_MS)
-			};
-			return true;
-		});
-		return result;
+		return (await this.send('claimEvent', { eventId, now })) as ReplayClaim;
 	}
 
 	async completeEvent(
@@ -83,99 +151,41 @@ export class GatewayStateStore {
 		reply: Pick<GatewayReply, 'chunks' | 'isError' | 'reason'>,
 		now = Date.now()
 	): Promise<void> {
-		await this.mutate(() => {
-			this.state.replays[eventId] = {
-				state: 'completed',
-				expiresAt: now + this.replayTtlMs,
-				reply: structuredClone(reply)
-			};
-			return true;
-		});
+		await this.send('completeEvent', { eventId, reply, now });
 	}
 
 	async releaseEvent(eventId: string): Promise<void> {
-		await this.mutate(() => {
-			const existing = this.state.replays[eventId];
-			if (!existing || existing.state !== 'processing') return false;
-			delete this.state.replays[eventId];
-			return true;
-		});
+		await this.send('releaseEvent', { eventId });
 	}
 
 	async upsertConnection(connection: ConnectionSnapshot): Promise<void> {
-		await this.mutate(() => {
-			this.state.connections[connection.id] = structuredClone(connection);
-			return true;
-		});
+		await this.send('upsertConnection', { connection });
 	}
 
 	async deleteConnection(id: string): Promise<boolean> {
-		let deleted = false;
-		await this.mutate(() => {
-			if (!this.state.connections[id]) return false;
-			delete this.state.connections[id];
-			for (const key of Object.keys(this.state.groups)) {
-				if (key.split('\u0000')[1] === id) delete this.state.groups[key];
-			}
-			for (const key of Object.keys(this.state.replays)) {
-				if (key.split('\u0000')[1] === id) delete this.state.replays[key];
-			}
-			deleted = true;
-			return true;
-		});
-		return deleted;
+		return (await this.send('deleteConnection', { id })) as boolean;
 	}
 
-	async patchConnection(
-		id: string,
-		patch: Partial<
-			Pick<
-				ConnectionSnapshot,
-				'enabled' | 'status' | 'detail' | 'accountLabel' | 'trustedOwnerExternalId'
-			>
-		>
-	): Promise<ConnectionSnapshot | undefined> {
-		let result: ConnectionSnapshot | undefined;
-		await this.mutate(() => {
-			const existing = this.state.connections[id];
-			if (!existing) return false;
-			result = {
-				...existing,
-				...patch,
-				updatedAt: new Date().toISOString()
-			};
-			this.state.connections[id] = result;
-			return true;
-		});
-		return result ? structuredClone(result) : undefined;
+	async patchConnection(id: string, patch: ConnectionPatch): Promise<ConnectionSnapshot | undefined> {
+		return (await this.send('patchConnection', { id, patch })) as ConnectionSnapshot | undefined;
 	}
 
-	listConnections(): ConnectionSnapshot[] {
-		return Object.values(this.state.connections)
-			.map((entry) => structuredClone(entry))
-			.sort((left, right) => left.id.localeCompare(right.id));
+	async listConnections(): Promise<ConnectionSnapshot[]> {
+		return (await this.send('listConnections')) as ConnectionSnapshot[];
 	}
 
-	getConnection(id: string): ConnectionSnapshot | undefined {
-		const value = this.state.connections[id];
-		return value ? structuredClone(value) : undefined;
+	async getConnection(id: string): Promise<ConnectionSnapshot | undefined> {
+		return (await this.send('getConnection', { id })) as ConnectionSnapshot | undefined;
 	}
 
 	async upsertGroup(group: DiscoveredGroup): Promise<void> {
-		const key = `${group.channel}\u0000${group.connectionId}\u0000${group.groupId}`;
-		await this.mutate(() => {
-			const existing = this.state.groups[key];
-			this.state.groups[key] = {
-				...structuredClone(group),
-				enabled: existing?.enabled ?? group.enabled
-			};
-			return true;
-		});
+		await this.send('upsertGroup', { group });
 	}
 
-	getGroup(channel: string, connectionId: string, groupId: string): DiscoveredGroup | undefined {
-		const value = this.state.groups[`${channel}\u0000${connectionId}\u0000${groupId}`];
-		return value ? structuredClone(value) : undefined;
+	async getGroup(channel: string, connectionId: string, groupId: string): Promise<DiscoveredGroup | undefined> {
+		return (await this.send('getGroup', { channel, connectionId, groupId })) as
+			| DiscoveredGroup
+			| undefined;
 	}
 
 	async patchGroup(
@@ -184,55 +194,107 @@ export class GatewayStateStore {
 		groupId: string,
 		patch: Pick<Partial<DiscoveredGroup>, 'enabled' | 'name'>
 	): Promise<DiscoveredGroup | undefined> {
-		const key = `${channel}\u0000${connectionId}\u0000${groupId}`;
-		let result: DiscoveredGroup | undefined;
-		await this.mutate(() => {
-			const existing = this.state.groups[key];
-			if (!existing) return false;
-			result = { ...existing, ...patch };
-			this.state.groups[key] = result;
-			return true;
-		});
-		return result ? structuredClone(result) : undefined;
+		return (await this.send('patchGroup', { channel, connectionId, groupId, patch })) as
+			| DiscoveredGroup
+			| undefined;
 	}
 
-	listGroups(filters: { channel?: string; connectionId?: string } = {}): DiscoveredGroup[] {
-		return Object.values(this.state.groups)
-			.filter((group) => !filters.channel || group.channel === filters.channel)
-			.filter((group) => !filters.connectionId || group.connectionId === filters.connectionId)
-			.map((entry) => structuredClone(entry))
-			.sort((left, right) => right.lastSeenAt.localeCompare(left.lastSeenAt));
+	async listGroups(filters: { channel?: string; connectionId?: string } = {}): Promise<DiscoveredGroup[]> {
+		return (await this.send('listGroups', { filters })) as DiscoveredGroup[];
 	}
 
-	private purgeExpired(now: number): boolean {
-		let changed = false;
-		for (const [eventId, record] of Object.entries(this.state.replays)) {
-			if (record.expiresAt <= now) {
-				delete this.state.replays[eventId];
-				changed = true;
-			}
-		}
-		return changed;
+	async setRuntimeState(key: string, value: unknown): Promise<void> {
+		await this.send('setRuntimeState', { key, value });
 	}
 
-	private async mutate(action: () => boolean): Promise<void> {
-		const operation = this.tail.then(async () => {
-			if (action()) await this.persist();
-		});
-		this.tail = operation.catch(() => undefined);
-		return operation;
+	async getRuntimeState<T = unknown>(key: string): Promise<T | undefined> {
+		return (await this.send('getRuntimeState', { key })) as T | undefined;
 	}
 
-	private async persist(): Promise<void> {
-		const tempPath = `${this.filePath}.${process.pid}.tmp`;
-		await writeFile(tempPath, JSON.stringify(this.state), { encoding: 'utf8', mode: 0o600 });
+	async deleteRuntimeState(key: string): Promise<void> {
+		await this.send('deleteRuntimeState', { key });
+	}
+
+	private async migrateLegacyJson(): Promise<void> {
+		if (!existsSync(this.stateFilePath)) return;
+		let raw: Buffer;
+		let parsed: PersistedState;
 		try {
-			await rename(tempPath, this.filePath);
+			raw = await readFile(this.stateFilePath);
+			parsed = JSON.parse(raw.toString('utf8')) as PersistedState;
+			if (parsed.version !== 1) throw new Error(`Unsupported gateway state version: ${parsed.version}`);
 		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code;
-			if (code !== 'EEXIST' && code !== 'EPERM') throw error;
-			await copyFile(tempPath, this.filePath);
-			await unlink(tempPath);
+			throw new Error(
+				`Gateway state migration aborted; legacy file kept in place: ${
+					error instanceof Error ? error.message : String(error)
+				}`
+			);
 		}
+		const checksum = createHash('sha256').update(raw).digest('hex');
+		const sourceCounts = {
+			replays: Object.keys(parsed.replays ?? {}).length,
+			connections: Object.keys(parsed.connections ?? {}).length,
+			groups: Object.keys(parsed.groups ?? {}).length
+		};
+		await this.send('importJsonState', {
+			replays: parsed.replays ?? {},
+			connections: parsed.connections ?? {},
+			groups: parsed.groups ?? {},
+			sourceCounts,
+			checksum
+		});
+		const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+		const backupPath = `${this.stateFilePath}.${stamp}.${checksum}.bak`;
+		await rename(this.stateFilePath, backupPath);
 	}
+
+	private send(kind: string, payload: Record<string, unknown> = {}): Promise<unknown> {
+		if (this.closed || !this.worker) return Promise.reject(storeError('State store is not open'));
+		const id = ++this.requestId;
+		this.worker.ref();
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.pending.delete(id);
+				if (this.pending.size === 0) this.worker?.unref();
+				reject(storeError(`State store operation timed out: ${kind}`));
+			}, STORE_REQUEST_TIMEOUT_MS);
+			timer.unref();
+			this.pending.set(id, { resolve, reject, timer });
+			this.worker!.postMessage({ requestId: id, kind, ...payload });
+		});
+	}
+
+	private settle(message: StoreMessage): void {
+		const entry = this.pending.get(message.requestId);
+		if (!entry) return;
+		this.pending.delete(message.requestId);
+		clearTimeout(entry.timer);
+		if (this.pending.size === 0) this.worker?.unref();
+		if (message.ok) entry.resolve(message.value);
+		else entry.reject(storeError(message.error || 'State store operation failed'));
+	}
+
+	private failAll(error: Error): void {
+		for (const { reject, timer } of this.pending.values()) {
+			clearTimeout(timer);
+			reject(error);
+		}
+		this.pending.clear();
+		this.worker = undefined;
+	}
+}
+
+interface PersistedState {
+	version: number;
+	replays?: Record<string, { state: string; expiresAt: number; reply?: Pick<GatewayReply, 'chunks' | 'isError' | 'reason'> }>;
+	connections?: Record<string, ConnectionSnapshot>;
+	groups?: Record<string, DiscoveredGroup>;
+}
+
+function workerEntryUrl(): URL {
+	// The worker runs next to this module in both the compiled `dist`/`.test-dist`
+	// trees and the tsx dev loader, so resolve the sibling with a matching extension.
+	const current = fileURLToPath(import.meta.url);
+	const extension = current.endsWith('.ts') ? 'ts' : 'js';
+	return pathToFileURL(path.join(path.dirname(current), `state-worker.${extension}`));
 }

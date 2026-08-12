@@ -21,7 +21,9 @@
 		"postinstall": "node scripts/harden-qqbot.cjs",
 		"test": "tsc -p tsconfig.test.json && node --test .test-dist/test/all.test.js",
 		"test:coverage": "tsc -p tsconfig.test.json && node --test --experimental-test-coverage .test-dist/test/all.test.js",
-		"check": "npm run build && npm test"
+		"check": "npm run build && npm test",
+		"benchmark:docker": "npm run build && node scripts/docker-shard-benchmark.mjs",
+		"test:coordination:docker": "npm run build && node scripts/docker-redis-coordination.mjs"
 	},
 	"engines": {
 		"node": ">=22.22.3"
@@ -32,10 +34,11 @@
 		]
 	},
 	"dependencies": {
-		"@tencent-connect/qqbot-connector": "1.2.0",
 		"@tencent-connect/openclaw-qqbot": "2.0.0",
+		"@tencent-connect/qqbot-connector": "1.2.0",
 		"@tencent-weixin/openclaw-weixin": "2.4.6",
-		"openclaw": "2026.7.1-2"
+		"openclaw": "2026.7.1-2",
+		"redis": "^6.2.1"
 	},
 	"devDependencies": {
 		"@types/node": "^22.15.0",

@@ -4,11 +4,12 @@ This directory is an independent Node.js sidecar for forwarding personal WeChat 
 
 ## Current integration status
 
-- The gateway core, HMAC transport, multipart attachments, persistent replay protection, per-conversation serialization, response segmentation, encrypted credential vault, canonical control API, Docker image, and tests are implemented.
+- The gateway core, HMAC transport, multipart attachments, SQLite WAL replay protection, fair global backpressure, per-conversation serialization, response segmentation, encrypted credentials, canonical control API, Prometheus metrics, Docker image, and tests are implemented.
 - `BOT_GATEWAY_ADAPTER=openclaw` starts an embedded, loopback-only OpenClaw host and loads Tencent's pinned official WeChat and QQ channel plugins plus the local `ryanai-bridge` plugin. No separate OpenClaw deployment is required.
 - `ryanai-bridge` claims inbound messages with OpenClaw's typed `inbound_claim` hook before Agent routing. Success, ignored, validation-error, and transport-error paths are all handled in the bridge; `before_agent_reply` remains a fail-closed compatibility guard. RyanAI is the only inference, memory, permission, quota, and tool runtime.
-- Official account IDs are normalized to one RyanAI connection per channel: `wechat-default` and `qq-default`. A second official account for the same channel is rejected fail-closed.
-- WeChat and QQ QR login credentials are encrypted in RyanAI's credential vault. Plaintext channel state is materialized only under the runtime OpenClaw state/home directories and is not written into the image or `/data` volume.
+- Shared topology is the default: up to 12 accounts of one channel share an OpenClaw shard process, while each event remains authoritatively routed to its RyanAI connection. `BOT_GATEWAY_OPENCLAW_TOPOLOGY=isolated` remains available as an emergency rollback.
+- In normal product mode RyanAI SQL is authoritative for connections, assignments, encrypted credentials, and account checkpoints. The local encrypted vault remains available for standalone development and migration compatibility.
+- Redis coordination is optional and used only for multi-node deployments. It provides node heartbeats, sticky target nodes, CAS leases, fencing epochs, drain state, and scheduler leadership; single-node mode has no Redis dependency.
 - Health reports sidecar/embedded-host availability, not account authentication. A running host remains healthy while a channel is logged out or waiting for QR login; connection snapshots expose login state separately.
 - `BOT_GATEWAY_ADAPTER=mock` remains a developer-only fixture and never connects to Tencent.
 
@@ -41,10 +42,19 @@ Required production configuration:
 | `BOT_GATEWAY_OPENCLAW_HOME_DIR`           | OS temporary directory; Docker uses `/data/openclaw/home`         |
 | `BOT_GATEWAY_OPENCLAW_PORT`               | `18789`, bound to loopback inside the sidecar                     |
 | `BOT_GATEWAY_OPENCLAW_STARTUP_TIMEOUT_MS` | `180000`                                                          |
+| `BOT_GATEWAY_OPENCLAW_TOPOLOGY`           | `shared`; set `isolated` for one child per connection             |
+| `BOT_GATEWAY_COORDINATION_MODE`            | `single`; set `redis` only for a multi-node deployment            |
+| `BOT_GATEWAY_NODE_ID`                      | Stable unique node ID; required in Redis mode                     |
+| `BOT_GATEWAY_ADVERTISE_URL`                | Reachable control URL; required in Redis mode                     |
+| `REDIS_URL`                                | Required in Redis mode                                            |
 
 When `BOT_GATEWAY_ENABLED=false`, the process does not initialize the state store, credential vault, RyanAI client, or any channel adapter. `GET /health` returns HTTP 200 with `status: "disabled"`; every `/v1/*` request returns HTTP 503 with error code `disabled`. The HMAC and encryption keys are required only when `BOT_GATEWAY_ENABLED=true`.
 
-`BOT_GATEWAY_ADAPTER` is `openclaw` by default or `mock` for the test harness. Optional limits include `BOT_GATEWAY_REQUEST_TIMEOUT_MS`, `BOT_GATEWAY_REPLAY_TTL_MS`, `BOT_GATEWAY_MAX_ATTACHMENT_BYTES`, `BOT_GATEWAY_MAX_TOTAL_ATTACHMENT_BYTES`, `BOT_GATEWAY_WECHAT_REPLY_CHARS`, and `BOT_GATEWAY_QQ_REPLY_CHARS`.
+`BOT_GATEWAY_ADAPTER` is `openclaw` by default or `mock` for the test harness. Backpressure defaults are 16 global active events, 4 active events per connection, 1000 globally queued events, 100 per connection, 128 MiB queued payload, and a 30-second maximum queue wait. Every queue has both count and byte limits.
+
+RyanAI's scheduler defaults to `BOT_GATEWAY_SCHEDULER_MODE=shadow`, so it previews sticky, load-aware moves without applying them. `static` also disables rebalance application and `auto` enables control-plane assignment updates. Auto mode moves at most one connection every two minutes, limits hourly impact to 10% of active shards (at least one), and gives each moved connection a 30-minute cooldown.
+
+Each gateway keeps decayed per-connection 5-minute and 30-minute runtime observations and reports event rate, processing seconds per minute, attachment MiB per minute, ten-minute error count, and consecutive deterministic account failures in its control-plane heartbeat. Redis mode accepts a sample only from the current lease owner at the current assignment generation; single-node mode reports it best-effort without making the gateway depend on RyanAI availability. The scheduler converts the higher recent or sustained signal into 1-12 load units, isolates accounts at 8 units or after three deterministic account-error samples, splits only after a shard exceeds 120% capacity for three one-minute windows, and merges only after it remains below 40% for 30 windows.
 
 The OpenClaw attachment bridge only reads local files under trusted roots. `BOT_GATEWAY_ATTACHMENT_ROOTS` can add platform path-delimiter-separated roots; the configured OpenClaw state/home media directories are included automatically.
 
@@ -124,11 +134,15 @@ The `event` part is JSON:
 
 ```json
 {
-	"version": "1.0",
+	"version": "1.1",
 	"event_id": "channel-event-id",
 	"occurred_at": "2026-08-09T12:00:00.000Z",
 	"channel": "wechat",
 	"connection_id": "wechat-default",
+	"node_id": "gateway-node-a",
+	"shard_id": "wechat-shard-000",
+	"lease_epoch": 42,
+	"assignment_generation": 3,
 	"conversation": { "type": "private", "id": "contact-id" },
 	"sender": { "id": "contact-id" },
 	"message": { "text": "hello", "mentions_bot": true },
@@ -179,18 +193,24 @@ WeChat login uses the official plugin's QR flow. QQ can use encrypted `appId`/`a
 
 ## Persistence and security
 
-- `/data/state/gateway-state.json` stores event replay/idempotency state, cached safe replies, connection snapshots, and discovered group allowlist state.
-- `/data/credentials/*.json` stores AES-256-GCM envelopes. Filenames are SHA-256 hashes of connection IDs; credential plaintext is never returned by the control API.
-- OpenClaw state/home/media use runtime-temporary directories outside `/data`; Docker pre-creates them for the non-root `node` user. Only encrypted credentials and gateway state are persistent.
+- `/data/state/gateway-state.db` is the active local store. It uses SQLite WAL in a worker thread for connection/group caches, replay claims and replies, supervisor checkpoints, and migration receipts.
+- A legacy `/data/state/gateway-state.json` is imported transactionally once, verified by row counts and checksum, then renamed to a timestamped backup. A failed migration keeps the original file and aborts startup.
+- In standalone mode `/data/credentials/*.json` stores AES-256-GCM envelopes. In product Redis mode credentials are fetched from RyanAI SQL only after the node owns the shard lease; stale local credentials never start a cluster shard.
+- WeChat account sync checkpoints are restricted to the account's sync JSON and `allowFrom`, capped at 1 MiB, encrypted independently in SQL, restored only after a fresh lease, and uploaded every 30 seconds only when changed.
+- OpenClaw state/home/media live under the configured runtime directories. Shard children receive only their account material and a bridge secret derived from shard, node, and fencing epoch.
 - Events are serialized by `channel + connection + conversation`, with group conversations additionally scoped by sender. Duplicate event IDs share one in-flight result and later replays use the persisted result without a second RyanAI call or charge.
 - Group messages are discovered but ignored until the group is enabled and the message explicitly mentions the bot.
 
-## Verification
+## Operations and verification
 
-```powershell
-npm test
-npm run build
+`GET /metrics` exposes Prometheus counters, gauges, and latency histograms. Signed operations endpoints provide node/shard snapshots, drain/resume, and circuit reset; the RyanAI administration page provides rebalance preview/apply.
+
+```console
+npm run check
+npm run test:coordination:docker
 docker build -t ryanai-bot-gateway .
+npm run benchmark:docker
+npm run benchmark:docker -- --matrix
 ```
 
-Tests cover configuration, HMAC/body integrity, nonce replay, encrypted credentials, log redaction, multipart attachments, event deduplication, persistent replay, per-conversation serialization, safe failure, group allowlisting, canonical control routes, mock login/QR, and OpenClaw context normalization.
+The quick Docker benchmark compares two accounts in shared and isolated topology, verifies process count, shard routing, forged signatures, duplicate account rejection, supervisor recovery, and memory use. `--matrix` repeats the topology comparison for 1, 2, 4, 8, and 12 accounts. Fake Tencent credentials are sufficient for topology and failure tests, but real QR login and message send/receive remain a release acceptance step.

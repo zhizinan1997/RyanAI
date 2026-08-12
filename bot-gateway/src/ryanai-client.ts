@@ -46,13 +46,18 @@ function optionalName(value: string | undefined): { name?: string } {
 
 export function buildWireEvent(event: GatewayInboundEvent): RyanAiWireEvent {
 	return {
-		version: '1.0',
+		version: event.leaseEpoch === undefined ? '1.0' : '1.1',
 		event_id: event.eventId,
 		// Shard routing metadata rides only on the shard→gateway bridge leg; the
 		// control server strips it after resolving the owning connection, so the
 		// backend (extra='forbid') never sees these fields.
 		...(event.accountKey ? { account_id: event.accountKey } : {}),
 		...(event.shardId ? { shard_id: event.shardId } : {}),
+		...(event.nodeId ? { node_id: event.nodeId } : {}),
+		...(event.leaseEpoch !== undefined ? { lease_epoch: event.leaseEpoch } : {}),
+		...(event.assignmentGeneration !== undefined
+			? { assignment_generation: event.assignmentGeneration }
+			: {}),
 		occurred_at: new Date(event.occurredAt).toISOString(),
 		channel: event.channel,
 		connection_id: event.connectionId,
@@ -154,9 +159,18 @@ export class RyanAiClient implements RyanAiTransport {
 		}
 
 		if (!response.ok) {
-			await response.body?.cancel().catch(() => undefined);
-			clearTimeout(timer);
-			throw new RyanAiTransportError(`http_${response.status}`);
+			let errorCode = `http_${response.status}`;
+			try {
+				const raw = await readResponseTextLimited(response, 16_384);
+				const payload = JSON.parse(raw) as { detail?: unknown; error?: { code?: unknown } };
+				const detail = payload.detail ?? payload.error?.code;
+				if (response.status === 409 && detail === 'stale_fence') errorCode = 'stale_fence';
+			} catch {
+				await response.body?.cancel().catch(() => undefined);
+			} finally {
+				clearTimeout(timer);
+			}
+			throw new RyanAiTransportError(errorCode);
 		}
 
 		const contentLength = Number(response.headers.get('content-length') || '0');

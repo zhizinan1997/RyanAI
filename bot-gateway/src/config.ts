@@ -24,10 +24,19 @@ export interface GatewayConfig {
 	openClawShardCapacity: number;
 	/** Set only inside a shared shard's child process environment. */
 	openClawShardId?: string;
+	openClawNodeId?: string;
+	openClawLeaseEpoch?: number;
+	openClawAssignmentGeneration?: number;
 	openClawStateDir: string;
 	openClawHomeDir: string;
 	openClawPort: number;
 	openClawConnectionId?: string;
+	coordinationMode: 'single' | 'redis';
+	redisUrl?: string;
+	nodeId: string;
+	advertiseUrl?: URL;
+	leaseTtlMs: number;
+	leaseRenewMs: number;
 	openClawStartupTimeoutMs: number;
 	enabledChannels: ReadonlySet<Channel>;
 	requestTimeoutMs: number;
@@ -37,6 +46,13 @@ export interface GatewayConfig {
 	maxAttachmentBytes: number;
 	maxTotalAttachmentBytes: number;
 	maxControlBodyBytes: number;
+	maxGlobalActiveEvents: number;
+	maxConnectionActiveEvents: number;
+	maxGlobalQueuedEvents: number;
+	maxConnectionQueuedEvents: number;
+	maxQueuedPayloadBytes: number;
+	maxQueueWaitMs: number;
+	shutdownGraceMs: number;
 	maxInputTextChars: number;
 	maxResponseTextChars: number;
 	replyChunkChars: Readonly<Record<Channel, number>>;
@@ -86,6 +102,17 @@ export function deriveShardBridgeSecret(hmacSecret: string, shardId: string): st
 		.digest('hex');
 }
 
+export function deriveLeaseBridgeSecret(
+	hmacSecret: string,
+	shardId: string,
+	nodeId: string,
+	epoch: number
+): string {
+	return createHmac('sha256', hmacSecret)
+		.update(`ryanai-openclaw-bridge-v2:${shardId}:${nodeId}:${epoch}`)
+		.digest('hex');
+}
+
 export function parseEncryptionKey(value: string | undefined): Buffer {
 	if (!value) {
 		throw new Error('BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY is required');
@@ -129,7 +156,7 @@ export function loadConfig(
 	if (adapterValue !== 'mock' && adapterValue !== 'openclaw') {
 		throw new Error('BOT_GATEWAY_ADAPTER must be either mock or openclaw');
 	}
-	const topologyValue = (env.BOT_GATEWAY_OPENCLAW_TOPOLOGY || 'isolated').trim().toLowerCase();
+	const topologyValue = (env.BOT_GATEWAY_OPENCLAW_TOPOLOGY || 'shared').trim().toLowerCase();
 	if (topologyValue !== 'isolated' && topologyValue !== 'shared') {
 		throw new Error('BOT_GATEWAY_OPENCLAW_TOPOLOGY must be either isolated or shared');
 	}
@@ -143,6 +170,31 @@ export function loadConfig(
 	if (parseBoolean(env.BOT_GATEWAY_QQ_ENABLED, false)) configuredChannels.add('qq');
 
 	const dataDir = path.resolve(env.BOT_GATEWAY_DATA_DIR?.trim() || '/data');
+	const coordinationValue = (env.BOT_GATEWAY_COORDINATION_MODE || 'single').trim().toLowerCase();
+	if (coordinationValue !== 'single' && coordinationValue !== 'redis') {
+		throw new Error('BOT_GATEWAY_COORDINATION_MODE must be either single or redis');
+	}
+	const nodeId = env.BOT_GATEWAY_NODE_ID?.trim() || 'single-node';
+	const childLeaseEpoch = env.BOT_GATEWAY_LEASE_EPOCH?.trim();
+	const childAssignmentGeneration = env.BOT_GATEWAY_ASSIGNMENT_GENERATION?.trim();
+	if (!/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/.test(nodeId)) {
+		throw new Error('BOT_GATEWAY_NODE_ID is invalid');
+	}
+	const redisUrl = env.REDIS_URL?.trim();
+	const advertiseValue = env.BOT_GATEWAY_ADVERTISE_URL?.trim();
+	if (coordinationValue === 'redis' && (!redisUrl || !advertiseValue || nodeId === 'single-node')) {
+		throw new Error('Redis coordination requires REDIS_URL, BOT_GATEWAY_NODE_ID and BOT_GATEWAY_ADVERTISE_URL');
+	}
+	const advertiseUrl = advertiseValue ? parseBaseUrl(advertiseValue) : undefined;
+	const leaseTtlMs = parseInteger(
+		'BOT_GATEWAY_LEASE_TTL_MS', env.BOT_GATEWAY_LEASE_TTL_MS, 45_000, 10_000, 300_000
+	);
+	const leaseRenewMs = parseInteger(
+		'BOT_GATEWAY_LEASE_RENEW_MS', env.BOT_GATEWAY_LEASE_RENEW_MS, 15_000, 1_000, 120_000
+	);
+	if (coordinationValue === 'redis' && leaseRenewMs > leaseTtlMs - 5_000) {
+		throw new Error('BOT_GATEWAY_LEASE_RENEW_MS must leave at least 5000ms before lease expiry');
+	}
 	const openClawStateDir = path.resolve(
 		env.BOT_GATEWAY_OPENCLAW_STATE_DIR?.trim() || path.join(os.tmpdir(), 'ryanai-openclaw-state')
 	);
@@ -169,6 +221,24 @@ export function loadConfig(
 		1,
 		256 * 1024 * 1024
 	);
+	const maxGlobalActiveEvents = parseInteger(
+		'BOT_GATEWAY_MAX_GLOBAL_ACTIVE_EVENTS', env.BOT_GATEWAY_MAX_GLOBAL_ACTIVE_EVENTS, 16, 1, 1_000
+	);
+	const maxConnectionActiveEvents = parseInteger(
+		'BOT_GATEWAY_MAX_CONNECTION_ACTIVE_EVENTS', env.BOT_GATEWAY_MAX_CONNECTION_ACTIVE_EVENTS, 4, 1, 1_000
+	);
+	if (maxConnectionActiveEvents > maxGlobalActiveEvents) {
+		throw new Error('BOT_GATEWAY_MAX_CONNECTION_ACTIVE_EVENTS must not exceed the global active limit');
+	}
+	const maxGlobalQueuedEvents = parseInteger(
+		'BOT_GATEWAY_MAX_GLOBAL_QUEUED_EVENTS', env.BOT_GATEWAY_MAX_GLOBAL_QUEUED_EVENTS, 1_000, 1, 100_000
+	);
+	const maxConnectionQueuedEvents = parseInteger(
+		'BOT_GATEWAY_MAX_CONNECTION_QUEUED_EVENTS', env.BOT_GATEWAY_MAX_CONNECTION_QUEUED_EVENTS, 100, 1, 100_000
+	);
+	if (maxConnectionQueuedEvents > maxGlobalQueuedEvents) {
+		throw new Error('BOT_GATEWAY_MAX_CONNECTION_QUEUED_EVENTS must not exceed the global queued limit');
+	}
 
 	const hmacSecret = enabled
 		? requireSecret('BOT_GATEWAY_HMAC_SECRET', env.BOT_GATEWAY_HMAC_SECRET)
@@ -206,6 +276,19 @@ export function loadConfig(
 			50
 		),
 		...(shardIdValue ? { openClawShardId: shardIdValue } : {}),
+		...(shardIdValue && nodeId !== 'single-node' ? { openClawNodeId: nodeId } : {}),
+		...(childLeaseEpoch && Number.isSafeInteger(Number(childLeaseEpoch))
+			? { openClawLeaseEpoch: Number(childLeaseEpoch) }
+			: {}),
+		...(childAssignmentGeneration && Number.isSafeInteger(Number(childAssignmentGeneration))
+			? { openClawAssignmentGeneration: Number(childAssignmentGeneration) }
+			: {}),
+		coordinationMode: coordinationValue,
+		...(redisUrl ? { redisUrl } : {}),
+		nodeId,
+		...(advertiseUrl ? { advertiseUrl } : {}),
+		leaseTtlMs,
+		leaseRenewMs,
 		openClawStateDir,
 		openClawHomeDir,
 		openClawPort: parseInteger(
@@ -263,6 +346,20 @@ export function loadConfig(
 		),
 		maxTotalAttachmentBytes,
 		maxControlBodyBytes: maxTotalAttachmentBytes + 2 * 1024 * 1024,
+		maxGlobalActiveEvents,
+		maxConnectionActiveEvents,
+		maxGlobalQueuedEvents,
+		maxConnectionQueuedEvents,
+		maxQueuedPayloadBytes: parseInteger(
+			'BOT_GATEWAY_MAX_QUEUED_PAYLOAD_BYTES', env.BOT_GATEWAY_MAX_QUEUED_PAYLOAD_BYTES,
+			128 * 1024 * 1024, 1, 2 * 1024 * 1024 * 1024
+		),
+		maxQueueWaitMs: parseInteger(
+			'BOT_GATEWAY_MAX_QUEUE_WAIT_MS', env.BOT_GATEWAY_MAX_QUEUE_WAIT_MS, 30_000, 100, 600_000
+		),
+		shutdownGraceMs: parseInteger(
+			'BOT_GATEWAY_SHUTDOWN_GRACE_MS', env.BOT_GATEWAY_SHUTDOWN_GRACE_MS, 30_000, 0, 600_000
+		),
 		maxInputTextChars: parseInteger(
 			'BOT_GATEWAY_MAX_INPUT_TEXT_CHARS',
 			env.BOT_GATEWAY_MAX_INPUT_TEXT_CHARS,

@@ -6,6 +6,9 @@ node_modules
 /bot-gateway/.smoke-openclaw-*/
 /build
 /.svelte-kit
+/bot-gateway/.svelte-kit/
+/bot-gateway/benchmark-results/
+/.codex-deploy/
 /package
 .env
 .env.*

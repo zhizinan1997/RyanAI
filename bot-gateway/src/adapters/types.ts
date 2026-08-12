@@ -33,6 +33,11 @@ export interface ChannelAdapter {
 	logout(connectionId: string): Promise<ConnectionSnapshot>;
 	getQrCode(connectionId: string): Promise<QrCodeSnapshot>;
 	discoverGroups(connectionId: string): Promise<DiscoveredGroup[]>;
+	operationsSnapshot?(): Promise<Record<string, unknown>>;
+	setDraining?(draining: boolean): Promise<void>;
+	resetCircuit?(connectionId: string): Promise<void>;
+	fenceShard?(shardId: string): Promise<void>;
+	reconcile?(): Promise<void>;
 }
 
 export interface MockInjectableAdapter extends ChannelAdapter {

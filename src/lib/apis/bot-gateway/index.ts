@@ -100,6 +100,81 @@ export type BotGatewayAuditRecord = {
 	detail: string | null;
 };
 
+export type BotGatewayRuntimeShard = {
+	shard_id: string;
+	running: boolean;
+	detail: string;
+	member_count: number;
+	lease_epoch: number | null;
+	assignment_generation: number | null;
+	lease_expires_at: number | null;
+	restart_count: number;
+	circuit_state: 'closed' | 'open' | 'half_open';
+	next_retry_at: number | null;
+};
+
+export type BotGatewayOperationsOverview = {
+	coordination_mode: 'single' | 'redis';
+	nodes: Array<{
+		id: string;
+		advertise_url: string | null;
+		last_seen_at: number | null;
+		runtime: {
+			node_id: string;
+			draining: boolean;
+			coordination_mode: 'single' | 'redis';
+			shards: BotGatewayRuntimeShard[];
+		} | null;
+	}>;
+	shards: Array<{
+		id: string;
+		channel: BotGatewayChannel;
+		account_capacity: number;
+		load_capacity: number;
+		runtime: BotGatewayRuntimeShard | null;
+		lease: {
+			node_id: string;
+			epoch: number;
+			assignment_generation: number;
+			ttl_ms: number;
+		} | null;
+	}>;
+	connections: Array<{
+		id: string;
+		channel: BotGatewayChannel;
+		enabled: boolean;
+		shard_id: string | null;
+		account_key: string | null;
+		assignment_generation: number;
+		status: string;
+		last_runtime_node_id: string | null;
+		credentials_configured: boolean;
+	}>;
+};
+
+export type BotGatewayRebalancePlan = {
+	mode: 'static' | 'shadow' | 'auto';
+	generated_at: number;
+	plan: {
+		moves: Array<{
+			connection_id: string;
+			channel: BotGatewayChannel;
+			from_shard_id: string | null;
+			to_shard_id: string;
+			load_units: number;
+			reason: string;
+		}>;
+		shards: Array<{
+			id: string;
+			channel: BotGatewayChannel;
+			accounts: number;
+			load_units: number;
+			account_capacity: number;
+			load_capacity: number;
+		}>;
+	};
+};
+
 type RequestOptions = Omit<RequestInit, 'body'> & {
 	body?: unknown;
 };
@@ -162,7 +237,10 @@ const asChannel = (value: unknown): BotGatewayChannel => {
 const sanitizeConnection = (value: any): BotGatewayConnection => ({
 	id: String(value?.id ?? value?.connection_id ?? value?.channel ?? ''),
 	channel: asChannel(value?.channel),
-	owner_user_id: value?.owner_user_id == null && value?.ownerUserId == null ? null : String(value?.owner_user_id ?? value?.ownerUserId),
+	owner_user_id:
+		value?.owner_user_id == null && value?.ownerUserId == null
+			? null
+			: String(value?.owner_user_id ?? value?.ownerUserId),
 	owner_name:
 		value?.owner_name == null && value?.ownerName == null
 			? null
@@ -243,9 +321,18 @@ const sanitizeBinding = (value: any): BotGatewayBinding => ({
 	channel: asChannel(value?.channel),
 	connection_id: String(value?.connection_id ?? value?.connectionId ?? ''),
 	user_id: String(value?.user_id ?? value?.userId ?? ''),
-	user_name: value?.user_name == null && value?.userName == null ? null : String(value?.user_name ?? value?.userName),
-	user_username: value?.user_username == null && value?.userUsername == null ? null : String(value?.user_username ?? value?.userUsername),
-	user_email: value?.user_email == null && value?.userEmail == null ? null : String(value?.user_email ?? value?.userEmail),
+	user_name:
+		value?.user_name == null && value?.userName == null
+			? null
+			: String(value?.user_name ?? value?.userName),
+	user_username:
+		value?.user_username == null && value?.userUsername == null
+			? null
+			: String(value?.user_username ?? value?.userUsername),
+	user_email:
+		value?.user_email == null && value?.userEmail == null
+			? null
+			: String(value?.user_email ?? value?.userEmail),
 	external_user_id: String(value?.external_user_id ?? value?.externalUserId ?? ''),
 	display_name:
 		value?.display_name == null && value?.displayName == null
@@ -268,13 +355,19 @@ const sanitizeBinding = (value: any): BotGatewayBinding => ({
 const sanitizeUserSettings = (value: any): BotGatewayUserSettings => ({
 	default_model_id: value?.default_model_id ?? value?.defaultModelId ?? null,
 	admin_recommended_model_id:
-		value?.admin_recommended_model_id ?? value?.recommended_model_id ?? value?.recommendedModelId ?? null,
+		value?.admin_recommended_model_id ??
+		value?.recommended_model_id ??
+		value?.recommendedModelId ??
+		null,
 	available: Boolean(value?.available ?? value?.enabled ?? true),
 	qq_enabled: Boolean(value?.qq_enabled ?? value?.qqEnabled ?? true),
 	wechat_enabled: Boolean(value?.wechat_enabled ?? value?.wechatEnabled ?? true)
 });
 
-const sanitizeUserConnection = (value: any, channel?: BotGatewayChannel): BotGatewayUserConnection => ({
+const sanitizeUserConnection = (
+	value: any,
+	channel?: BotGatewayChannel
+): BotGatewayUserConnection => ({
 	channel: asChannel(value?.channel ?? channel),
 	configured: Boolean(value?.configured ?? value?.credentials_configured),
 	status: String(value?.status ?? 'disconnected'),
@@ -467,13 +560,15 @@ export const updateBotGatewayUserSettings = async (
 	token: string,
 	form: { default_model_id?: string | null }
 ): Promise<BotGatewayUserSettings> =>
-	sanitizeUserSettings(await request<any>(token, '/user/settings', { method: 'PATCH', body: form }));
+	sanitizeUserSettings(
+		await request<any>(token, '/user/settings', { method: 'PATCH', body: form })
+	);
 
 export const getBotGatewayUserConnections = async (
 	token: string
 ): Promise<BotGatewayUserConnection[]> => {
 	const payload = await request<any>(token, '/user/connections');
-	const items = Array.isArray(payload) ? payload : payload?.items ?? payload?.connections ?? [];
+	const items = Array.isArray(payload) ? payload : (payload?.items ?? payload?.connections ?? []);
 	return items.map((item: any) => sanitizeUserConnection(item));
 };
 
@@ -495,38 +590,77 @@ export const setBotGatewayUserQQCredentials = async (
 		'qq'
 	);
 
-export const beginBotGatewayUserLogin = async (
-	token: string
-): Promise<BotGatewayLoginSession> =>
-	sanitizeLoginSession(await request<any>(token, '/user/connections/wechat/login', { method: 'POST' }));
+export const beginBotGatewayUserLogin = async (token: string): Promise<BotGatewayLoginSession> =>
+	sanitizeLoginSession(
+		await request<any>(token, '/user/connections/wechat/login', { method: 'POST' })
+	);
 
-export const getBotGatewayUserLoginState = async (
-	token: string
-): Promise<BotGatewayLoginSession> =>
+export const getBotGatewayUserLoginState = async (token: string): Promise<BotGatewayLoginSession> =>
 	sanitizeLoginSession(await request<any>(token, '/user/connections/wechat/login'));
 
 export const logoutBotGatewayUserConnection = async (
 	token: string,
 	channel: BotGatewayChannel
 ): Promise<void> => {
-	await request<void>(token, `/user/connections/${channel}/logout`, { method: 'POST' });
+	await request<void>(token, `/user/connections/${channel}`, { method: 'DELETE' });
 };
 
-export const getBotGatewayAdminSettings = async (
-	token: string
-): Promise<BotGatewayAdminSettings> =>
+export const getBotGatewayAdminSettings = async (token: string): Promise<BotGatewayAdminSettings> =>
 	(await request<any>(token, '/admin/settings')) as BotGatewayAdminSettings;
 
 export const updateBotGatewayAdminSettings = async (
 	token: string,
 	form: Partial<BotGatewayAdminSettings>
 ): Promise<BotGatewayAdminSettings> =>
-	(await request<any>(token, '/admin/settings', { method: 'PATCH', body: form })) as BotGatewayAdminSettings;
+	(await request<any>(token, '/admin/settings', {
+		method: 'PATCH',
+		body: form
+	})) as BotGatewayAdminSettings;
 
 export const getBotGatewayAuditRecords = async (
 	token: string
 ): Promise<BotGatewayAuditRecord[]> => {
 	const payload = await request<any>(token, '/admin/audit');
-	const items = Array.isArray(payload) ? payload : payload?.items ?? payload?.records ?? [];
+	const items = Array.isArray(payload) ? payload : (payload?.items ?? payload?.records ?? []);
 	return items.map(sanitizeAuditRecord);
+};
+
+export const getBotGatewayOperationsOverview = async (
+	token: string
+): Promise<BotGatewayOperationsOverview> =>
+	await request<BotGatewayOperationsOverview>(token, '/admin/operations/overview');
+
+export const setBotGatewayNodeDraining = async (
+	token: string,
+	nodeId: string,
+	draining: boolean
+): Promise<void> => {
+	await request(
+		token,
+		`/admin/nodes/${encodeURIComponent(nodeId)}/${draining ? 'drain' : 'resume'}`,
+		{
+			method: 'POST'
+		}
+	);
+};
+
+export const resetBotGatewayCircuit = async (
+	token: string,
+	connectionId: string
+): Promise<void> => {
+	await request(token, `/admin/connections/${encodeURIComponent(connectionId)}/circuit/reset`, {
+		method: 'POST'
+	});
+};
+
+export const previewBotGatewayRebalance = async (token: string): Promise<BotGatewayRebalancePlan> =>
+	await request<BotGatewayRebalancePlan>(token, '/admin/operations/rebalance/preview', {
+		method: 'POST'
+	});
+
+export const applyBotGatewayRebalance = async (
+	token: string,
+	moves: BotGatewayRebalancePlan['plan']['moves']
+): Promise<void> => {
+	await request(token, '/admin/operations/rebalance/apply', { method: 'POST', body: { moves } });
 };

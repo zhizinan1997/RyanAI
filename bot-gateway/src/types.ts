@@ -17,6 +17,9 @@ export interface GatewayInboundEvent {
 	accountKey?: string;
 	/** Shard that produced this event in shared topology. */
 	shardId?: string;
+	nodeId?: string;
+	leaseEpoch?: number;
+	assignmentGeneration?: number;
 	conversation: {
 		type: ConversationType;
 		id: string;
@@ -43,10 +46,13 @@ export interface WireAttachmentDescriptor {
 }
 
 export interface RyanAiWireEvent {
-	version: '1.0';
+	version: '1.0' | '1.1';
 	event_id: string;
 	account_id?: string;
 	shard_id?: string;
+	node_id?: string;
+	lease_epoch?: number;
+	assignment_generation?: number;
 	occurred_at: string;
 	channel: Channel;
 	connection_id: string;
@@ -95,6 +101,9 @@ export interface ConnectionSnapshot {
 	accountKey?: string;
 	/** Shared shard this connection's account is hosted on. */
 	shardId?: string;
+	assignmentGeneration?: number;
+	/** SQL credential center reports a credential without exposing its value. */
+	credentialsConfigured?: boolean;
 	updatedAt: string;
 	detail?: string;
 }

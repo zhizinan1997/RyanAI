@@ -18,7 +18,10 @@ flowchart LR
 
 - OpenClaw 只是微信官方插件所需的运行宿主，不配置模型，也不参与推理、记忆、工具调用或会话管理。Bridge 会在进入 OpenClaw Agent 前截获消息；RyanAI 不可用时不会回退到 OpenClaw Agent。
 - 侧车端口仅通过 Compose 网络向 RyanAI 暴露，`docker-compose.yaml` 没有宿主机 `ports` 映射。不要自行把该端口公开到公网。
-- RyanAI 和侧车共享 `BOT_GATEWAY_HMAC_SECRET`，用于验证内部请求。QQ AppSecret、扫码登录态等凭据由侧车使用独立的 `BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY` 加密，并保存在 `ryanai-bot-gateway` 命名卷中。
+- RyanAI 和侧车共享 `BOT_GATEWAY_HMAC_SECRET`，用于验证内部请求。正常产品模式下账号凭据由 RyanAI 使用独立的 `BOT_GATEWAY_CREDENTIAL_MASTER_KEY` 加密保存在 SQL；侧车本地加密密钥用于单机兼容缓存和迁移，不会下发给 OpenClaw 子进程。
+- 默认 `shared` 拓扑会让同一渠道的多个账号共享 OpenClaw 分片进程，并按连接公平排队；可通过 `BOT_GATEWAY_OPENCLAW_TOPOLOGY=isolated` 临时回退到每连接一个进程。
+- 多 Gateway 部署使用 Redis 的目标节点、租约和 fencing epoch 防止同一账号被两个节点同时轮询；单节点默认 `BOT_GATEWAY_COORDINATION_MODE=single`，不依赖 Redis。
+- Gateway 按连接维护 5 分钟和 30 分钟衰减负载观测，并通过节点心跳上报事件速率、每分钟处理占用、附件流量、10 分钟错误数和连续错误。Redis 模式只接受当前租约 owner 且 assignment generation 一致的数据；单节点模式为尽力上报，不会因 RyanAI 暂时不可达而停止运行。
 - 总开关和两个渠道开关默认均为 `false`。启用时若 HMAC 密钥或凭据加密密钥为空，服务应拒绝启动通道，而不是采用默认密钥。
 
 ## 首次部署
@@ -112,7 +115,8 @@ flowchart LR
 
 - 支持私聊及白名单群聊中的文字、图片和文件输入，回复为文字。
 - 不支持语音、视频、定时任务或主动推送。
-- 首版默认各运行一个微信和 QQ 机器人连接；数据结构预留多连接能力。
+- 支持同一渠道配置多个机器人连接；默认每个共享分片最多 12 个账号，并由后端以 sticky、负载感知的方式规划分片。
+- 调度器把负载折算为 `1..12` 单位；达到 8 单位或连续 3 次确定性账号错误时独立分片。分片连续 3 个一分钟窗口超过 120% 容量才拆分，连续 30 个窗口低于 40% 才允许合并；自动模式还受单次一个移动、两分钟间隔、每小时 10% 分片和连接移动后 30 分钟冷却限制。
 - 依赖浏览器页面、浏览器 Socket 或人工确认的客户端工具不能直接在机器人会话中运行；RyanAI 可用的服务端工具仍走原有权限检查。
 - 平台消息长度、附件大小、文件类型、频率限制和封禁策略同时受 RyanAI 与腾讯官方通道约束。
 

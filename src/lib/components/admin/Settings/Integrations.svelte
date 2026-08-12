@@ -8,6 +8,7 @@
 	import { getTerminalServers } from '$lib/apis/terminal';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import {
+		applyBotGatewayRebalance,
 		beginBotGatewayLogin,
 		blockAdminBotGatewayBinding,
 		discoverBotGatewayGroups,
@@ -16,10 +17,13 @@
 		getBotGatewayGroups,
 		getBotGatewayLoginState,
 		getBotGatewayAdminSettings,
-		getBotGatewayAuditRecords,
+		getBotGatewayOperationsOverview,
 		logoutBotGateway,
+		previewBotGatewayRebalance,
 		reconnectBotGateway,
+		resetBotGatewayCircuit,
 		setQQBotCredentials,
+		setBotGatewayNodeDraining,
 		unblockAdminBotGatewayBinding,
 		updateBotGatewayConnection,
 		updateBotGatewayAdminSettings,
@@ -30,7 +34,8 @@
 		type BotGatewayGroup,
 		type BotGatewayLoginSession,
 		type BotGatewayAdminSettings,
-		type BotGatewayAuditRecord
+		type BotGatewayOperationsOverview,
+		type BotGatewayRebalancePlan
 	} from '$lib/apis/bot-gateway';
 	import {
 		getTerminalServerConnections,
@@ -128,15 +133,13 @@
 	let showLogoutConfirm = false;
 	let logoutConnection: BotGatewayConnection | null = null;
 	let userBotSettings: BotGatewayAdminSettings | null = null;
-	let botAudit: BotGatewayAuditRecord[] = [];
 	let botPolicyBusy = false;
-	let auditQuery = '';
-
-	$: filteredAudit = botAudit.filter((record) =>
-		`${record.action} ${record.channel ?? ''} ${record.user_id ?? ''} ${record.account_id ?? ''}`
-			.toLocaleLowerCase()
-			.includes(auditQuery.trim().toLocaleLowerCase())
-	);
+	let operations: BotGatewayOperationsOverview | null = null;
+	let operationsPoll: ReturnType<typeof setInterval> | null = null;
+	let operationsLoading = false;
+	let operationsBusy = false;
+	let rebalancePreview: BotGatewayRebalancePlan | null = null;
+	let showRebalanceConfirm = false;
 
 	$: filteredGroups = (botGroups ?? []).filter((group) =>
 		`${group.name} ${group.id}`.toLocaleLowerCase().includes(groupQuery.trim().toLocaleLowerCase())
@@ -166,18 +169,27 @@
 
 	const channelTitle = (channel: BotGatewayChannel) =>
 		$i18n.t(channel === 'wechat' ? 'WeChat' : 'QQ');
-	const auditActionTitle = (action?: string) =>
+	const coordinationModeLabel = (mode?: string) =>
+		$i18n.t(mode === 'redis' ? 'Redis coordination mode' : 'Single-node mode');
+	const schedulerModeLabel = (mode?: string) =>
 		$i18n.t(
 			(
 				{
-					credentials_saved: 'Credentials saved',
-					login_started: 'Login started',
-					auto_bound: 'Automatically bound',
-					logged_out: 'Logged out'
+					static: 'Static mode',
+					shadow: 'Preview mode',
+					auto: 'Automatic mode'
 				} as Record<string, string>
-			)[action ?? ''] ??
-				action ??
-				'—'
+			)[mode ?? ''] ?? 'Static mode'
+		);
+	const circuitStateLabel = (state?: string) =>
+		$i18n.t(
+			(
+				{
+					closed: 'Circuit closed',
+					open: 'Circuit open',
+					half_open: 'Circuit half-open'
+				} as Record<string, string>
+			)[state ?? ''] ?? '—'
 		);
 	const loginSucceeded = (state?: string) =>
 		['connected', 'confirmed', 'success'].includes(state ?? '');
@@ -252,13 +264,94 @@
 
 	const loadUserBotPolicy = async () => {
 		try {
-			[userBotSettings, botAudit] = await Promise.all([
-				getBotGatewayAdminSettings(localStorage.token),
-				getBotGatewayAuditRecords(localStorage.token)
-			]);
+			userBotSettings = await getBotGatewayAdminSettings(localStorage.token);
 		} catch (error) {
 			if (botLoadError) return;
 			toast.error(error instanceof Error ? error.message : $i18n.t('Failed to load bot policy.'));
+		}
+	};
+
+	const loadOperations = async (notify = false) => {
+		if (operationsLoading) return;
+		operationsLoading = true;
+		try {
+			operations = await getBotGatewayOperationsOverview(localStorage.token);
+		} catch (error) {
+			if (notify)
+				toast.error(
+					error instanceof Error ? error.message : $i18n.t('Failed to load bot runtime status.')
+				);
+		} finally {
+			operationsLoading = false;
+		}
+	};
+
+	const setNodeDraining = async (nodeId: string, draining: boolean) => {
+		if (operationsBusy) return;
+		operationsBusy = true;
+		try {
+			await setBotGatewayNodeDraining(localStorage.token, nodeId, draining);
+			await loadOperations();
+			toast.success(
+				draining ? $i18n.t('Gateway node is draining.') : $i18n.t('Gateway node resumed.')
+			);
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : $i18n.t('Failed to update gateway node.')
+			);
+		} finally {
+			operationsBusy = false;
+		}
+	};
+
+	const resetShardCircuit = async (shardId: string) => {
+		const connection = operations?.connections.find((item) => item.shard_id === shardId);
+		if (!connection || operationsBusy) return;
+		operationsBusy = true;
+		try {
+			await resetBotGatewayCircuit(localStorage.token, connection.id);
+			await loadOperations();
+			toast.success($i18n.t('Shard circuit reset.'));
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : $i18n.t('Failed to reset shard circuit.')
+			);
+		} finally {
+			operationsBusy = false;
+		}
+	};
+
+	const previewRebalance = async () => {
+		if (operationsBusy) return;
+		operationsBusy = true;
+		try {
+			rebalancePreview = await previewBotGatewayRebalance(localStorage.token);
+			showRebalanceConfirm =
+				rebalancePreview.mode === 'auto' && rebalancePreview.plan.moves.length > 0;
+			if (rebalancePreview.mode !== 'auto') {
+				toast.success($i18n.t('Rebalance preview updated. Automatic moves are disabled.'));
+			} else if (rebalancePreview.plan.moves.length === 0) {
+				toast.success($i18n.t('The current assignments are already balanced.'));
+			}
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : $i18n.t('Failed to preview rebalance.'));
+		} finally {
+			operationsBusy = false;
+		}
+	};
+
+	const applyRebalance = async () => {
+		if (!rebalancePreview || operationsBusy) return;
+		operationsBusy = true;
+		try {
+			await applyBotGatewayRebalance(localStorage.token, rebalancePreview.plan.moves.slice(0, 1));
+			rebalancePreview = null;
+			await Promise.all([loadOperations(), loadBotConnections()]);
+			toast.success($i18n.t('Rebalance applied.'));
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : $i18n.t('Failed to apply rebalance.'));
+		} finally {
+			operationsBusy = false;
 		}
 	};
 
@@ -589,17 +682,20 @@
 			getTerminalServerConnections(localStorage.token).catch(() => null),
 			loadBotConnections(),
 			loadAdminBindings(),
-			loadUserBotPolicy()
+			loadUserBotPolicy(),
+			loadOperations()
 		]);
 
 		servers = (toolResult?.TOOL_SERVER_CONNECTIONS ?? []) as ToolServerConnection[];
 		terminalConnections = (terminalResult?.TERMINAL_SERVER_CONNECTIONS ??
 			[]) as TerminalConnection[];
+		operationsPoll = setInterval(() => void loadOperations(), 5_000);
 	});
 
 	onDestroy(() => {
 		resetLoginState();
 		clearQQCredentials();
+		if (operationsPoll) clearInterval(operationsPoll);
 	});
 </script>
 
@@ -850,6 +946,16 @@
 			)}
 	confirmLabel={bindingAction?.action === 'unblock' ? $i18n.t('Unblock') : $i18n.t('Block')}
 	on:confirm={confirmBindingAction}
+/>
+
+<ConfirmDialog
+	bind:show={showRebalanceConfirm}
+	title={$i18n.t('Apply bot shard rebalance?')}
+	message={$i18n.t(
+		'One bot connection will move now. Remaining moves stay pending for later runs.'
+	)}
+	confirmLabel={$i18n.t('Apply rebalance')}
+	on:confirm={applyRebalance}
 />
 
 <form
@@ -1280,43 +1386,138 @@
 				</div>
 			</AdminSettingSection>
 
-			<AdminSettingSection title={$i18n.t('Binding audit history')}>
+			<AdminSettingSection title={$i18n.t('Bot runtime status')}>
 				<div class="flex items-center justify-between gap-3">
 					<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
-						{$i18n.t('Review user-owned bot connection and binding events.')}
+						{operations
+							? $i18n.t('{{mode}} coordination · updated every 5 seconds', {
+									mode: coordinationModeLabel(operations.coordination_mode)
+								})
+							: $i18n.t('Loading gateway runtime status…')}
 					</div>
-					<button type="button" class={secondaryButtonClass} on:click={loadUserBotPolicy}
-						>{$i18n.t('Refresh')}</button
-					>
-				</div>
-				<input
-					class="mt-2 {inputClass}"
-					type="search"
-					bind:value={auditQuery}
-					placeholder={$i18n.t('Search audit history')}
-				/>
-				<div
-					class="mt-2 max-h-48 overflow-y-auto rounded-xl border border-gray-100/80 px-3 dark:border-white/[0.06]"
-				>
-					{#each filteredAudit as record (record.id)}
-						<div
-							class="border-b border-gray-100 py-2 text-[0.6875rem] last:border-b-0 dark:border-white/[0.05]"
+					<div class="flex gap-1.5">
+						<button
+							type="button"
+							class={secondaryButtonClass}
+							disabled={operationsBusy || operationsLoading}
+							on:click={previewRebalance}
 						>
-							<div class="flex justify-between gap-2">
-								<span class="font-medium text-gray-700 dark:text-gray-300"
-									>{auditActionTitle(record.action)}</span
-								><span class="text-gray-400"
-									>{record.channel ? channelTitle(record.channel) : '—'}</span
-								>
+							{$i18n.t('Preview rebalance')}
+						</button>
+						<button
+							type="button"
+							class={secondaryButtonClass}
+							disabled={operationsLoading}
+							on:click={() => loadOperations(true)}
+						>
+							{$i18n.t('Refresh')}
+						</button>
+					</div>
+				</div>
+
+				{#if operations === null}
+					<div class="flex h-20 items-center justify-center"><Spinner className="size-5" /></div>
+				{:else}
+					<div class="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
+						{#each operations.nodes as node (node.id)}
+							<div class="border border-gray-100/80 p-3 dark:border-white/[0.06]">
+								<div class="flex items-start justify-between gap-3">
+									<div class="min-w-0">
+										<div class="truncate font-mono text-xs text-gray-700 dark:text-gray-300">
+											{node.id}
+										</div>
+										<div class="mt-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+											{node.runtime
+												? node.runtime.draining
+													? $i18n.t('Draining')
+													: $i18n.t('Active')
+												: $i18n.t('Offline or unreachable')}
+											· {node.runtime?.shards.length ?? 0}
+											{$i18n.t('shards')}
+										</div>
+									</div>
+									<button
+										type="button"
+										class={secondaryButtonClass}
+										disabled={!node.runtime || operationsBusy}
+										on:click={() => setNodeDraining(node.id, !node.runtime?.draining)}
+									>
+										{node.runtime?.draining ? $i18n.t('Resume') : $i18n.t('Drain')}
+									</button>
+								</div>
 							</div>
-							<div class="mt-0.5 font-mono text-gray-400 dark:text-gray-600">
-								{record.user_id ?? '—'} · {record.account_id ?? '—'}
+						{/each}
+					</div>
+
+					<div class="mt-2 overflow-x-auto border border-gray-100/80 dark:border-white/[0.06]">
+						<table class="w-full min-w-[42rem] text-left text-[0.6875rem]">
+							<thead class="bg-gray-50/60 text-gray-400 dark:bg-white/[0.02] dark:text-gray-600">
+								<tr>
+									<th class="px-3 py-2 font-medium">{$i18n.t('Shard')}</th>
+									<th class="px-3 py-2 font-medium">{$i18n.t('Accounts')}</th>
+									<th class="px-3 py-2 font-medium">{$i18n.t('Process')}</th>
+									<th class="px-3 py-2 font-medium">{$i18n.t('Epoch')}</th>
+									<th class="px-3 py-2 font-medium">{$i18n.t('Restarts')}</th>
+									<th class="px-3 py-2 font-medium">{$i18n.t('Circuit')}</th>
+									<th class="px-3 py-2 font-medium"
+										><span class="sr-only">{$i18n.t('Actions')}</span></th
+									>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-gray-100 dark:divide-white/[0.05]">
+								{#each operations.shards as shard (shard.id)}
+									<tr>
+										<td class="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{shard.id}</td>
+										<td class="px-3 py-2 text-gray-500"
+											>{shard.runtime?.member_count ?? 0}/{shard.account_capacity}</td
+										>
+										<td class="px-3 py-2 text-gray-500"
+											>{shard.runtime?.running ? $i18n.t('Running') : $i18n.t('Stopped')}</td
+										>
+										<td class="px-3 py-2 font-mono text-gray-500"
+											>{shard.lease?.epoch ?? shard.runtime?.lease_epoch ?? '—'}</td
+										>
+										<td class="px-3 py-2 text-gray-500">{shard.runtime?.restart_count ?? 0}</td>
+										<td class="px-3 py-2 text-gray-500"
+											>{circuitStateLabel(shard.runtime?.circuit_state)}</td
+										>
+										<td class="px-3 py-2 text-right">
+											<button
+												type="button"
+												class="text-blue-600 hover:text-blue-800 disabled:opacity-40 dark:text-blue-400"
+												disabled={!shard.runtime || operationsBusy}
+												on:click={() => resetShardCircuit(shard.id)}
+											>
+												{$i18n.t('Reset')}
+											</button>
+										</td>
+									</tr>
+								{:else}
+									<tr
+										><td colspan="7" class="px-3 py-6 text-center text-gray-400"
+											>{$i18n.t('No active bot shards.')}</td
+										></tr
+									>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+
+					{#if rebalancePreview}
+						<div class="mt-2 border border-gray-100/80 px-3 py-2 dark:border-white/[0.06]">
+							<div class="text-xs font-medium text-gray-700 dark:text-gray-300">
+								{$i18n.t('Rebalance preview')} · {schedulerModeLabel(rebalancePreview.mode)}
+							</div>
+							<div class="mt-1 text-[0.6875rem] text-gray-500">
+								{rebalancePreview.plan.moves.length
+									? $i18n.t('{{count}} proposed moves', {
+											count: rebalancePreview.plan.moves.length
+										})
+									: $i18n.t('No moves proposed')}
 							</div>
 						</div>
-					{:else}<div class="py-4 text-xs text-gray-400 dark:text-gray-600">
-							{$i18n.t('No audit records found.')}
-						</div>{/each}
-				</div>
+					{/if}
+				{/if}
 			</AdminSettingSection>
 
 			<AdminSettingSection title={$i18n.t('Tools')}>

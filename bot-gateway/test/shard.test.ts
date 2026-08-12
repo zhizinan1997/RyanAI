@@ -4,7 +4,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { OpenClawAdapter, type ShardHostController } from '../src/adapters/openclaw.js';
-import { deriveShardBridgeSecret } from '../src/config.js';
+import { deriveLeaseBridgeSecret, deriveShardBridgeSecret, type GatewayConfig } from '../src/config.js';
+import type { GatewayControlPlaneClient } from '../src/control-plane-client.js';
+import type { GatewayCoordinator, ShardLease } from '../src/coordination.js';
 import { withOpenClawEnv } from '../src/openclaw/env-mutex.js';
 import {
 	OpenClawHost,
@@ -14,7 +16,13 @@ import {
 } from '../src/openclaw/host.js';
 import { normalizeMessageHook } from '../src/openclaw/normalize.js';
 import type { PendingOfficialLogin, WeixinLoginCredential } from '../src/openclaw/official-login.js';
-import { assignShard, migrateIsolatedWeixinState, shardIdFor } from '../src/openclaw/shard-manager.js';
+import {
+	assignShard,
+	collectAccountCheckpoint,
+	migrateIsolatedWeixinState,
+	restoreAccountCheckpoint,
+	shardIdFor
+} from '../src/openclaw/shard-manager.js';
 import { createRuntime } from '../src/runtime.js';
 import { buildEventMultipart } from '../src/ryanai-client.js';
 import { signRequest } from '../src/security/hmac.js';
@@ -92,9 +100,12 @@ class FakeShardHost implements ShardHostController {
 	}
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+async function waitFor(
+	predicate: () => boolean | Promise<boolean>,
+	timeoutMs = 3_000
+): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
-	while (!predicate()) {
+	while (!(await predicate())) {
 		if (Date.now() >= deadline) throw new Error('condition_timeout');
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
@@ -106,22 +117,30 @@ interface SharedFixture {
 	vault: CredentialVault;
 	adapter: OpenClawAdapter;
 	shardHosts: FakeShardHost[];
+	hostConfigs: GatewayConfig[];
 }
 
 async function sharedFixture(options: {
 	capacity?: number;
+	shardDebounceMs?: number;
 	connections: Array<{
 		id: string;
 		channel: Channel;
 		credentials?: Record<string, unknown>;
+		shardId?: string;
+		assignmentGeneration?: number;
 	}>;
 	startWeixinLogin?: () => Promise<PendingOfficialLogin<WeixinLoginCredential>>;
+	configOverrides?: Partial<GatewayConfig>;
+	coordinator?: GatewayCoordinator;
+	controlPlane?: GatewayControlPlaneClient;
 }): Promise<SharedFixture> {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir, {
 		adapterMode: 'openclaw',
 		openClawTopology: 'shared',
-		openClawShardCapacity: options.capacity ?? 12
+		openClawShardCapacity: options.capacity ?? 12,
+		...options.configOverrides
 	});
 	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
 	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
@@ -133,20 +152,60 @@ async function sharedFixture(options: {
 			ownerUserId: `owner-${connection.id}`,
 			enabled: true,
 			status: 'logged_out',
+			credentialsConfigured: Boolean(connection.credentials),
+			...(connection.shardId ? { shardId: connection.shardId } : {}),
+			...(connection.assignmentGeneration !== undefined
+				? { assignmentGeneration: connection.assignmentGeneration }
+				: {}),
 			updatedAt: new Date().toISOString()
 		});
 		if (connection.credentials) await vault.put(connection.id, connection.credentials);
 	}
 	const shardHosts: FakeShardHost[] = [];
+	const hostConfigs: GatewayConfig[] = [];
 	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), {
-		createShardHost: () => {
+		createShardHost: (hostConfig) => {
 			const host = new FakeShardHost();
 			shardHosts.push(host);
+			hostConfigs.push(hostConfig);
 			return host;
 		},
-		...(options.startWeixinLogin ? { startWeixinLogin: options.startWeixinLogin } : {})
+		shardDebounceMs: options.shardDebounceMs ?? 0,
+		shardMaxWaitMs: options.shardDebounceMs ?? 0,
+		...(options.startWeixinLogin ? { startWeixinLogin: options.startWeixinLogin } : {}),
+		...(options.coordinator ? { coordinator: options.coordinator } : {}),
+		...(options.controlPlane ? { controlPlane: options.controlPlane } : {})
 	});
-	return { dataDir, state, vault, adapter, shardHosts };
+	return { dataDir, state, vault, adapter, shardHosts, hostConfigs };
+}
+
+class FakeRedisCoordinator implements GatewayCoordinator {
+	readonly mode = 'redis' as const;
+	readonly events: string[] = [];
+	private epoch = 0;
+	async start(): Promise<void> {}
+	async stop(): Promise<void> {}
+	async acquire(shardId: string, assignmentGeneration: number): Promise<ShardLease> {
+		this.events.push(`acquire:${shardId}:${assignmentGeneration}`);
+		this.epoch += 1;
+		return {
+			shardId,
+			nodeId: 'node-a',
+			leaseId: `lease-${this.epoch}`,
+			epoch: this.epoch,
+			assignmentGeneration,
+			expiresAt: Date.now() + 45_000,
+			value: `lease-${this.epoch}`
+		};
+	}
+	async renew(): Promise<boolean> { return true; }
+	async release(lease: ShardLease): Promise<boolean> {
+		this.events.push(`release:${lease.shardId}:${lease.epoch}`);
+		return true;
+	}
+	async current(): Promise<ShardLease | undefined> { return undefined; }
+	async setDraining(): Promise<void> {}
+	setSnapshotProvider(): void {}
 }
 
 test('shard assignment fills a shard to capacity before opening the next one', () => {
@@ -195,8 +254,8 @@ test('two WeChat accounts restore onto one shared shard process with account rou
 			host.members.map((member) => member.connectionId).sort(),
 			['bot-wechat-u1', 'bot-wechat-u2']
 		);
-		const first = fixture.state.getConnection('bot-wechat-u1');
-		const second = fixture.state.getConnection('bot-wechat-u2');
+		const first = await fixture.state.getConnection('bot-wechat-u1');
+		const second = await fixture.state.getConnection('bot-wechat-u2');
 		assert.equal(first?.shardId, 'wechat-shard-000');
 		assert.equal(second?.shardId, 'wechat-shard-000');
 		assert.equal(first?.accountKey, await normalizeWeixinAccountKey('wx-alpha'));
@@ -222,7 +281,11 @@ test('shard capacity overflow opens a second shard', async () => {
 	try {
 		assert.equal(fixture.shardHosts.length, 2);
 		const shardIds = new Set(
-			['bot-wechat-u1', 'bot-wechat-u2'].map((id) => fixture.state.getConnection(id)?.shardId)
+			await Promise.all(
+				['bot-wechat-u1', 'bot-wechat-u2'].map(async (id) =>
+					(await fixture.state.getConnection(id))?.shardId
+				)
+			)
 		);
 		assert.deepEqual([...shardIds].sort(), ['wechat-shard-000', 'wechat-shard-001']);
 	} finally {
@@ -245,7 +308,7 @@ test('QQ shard members are keyed by connection id so events carry the owning con
 		const byConnection = new Map(host.members.map((member) => [member.connectionId, member]));
 		assert.equal(byConnection.get('bot-qq-u1')?.qq?.appId, 'app-1');
 		assert.equal(byConnection.get('bot-qq-u2')?.qq?.appId, 'app-2');
-		assert.equal(fixture.state.getConnection('bot-qq-u1')?.accountKey, 'bot-qq-u1');
+		assert.equal((await fixture.state.getConnection('bot-qq-u1'))?.accountKey, 'bot-qq-u1');
 	} finally {
 		await fixture.adapter.stop();
 		await rm(fixture.dataDir, { recursive: true, force: true });
@@ -272,7 +335,7 @@ test('logging out one member keeps the sibling account served and frees the slot
 			['bot-wechat-u2']
 		);
 		assert.equal(host.running, true);
-		assert.equal(fixture.state.getConnection('bot-wechat-u2')?.status, 'connected');
+		assert.equal((await fixture.state.getConnection('bot-wechat-u2'))?.status, 'connected');
 	} finally {
 		await fixture.adapter.stop();
 		await rm(fixture.dataDir, { recursive: true, force: true });
@@ -290,7 +353,7 @@ test('deleting one member resyncs the shard without stopping it for the sibling'
 	try {
 		const host = fixture.shardHosts[0]!;
 		await fixture.adapter.deleteConnection('bot-wechat-u1');
-		assert.equal(fixture.state.getConnection('bot-wechat-u1'), undefined);
+		assert.equal(await fixture.state.getConnection('bot-wechat-u1'), undefined);
 		assert.deepEqual(
 			host.members.map((member) => member.connectionId),
 			['bot-wechat-u2']
@@ -316,7 +379,7 @@ test('duplicate stored credentials restore only one member and stay quarantined'
 			host.members.map((member) => member.connectionId),
 			['bot-wechat-u1']
 		);
-		assert.equal(fixture.state.getConnection('bot-wechat-u2')?.status, 'unavailable');
+		assert.equal((await fixture.state.getConnection('bot-wechat-u2'))?.status, 'unavailable');
 		// The supervisor must not resurrect the quarantined duplicate.
 		(fixture.adapter as unknown as { superviseRuntimes(): void }).superviseRuntimes();
 		await new Promise((resolve) => setTimeout(resolve, 20));
@@ -324,7 +387,7 @@ test('duplicate stored credentials restore only one member and stay quarantined'
 			host.members.map((member) => member.connectionId),
 			['bot-wechat-u1']
 		);
-		assert.equal(fixture.state.getConnection('bot-wechat-u2')?.status, 'unavailable');
+		assert.equal((await fixture.state.getConnection('bot-wechat-u2'))?.status, 'unavailable');
 	} finally {
 		await fixture.adapter.stop();
 		await rm(fixture.dataDir, { recursive: true, force: true });
@@ -357,16 +420,16 @@ test('a bot account already bound to another connection is rejected at QR comple
 		assert.equal(awaiting.status, 'awaiting_scan');
 		resolveCredential({ accountId: 'wx-alpha', botToken: 'stolen-token' });
 		await waitFor(
-			() => fixture.state.getConnection('bot-wechat-u2')?.status === 'logged_out'
+			async () => (await fixture.state.getConnection('bot-wechat-u2'))?.status === 'logged_out'
 		);
 		assert.match(
-			fixture.state.getConnection('bot-wechat-u2')?.detail || '',
+			(await fixture.state.getConnection('bot-wechat-u2'))?.detail || '',
 			/already bound/
 		);
 		assert.equal(await fixture.vault.get('bot-wechat-u2'), undefined);
 		// The original binding keeps its account untouched.
 		assert.equal(
-			fixture.state.getConnection('bot-wechat-u1')?.accountKey,
+			(await fixture.state.getConnection('bot-wechat-u1'))?.accountKey,
 			await normalizeWeixinAccountKey('wx-alpha')
 		);
 	} finally {
@@ -397,6 +460,37 @@ test('a duplicate QQ app id is rejected when saving credentials', async () => {
 	}
 });
 
+test('shared shard membership changes are debounced into one restart', async () => {
+	const fixture = await sharedFixture({
+		shardDebounceMs: 25,
+		connections: [
+			{ id: 'bot-qq-u1', channel: 'qq', credentials: { app_id: 'app-1', app_secret: 'secret-1' } },
+			{ id: 'bot-qq-u2', channel: 'qq' },
+			{ id: 'bot-qq-u3', channel: 'qq' }
+		]
+	});
+	await fixture.adapter.start();
+	try {
+		const host = fixture.shardHosts[0]!;
+		await Promise.all([
+			fixture.adapter.login('bot-qq-u2', {
+				credentials: { app_id: 'app-2', app_secret: 'secret-2' }
+			}),
+			fixture.adapter.login('bot-qq-u3', {
+				credentials: { app_id: 'app-3', app_secret: 'secret-3' }
+			})
+		]);
+		assert.equal(host.restartCount, 1);
+		assert.deepEqual(
+			host.members.map((member) => member.connectionId).sort(),
+			['bot-qq-u1', 'bot-qq-u2', 'bot-qq-u3']
+		);
+	} finally {
+		await fixture.adapter.stop();
+		await rm(fixture.dataDir, { recursive: true, force: true });
+	}
+});
+
 test('the supervisor restarts a crashed shard and only its members degrade', async () => {
 	const fixture = await sharedFixture({
 		connections: [
@@ -413,9 +507,112 @@ test('the supervisor restarts a crashed shard and only its members degrade', asy
 
 		(fixture.adapter as unknown as { superviseRuntimes(): void }).superviseRuntimes();
 		await waitFor(() => wechatShard.running);
-		await waitFor(() => fixture.state.getConnection('bot-wechat-u1')?.status === 'connected');
+		await waitFor(
+			async () => (await fixture.state.getConnection('bot-wechat-u1'))?.status === 'connected'
+		);
 		assert.equal(qqShard.running, true);
-		assert.equal(fixture.state.getConnection('bot-qq-u1')?.status, 'connected');
+		assert.equal((await fixture.state.getConnection('bot-qq-u1'))?.status, 'connected');
+	} finally {
+		await fixture.adapter.stop();
+		await rm(fixture.dataDir, { recursive: true, force: true });
+	}
+});
+
+test('desired-state reconciliation stops a shard after its final member is removed', async () => {
+	const fixture = await sharedFixture({
+		connections: [
+			{ id: 'bot-qq-u1', channel: 'qq', credentials: { app_id: 'app-1', app_secret: 'secret-1' } }
+		]
+	});
+	await fixture.adapter.start();
+	try {
+		const host = fixture.shardHosts[0]!;
+		assert.equal(host.running, true);
+		await fixture.state.deleteConnection('bot-qq-u1');
+		await fixture.adapter.reconcile();
+		assert.equal(host.running, false);
+		assert.deepEqual(host.members.map((member) => member.connectionId), ['bot-qq-u1']);
+	} finally {
+		await fixture.adapter.stop();
+		await rm(fixture.dataDir, { recursive: true, force: true });
+	}
+});
+
+test('Redis mode acquires the shard lease before fetching authoritative credentials', async () => {
+	const coordinator = new FakeRedisCoordinator();
+	const events = coordinator.events;
+	const controlPlane = {
+		async fetchCredential(connectionId: string, vault: CredentialVault) {
+			events.push(`credential:${connectionId}`);
+			const credentials = { app_id: 'fresh-app', app_secret: 'fresh-secret' };
+			await vault.put(connectionId, credentials);
+			return credentials;
+		}
+	} as unknown as GatewayControlPlaneClient;
+	const fixture = await sharedFixture({
+		connections: [
+			{
+				id: 'bot-qq-u1',
+				channel: 'qq',
+				credentials: { app_id: 'stale-app', app_secret: 'stale-secret' },
+				shardId: 'qq-shard-000'
+			}
+		],
+		configOverrides: { coordinationMode: 'redis', nodeId: 'node-a' },
+		coordinator,
+		controlPlane
+	});
+	await fixture.adapter.start();
+	try {
+		assert.deepEqual(events.slice(0, 2), [
+			'acquire:qq-shard-000:0',
+			'credential:bot-qq-u1'
+		]);
+		assert.equal(fixture.shardHosts[0]!.members[0]!.qq?.appId, 'fresh-app');
+	} finally {
+		await fixture.adapter.stop();
+		await rm(fixture.dataDir, { recursive: true, force: true });
+	}
+});
+
+test('a new assignment generation recreates the shard host with a new lease epoch', async () => {
+	const coordinator = new FakeRedisCoordinator();
+	const controlPlane = {
+		async fetchCredential(connectionId: string, vault: CredentialVault) {
+			const credentials = { app_id: 'app-1', app_secret: 'secret-1' };
+			await vault.put(connectionId, credentials);
+			return credentials;
+		}
+	} as unknown as GatewayControlPlaneClient;
+	const fixture = await sharedFixture({
+		connections: [
+			{
+				id: 'bot-qq-u1',
+				channel: 'qq',
+				credentials: { app_id: 'app-1', app_secret: 'secret-1' },
+				shardId: 'qq-shard-000'
+			}
+		],
+		configOverrides: { coordinationMode: 'redis', nodeId: 'node-a' },
+		coordinator,
+		controlPlane
+	});
+	await fixture.adapter.start();
+	try {
+		const first = await fixture.state.getConnection('bot-qq-u1');
+		assert.ok(first);
+		await fixture.state.upsertConnection({ ...first, assignmentGeneration: 1 });
+		await fixture.adapter.reconcile();
+
+		assert.equal(fixture.shardHosts.length, 2);
+		assert.equal(fixture.shardHosts[0]!.running, false);
+		assert.equal(fixture.shardHosts[1]!.running, true);
+		assert.equal(fixture.hostConfigs[0]!.openClawLeaseEpoch, 1);
+		assert.equal(fixture.hostConfigs[1]!.openClawLeaseEpoch, 2);
+		assert.equal(fixture.hostConfigs[1]!.openClawAssignmentGeneration, 1);
+		assert.deepEqual(coordinator.events.filter((event) => event.startsWith('release:')), [
+			'release:qq-shard-000:1'
+		]);
 	} finally {
 		await fixture.adapter.stop();
 		await rm(fixture.dataDir, { recursive: true, force: true });
@@ -631,12 +828,46 @@ test('a shard host writes the multi-account QQ config and shard child environmen
 	const env = internals.childEnvironment();
 	assert.equal(env.BOT_GATEWAY_OPENCLAW_SHARD_ID, 'qq-shard-000');
 	assert.equal(env.BOT_GATEWAY_OPENCLAW_CONNECTION_ID, undefined);
+	assert.equal(env.BOT_GATEWAY_NODE_ID, undefined);
+	assert.equal(env.BOT_GATEWAY_LEASE_EPOCH, undefined);
+	assert.equal(env.BOT_GATEWAY_ASSIGNMENT_GENERATION, undefined);
 	assert.equal(env.QQBOT_APP_ID, undefined);
 	assert.equal(env.QQBOT_CLIENT_SECRET, undefined);
 	assert.equal(
 		env.BOT_GATEWAY_HMAC_SECRET,
 		deriveShardBridgeSecret(config.hmacSecret, 'qq-shard-000')
 	);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('a Redis shard child uses the fenced lease bridge secret', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, {
+		adapterMode: 'openclaw',
+		coordinationMode: 'redis',
+		openClawNodeId: 'node-1',
+		openClawLeaseEpoch: 7,
+		openClawAssignmentGeneration: 3
+	});
+	const host = new OpenClawHost(config, quietLogger());
+	const internals = host as unknown as {
+		shard?: { shardId: string; channel: Channel; members: OpenClawShardMember[] };
+		childEnvironment(): NodeJS.ProcessEnv;
+	};
+	internals.shard = {
+		shardId: 'qq-shard-000',
+		channel: 'qq',
+		members: [{ connectionId: 'bot-qq-u1', qq: { appId: 'app-1', appSecret: 'secret-1' } }]
+	};
+
+	const env = internals.childEnvironment();
+	assert.equal(
+		env.BOT_GATEWAY_HMAC_SECRET,
+		deriveLeaseBridgeSecret(config.hmacSecret, 'qq-shard-000', 'node-1', 7)
+	);
+	assert.equal(env.BOT_GATEWAY_NODE_ID, 'node-1');
+	assert.equal(env.BOT_GATEWAY_LEASE_EPOCH, '7');
+	assert.equal(env.BOT_GATEWAY_ASSIGNMENT_GENERATION, '3');
 	await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -717,6 +948,41 @@ test('isolated WeChat account state migrates into the shard tree without clobber
 			'utf8'
 		),
 		'["friend"]'
+	);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('account checkpoints include only the per-account sync whitelist and restore safely', async () => {
+	const dataDir = await tempDataDir();
+	const source = path.join(dataDir, 'source');
+	const target = path.join(dataDir, 'target');
+	await mkdir(path.join(source, 'openclaw-weixin', 'accounts'), { recursive: true });
+	await mkdir(path.join(source, 'credentials'), { recursive: true });
+	await writeFile(path.join(source, 'openclaw-weixin', 'accounts', 'wx-alpha.sync.json'), '{"cursor":42}');
+	await writeFile(path.join(source, 'openclaw-weixin', 'accounts', 'wx-alpha.json'), '{"token":"secret"}');
+	await writeFile(path.join(source, 'credentials', 'openclaw-weixin-wx-alpha-allowFrom.json'), '["friend"]');
+
+	const checkpoint = await collectAccountCheckpoint(source, 'wx-alpha');
+	assert.ok(checkpoint);
+	assert.equal(checkpoint.sha256.length, 64);
+	assert.equal(checkpoint.payload.includes(Buffer.from('secret')), false);
+	await restoreAccountCheckpoint(target, 'wx-alpha', checkpoint.payload);
+	assert.equal(
+		await readFile(path.join(target, 'openclaw-weixin', 'accounts', 'wx-alpha.sync.json'), 'utf8'),
+		'{"cursor":42}'
+	);
+	assert.equal(
+		await readFile(path.join(target, 'credentials', 'openclaw-weixin-wx-alpha-allowFrom.json'), 'utf8'),
+		'["friend"]'
+	);
+	await assert.rejects(readFile(path.join(target, 'openclaw-weixin', 'accounts', 'wx-alpha.json')));
+	await assert.rejects(
+		restoreAccountCheckpoint(
+			target,
+			'wx-alpha',
+			Buffer.from(JSON.stringify({ version: 1, files: [{ path: '../escape', base64: 'YQ==' }] }))
+		),
+		/invalid_account_checkpoint_path/
 	);
 	await rm(dataDir, { recursive: true, force: true });
 });

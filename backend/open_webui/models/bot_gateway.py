@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Literal
 from uuid import uuid4
 
 from open_webui.internal.db import Base, get_async_db_context
 from open_webui.models.users import User
-from pydantic import BaseModel, ConfigDict, Field
+from open_webui.utils.bot_gateway_crypto import (
+    BotGatewayCredentialError,
+    credential_account_digest,
+    decrypt_bot_checkpoint,
+    decrypt_bot_credentials,
+    encrypt_bot_checkpoint,
+    encrypt_bot_credentials,
+    extract_account_key,
+)
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -54,6 +64,11 @@ class BotGatewayConnection(Base):
     last_seen_at = Column(BigInteger, nullable=True)
     created_by = Column(String, ForeignKey('user.id', ondelete='SET NULL'), nullable=True)
     owner_user_id = Column(String, ForeignKey('user.id', ondelete='CASCADE'), nullable=True)
+    shard_id = Column(String, nullable=True)
+    account_key = Column(Text, nullable=True)
+    assignment_generation = Column(Integer, nullable=True, default=0)
+    last_runtime_node_id = Column(String, nullable=True)
+    last_runtime_at = Column(BigInteger, nullable=True)
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
 
@@ -265,6 +280,92 @@ class BotGatewayBindingHistory(Base):
     )
 
 
+class BotGatewayCredential(Base):
+    """Encrypted per-connection credentials; ciphertext only, decrypted in-process."""
+
+    __tablename__ = 'bot_gateway_credential'
+
+    id = Column(String, primary_key=True, unique=True)
+    connection_id = Column(
+        String,
+        ForeignKey('bot_gateway_connection.id', ondelete='CASCADE'),
+        nullable=False,
+        unique=True,
+    )
+    channel = Column(String, nullable=False)
+    account_digest = Column(String(64), nullable=False)
+    envelope = Column(Text, nullable=False)
+    key_version = Column(Integer, nullable=False, default=1)
+    schema_version = Column(Integer, nullable=False, default=1)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('account_digest', name='uq_bot_gateway_credential_account_digest'),
+        Index('ix_bot_gateway_credential_channel', 'channel'),
+    )
+
+
+class BotGatewayShard(Base):
+    """Logical shard metadata for gateway account distribution."""
+
+    __tablename__ = 'bot_gateway_shard'
+
+    id = Column(String, primary_key=True, unique=True)
+    channel = Column(String, nullable=False)
+    account_capacity = Column(Integer, nullable=False, default=12)
+    load_capacity = Column(Integer, nullable=False, default=12)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+
+
+class BotGatewayNode(Base):
+    """Registered gateway runtime node; single-node deployments keep one row."""
+
+    __tablename__ = 'bot_gateway_node'
+
+    id = Column(String, primary_key=True, unique=True)
+    advertise_url = Column(Text, nullable=True)
+    capabilities = Column(JSON, nullable=True)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    last_seen_at = Column(BigInteger, nullable=True)
+
+
+class BotGatewayAccountCheckpoint(Base):
+    """Latest known account state per connection, used for shard rebalancing."""
+
+    __tablename__ = 'bot_gateway_account_checkpoint'
+
+    connection_id = Column(
+        String,
+        ForeignKey('bot_gateway_connection.id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    payload = Column(Text, nullable=False)
+    payload_sha256 = Column(String(64), nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+
+
+class BotGatewayControlOperation(Base):
+    """Audit carrier for administrative gateway operations (drain, circuit reset, ...).
+
+    There is no generic audit table today (BotGatewayBindingHistory only covers
+    binding history), so this table doubles as the control-plane audit trail.
+    """
+
+    __tablename__ = 'bot_gateway_control_operation'
+
+    id = Column(String, primary_key=True, unique=True)
+    kind = Column(String, nullable=False)
+    payload = Column(JSON, nullable=True)
+    status = Column(String, nullable=False, default='pending')
+    actor_user_id = Column(String, ForeignKey('user.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
+    completed_at = Column(BigInteger, nullable=True)
+
+
 class BotGatewayConnectionModel(BaseModel):
     id: str
     channel: BotGatewayChannel
@@ -279,8 +380,18 @@ class BotGatewayConnectionModel(BaseModel):
     last_seen_at: int | None = None
     created_by: str | None = None
     owner_user_id: str | None = None
+    shard_id: str | None = None
+    account_key: str | None = None
+    assignment_generation: int = 0
+    last_runtime_node_id: str | None = None
+    last_runtime_at: int | None = None
     created_at: int
     updated_at: int
+
+    @field_validator('assignment_generation', mode='before')
+    @classmethod
+    def normalize_assignment_generation(cls, value):
+        return 0 if value is None else value
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -304,6 +415,65 @@ class BotGatewayBindingHistoryModel(BaseModel):
     actor_user_id: str | None = None
     metadata: dict[str, Any] | None = Field(default=None, validation_alias='metadata_json')
     created_at: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BotGatewayCredentialModel(BaseModel):
+    # The envelope (ciphertext) is deliberately absent: it never leaves the
+    # credential table through API models.
+    id: str
+    connection_id: str
+    channel: BotGatewayChannel
+    account_digest: str
+    key_version: int = 1
+    schema_version: int = 1
+    created_at: int
+    updated_at: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BotGatewayShardModel(BaseModel):
+    id: str
+    channel: BotGatewayChannel
+    account_capacity: int = 12
+    load_capacity: int = 12
+    created_at: int
+    updated_at: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BotGatewayNodeModel(BaseModel):
+    id: str
+    advertise_url: str | None = None
+    capabilities: dict[str, Any] | None = None
+    created_at: int
+    updated_at: int
+    last_seen_at: int | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BotGatewayAccountCheckpointModel(BaseModel):
+    connection_id: str
+    payload: str
+    payload_sha256: str
+    updated_at: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BotGatewayControlOperationModel(BaseModel):
+    id: str
+    kind: str
+    payload: dict[str, Any] | None = None
+    status: str = 'pending'
+    actor_user_id: str | None = None
+    created_at: int
+    updated_at: int
+    completed_at: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -413,6 +583,193 @@ def build_bot_gateway_session_key(
     return f'group:{conversation_id}:{sender_id}', conversation_id, sender_id
 
 
+class BotGatewayCredentialTable:
+    async def save_credential(
+        self,
+        db: AsyncSession | None,
+        connection_id: str,
+        channel: BotGatewayChannel,
+        credentials: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Encrypt and upsert one connection's credentials.
+
+        The account_digest unique constraint is the concurrency primitive: a
+        conflict from another connection raises BotGatewayBindingError with
+        code 'account_already_bound'; a conflict for the same connection is a
+        benign race that resolves into the update path.
+        """
+        digest = credential_account_digest(channel, extract_account_key(channel, credentials))
+        envelope = json.dumps(encrypt_bot_credentials(credentials, connection_id, channel))
+        now = int(time.time())
+        async with get_async_db_context(db) as session:
+            item = (
+                (
+                    await session.execute(
+                        select(BotGatewayCredential).where(BotGatewayCredential.connection_id == connection_id)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if item is not None:
+                item.envelope = envelope
+                item.channel = channel
+                item.account_digest = digest
+                item.updated_at = now
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    await session.rollback()
+                    await self._resolve_digest_conflict(session, connection_id, digest, envelope, channel, now)
+                return {'connection_id': connection_id, 'channel': channel, 'account_digest': digest}
+            session.add(
+                BotGatewayCredential(
+                    id=str(uuid4()),
+                    connection_id=connection_id,
+                    channel=channel,
+                    account_digest=digest,
+                    envelope=envelope,
+                    key_version=1,
+                    schema_version=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                await self._resolve_digest_conflict(session, connection_id, digest, envelope, channel, now)
+            return {'connection_id': connection_id, 'channel': channel, 'account_digest': digest}
+
+    async def _resolve_digest_conflict(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        digest: str,
+        envelope: str,
+        channel: BotGatewayChannel,
+        now: int,
+    ) -> None:
+        existing = (
+            (await session.execute(select(BotGatewayCredential).where(BotGatewayCredential.account_digest == digest)))
+            .scalars()
+            .first()
+        )
+        if existing is not None:
+            if existing.connection_id == connection_id:
+                existing.envelope = envelope
+                existing.channel = channel
+                existing.updated_at = now
+                await session.commit()
+                return
+            raise BotGatewayBindingError('account_already_bound')
+        # The conflict came from the connection_id unique constraint: another
+        # writer created the row for this same connection concurrently.
+        existing = (
+            (
+                await session.execute(
+                    select(BotGatewayCredential).where(BotGatewayCredential.connection_id == connection_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing is not None:
+            existing.envelope = envelope
+            existing.channel = channel
+            existing.account_digest = digest
+            existing.updated_at = now
+            await session.commit()
+            return
+        raise RuntimeError(f'credential upsert lost the race for connection {connection_id}')
+
+    async def get_credential(self, db: AsyncSession | None, connection_id: str) -> dict[str, Any] | None:
+        """Return decrypted credentials for internal gateway use only.
+
+        Never expose the return value through user-facing APIs.
+        """
+        async with get_async_db_context(db) as session:
+            item = (
+                (
+                    await session.execute(
+                        select(BotGatewayCredential).where(BotGatewayCredential.connection_id == connection_id)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if item is None:
+                return None
+            try:
+                envelope = json.loads(item.envelope)
+            except json.JSONDecodeError as exc:
+                raise BotGatewayCredentialError('stored credential envelope is corrupt') from exc
+            return decrypt_bot_credentials(envelope, connection_id, item.channel)
+
+    async def delete_credential(self, db: AsyncSession | None, connection_id: str) -> None:
+        async with get_async_db_context(db) as session:
+            await session.execute(
+                delete(BotGatewayCredential).where(BotGatewayCredential.connection_id == connection_id)
+            )
+            await session.commit()
+
+    async def list_credential_digests(self, db: AsyncSession | None = None) -> list[dict[str, str]]:
+        """Admin view of stored credentials: connection/channel/digest only, never plaintext."""
+        async with get_async_db_context(db) as session:
+            result = await session.execute(
+                select(
+                    BotGatewayCredential.connection_id,
+                    BotGatewayCredential.channel,
+                    BotGatewayCredential.account_digest,
+                )
+            )
+            return [
+                {'connection_id': connection_id, 'channel': channel, 'account_digest': digest}
+                for connection_id, channel, digest in result.all()
+            ]
+
+    async def connection_has_credential(self, db: AsyncSession | None, connection_id: str) -> bool:
+        async with get_async_db_context(db) as session:
+            item = await session.scalar(
+                select(BotGatewayCredential.id).where(BotGatewayCredential.connection_id == connection_id)
+            )
+            return item is not None
+
+
+class BotGatewayCheckpointTable:
+    async def save(self, db: AsyncSession | None, connection_id: str, payload: bytes, sha256: str) -> None:
+        envelope = json.dumps(encrypt_bot_checkpoint(payload, connection_id), separators=(',', ':'))
+        now = int(time.time())
+        async with get_async_db_context(db) as session:
+            item = await session.get(BotGatewayAccountCheckpoint, connection_id)
+            if item is None:
+                session.add(
+                    BotGatewayAccountCheckpoint(
+                        connection_id=connection_id,
+                        payload=envelope,
+                        payload_sha256=sha256,
+                        updated_at=now,
+                    )
+                )
+            else:
+                item.payload = envelope
+                item.payload_sha256 = sha256
+                item.updated_at = now
+            await session.commit()
+
+    async def get(self, db: AsyncSession | None, connection_id: str) -> tuple[bytes, str] | None:
+        async with get_async_db_context(db) as session:
+            item = await session.get(BotGatewayAccountCheckpoint, connection_id)
+            if item is None:
+                return None
+            try:
+                envelope = json.loads(item.payload)
+            except json.JSONDecodeError as exc:
+                raise BotGatewayCredentialError('stored checkpoint envelope is corrupt') from exc
+            return decrypt_bot_checkpoint(envelope, connection_id), item.payload_sha256
+
+
 class BotGatewayTable:
     def __init__(self) -> None:
         self._next_cleanup_at = 0
@@ -488,9 +845,17 @@ class BotGatewayTable:
             now = int(time.time())
             if item is None:
                 item = BotGatewayConnection(
-                    id=f'bot-{channel}-{user_id}', channel=channel, name=f'{channel} bot',
-                    enabled=enabled, status='logged_out', credentials_configured=False,
-                    config={}, created_by=user_id, owner_user_id=user_id, created_at=now, updated_at=now,
+                    id=f'bot-{channel}-{user_id}',
+                    channel=channel,
+                    name=f'{channel} bot',
+                    enabled=enabled,
+                    status='logged_out',
+                    credentials_configured=False,
+                    config={},
+                    created_by=user_id,
+                    owner_user_id=user_id,
+                    created_at=now,
+                    updated_at=now,
                 )
                 session.add(item)
             else:
@@ -526,7 +891,9 @@ class BotGatewayTable:
         async with get_async_db_context(db) as session:
             item = await session.get(BotGatewayUserSetting, user_id)
             if item is None:
-                item = BotGatewayUserSetting(user_id=user_id, default_model_id=default_model_id, updated_at=int(time.time()))
+                item = BotGatewayUserSetting(
+                    user_id=user_id, default_model_id=default_model_id, updated_at=int(time.time())
+                )
                 session.add(item)
             else:
                 item.default_model_id = default_model_id
@@ -535,19 +902,39 @@ class BotGatewayTable:
             await session.refresh(item)
             return BotGatewayUserSettingModel.model_validate(item)
 
-    async def add_binding_history(self, *, channel: BotGatewayChannel, action: str, user_id: str | None = None,
-                                  connection_id: str | None = None, external_user_id: str | None = None,
-                                  display_name: str | None = None, actor_user_id: str | None = None,
-                                  metadata: dict[str, Any] | None = None, db: AsyncSession | None = None) -> None:
+    async def add_binding_history(
+        self,
+        *,
+        channel: BotGatewayChannel,
+        action: str,
+        user_id: str | None = None,
+        connection_id: str | None = None,
+        external_user_id: str | None = None,
+        display_name: str | None = None,
+        actor_user_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        db: AsyncSession | None = None,
+    ) -> None:
         async with get_async_db_context(db) as session:
-            session.add(BotGatewayBindingHistory(
-                id=str(uuid4()), user_id=user_id, connection_id=connection_id, channel=channel,
-                external_user_id=external_user_id, display_name=display_name, action=action,
-                actor_user_id=actor_user_id, metadata_json=metadata, created_at=int(time.time()),
-            ))
+            session.add(
+                BotGatewayBindingHistory(
+                    id=str(uuid4()),
+                    user_id=user_id,
+                    connection_id=connection_id,
+                    channel=channel,
+                    external_user_id=external_user_id,
+                    display_name=display_name,
+                    action=action,
+                    actor_user_id=actor_user_id,
+                    metadata_json=metadata,
+                    created_at=int(time.time()),
+                )
+            )
             await session.commit()
 
-    async def list_binding_history(self, *, user_id: str | None = None, limit: int = 100, db: AsyncSession | None = None):
+    async def list_binding_history(
+        self, *, user_id: str | None = None, limit: int = 100, db: AsyncSession | None = None
+    ):
         async with get_async_db_context(db) as session:
             stmt = select(BotGatewayBindingHistory).order_by(desc(BotGatewayBindingHistory.created_at)).limit(limit)
             if user_id is not None:
@@ -585,6 +972,236 @@ class BotGatewayTable:
                 item.updated_at = int(time.time())
             await session.commit()
             return BotGatewayConnectionModel.model_validate(item)
+
+    async def update_connection_runtime_metrics(
+        self,
+        node_id: str,
+        metrics_by_connection: dict[str, dict[str, float | int]],
+        *,
+        load_capacity: int = 12,
+        db: AsyncSession | None = None,
+    ) -> int:
+        if not metrics_by_connection:
+            return 0
+        from open_webui.utils.bot_gateway_scheduler import (
+            calculate_load_units,
+            load_sample_from_config,
+        )
+
+        now = int(time.time())
+        minute = now // 60
+        async with get_async_db_context(db) as session:
+            result = await session.execute(select(BotGatewayConnection).where(BotGatewayConnection.enabled.is_(True)))
+            items = list(result.scalars().all())
+            by_id = {item.id: item for item in items}
+            for connection_id, metrics in metrics_by_connection.items():
+                item = by_id.get(connection_id)
+                if item is None:
+                    continue
+                config = dict(item.config) if isinstance(item.config, dict) else {}
+                config['runtime_metrics'] = metrics
+                config['account_error_streak'] = int(metrics.get('account_error_streak', 0) or 0)
+                item.config = config
+                item.last_runtime_node_id = node_id
+                item.last_runtime_at = now
+
+            shard_load: dict[str, int] = {}
+            for item in items:
+                if not item.shard_id:
+                    continue
+                config = item.config if isinstance(item.config, dict) else {}
+                shard_load[item.shard_id] = shard_load.get(item.shard_id, 0) + calculate_load_units(
+                    load_sample_from_config(config)
+                )
+            sticky_limit = int(load_capacity * 1.2)
+            low_limit = load_capacity * 0.4
+            updated = 0
+            for connection_id in metrics_by_connection:
+                item = by_id.get(connection_id)
+                if item is None:
+                    continue
+                config = dict(item.config) if isinstance(item.config, dict) else {}
+                if config.get('scheduler_window_minute') != minute:
+                    load = shard_load.get(item.shard_id or '', 0)
+                    config['overloaded_windows'] = (
+                        int(config.get('overloaded_windows', 0) or 0) + 1 if load > sticky_limit else 0
+                    )
+                    config['underloaded_windows'] = (
+                        int(config.get('underloaded_windows', 0) or 0) + 1 if load < low_limit else 0
+                    )
+                    config['scheduler_window_minute'] = minute
+                    item.config = config
+                item.updated_at = now
+                updated += 1
+            await session.commit()
+            return updated
+
+    async def set_connection_runtime(
+        self,
+        db: AsyncSession | None,
+        connection_id: str,
+        *,
+        shard_id: str | None = None,
+        account_key: str | None = None,
+        assignment_generation: int | None = None,
+        last_runtime_node_id: str | None = None,
+        last_runtime_at: int | None = None,
+    ) -> None:
+        """Update only the runtime-assignment fields the caller provides."""
+        async with get_async_db_context(db) as session:
+            item = await session.get(BotGatewayConnection, connection_id)
+            if item is None:
+                return
+            for field, value in (
+                ('shard_id', shard_id),
+                ('account_key', account_key),
+                ('assignment_generation', assignment_generation),
+                ('last_runtime_node_id', last_runtime_node_id),
+                ('last_runtime_at', last_runtime_at),
+            ):
+                if value is not None:
+                    setattr(item, field, value)
+            item.updated_at = int(time.time())
+            await session.commit()
+
+    async def apply_shard_assignments(
+        self,
+        assignments: dict[str, str],
+        *,
+        db: AsyncSession | None = None,
+    ) -> list[BotGatewayConnectionModel]:
+        """Atomically update assignments and bump fencing generations."""
+        if not assignments:
+            return []
+        async with get_async_db_context(db) as session:
+            result = await session.execute(select(BotGatewayConnection).where(BotGatewayConnection.id.in_(assignments)))
+            items = list(result.scalars().all())
+            now = int(time.time())
+            for item in items:
+                target = assignments[item.id]
+                if item.shard_id == target:
+                    continue
+                item.shard_id = target
+                item.assignment_generation = int(item.assignment_generation or 0) + 1
+                item.config = {
+                    **(item.config if isinstance(item.config, dict) else {}),
+                    'last_shard_move_at': now,
+                }
+                item.updated_at = now
+            await session.commit()
+            return [BotGatewayConnectionModel.model_validate(item) for item in items]
+
+    async def upsert_node(
+        self,
+        node_id: str,
+        *,
+        advertise_url: str | None = None,
+        capabilities: dict[str, Any] | None = None,
+        db: AsyncSession | None = None,
+    ) -> BotGatewayNodeModel:
+        """Register or refresh a gateway runtime node."""
+        now = int(time.time())
+        async with get_async_db_context(db) as session:
+            item = await session.get(BotGatewayNode, node_id)
+            if item is None:
+                item = BotGatewayNode(
+                    id=node_id,
+                    advertise_url=advertise_url,
+                    capabilities=capabilities,
+                    created_at=now,
+                    updated_at=now,
+                    last_seen_at=now,
+                )
+                session.add(item)
+            else:
+                if advertise_url is not None:
+                    item.advertise_url = advertise_url
+                if capabilities is not None:
+                    item.capabilities = capabilities
+                item.last_seen_at = now
+                item.updated_at = now
+            await session.commit()
+            await session.refresh(item)
+            return BotGatewayNodeModel.model_validate(item)
+
+    async def touch_node(
+        self,
+        node_id: str,
+        *,
+        advertise_url: str | None = None,
+        capabilities: dict[str, Any] | None = None,
+        db: AsyncSession | None = None,
+    ) -> bool:
+        """Refresh an existing node's last_seen_at; returns False for unknown nodes."""
+        now = int(time.time())
+        async with get_async_db_context(db) as session:
+            item = await session.get(BotGatewayNode, node_id)
+            if item is None:
+                return False
+            if advertise_url is not None:
+                item.advertise_url = advertise_url
+            if capabilities is not None:
+                item.capabilities = capabilities
+            item.last_seen_at = now
+            item.updated_at = now
+            await session.commit()
+            return True
+
+    async def list_nodes(self, db: AsyncSession | None = None) -> list[BotGatewayNodeModel]:
+        async with get_async_db_context(db) as session:
+            result = await session.execute(select(BotGatewayNode).order_by(BotGatewayNode.id))
+            return [BotGatewayNodeModel.model_validate(item) for item in result.scalars().all()]
+
+    async def list_shards(self, db: AsyncSession | None = None) -> list[BotGatewayShardModel]:
+        async with get_async_db_context(db) as session:
+            result = await session.execute(select(BotGatewayShard).order_by(BotGatewayShard.id))
+            return [BotGatewayShardModel.model_validate(item) for item in result.scalars().all()]
+
+    async def record_control_operation(
+        self,
+        *,
+        kind: str,
+        payload: dict[str, Any] | None = None,
+        actor_user_id: str | None = None,
+        status: str = 'completed',
+        db: AsyncSession | None = None,
+    ) -> BotGatewayControlOperationModel:
+        """Persist one administrative gateway operation (the control-plane audit trail)."""
+        now = int(time.time())
+        async with get_async_db_context(db) as session:
+            item = BotGatewayControlOperation(
+                id=str(uuid4()),
+                kind=kind,
+                payload=payload,
+                status=status,
+                actor_user_id=actor_user_id,
+                created_at=now,
+                updated_at=now,
+                completed_at=now if status == 'completed' else None,
+            )
+            session.add(item)
+            await session.commit()
+            await session.refresh(item)
+            return BotGatewayControlOperationModel.model_validate(item)
+
+    async def list_control_operations(
+        self,
+        *,
+        kind: str | None = None,
+        since: int | None = None,
+        limit: int = 100,
+        db: AsyncSession | None = None,
+    ) -> list[BotGatewayControlOperationModel]:
+        async with get_async_db_context(db) as session:
+            stmt = select(BotGatewayControlOperation)
+            if kind is not None:
+                stmt = stmt.where(BotGatewayControlOperation.kind == kind)
+            if since is not None:
+                stmt = stmt.where(BotGatewayControlOperation.created_at >= since)
+            result = await session.execute(
+                stmt.order_by(desc(BotGatewayControlOperation.created_at)).limit(max(1, min(limit, 1000)))
+            )
+            return [BotGatewayControlOperationModel.model_validate(item) for item in result.scalars().all()]
 
     async def create_binding_code(
         self,
@@ -657,9 +1274,7 @@ class BotGatewayTable:
             connection = (await session.execute(connection_stmt)).scalars().first()
             if connection is None or not connection.owner_user_id:
                 return None
-            trusted_external_user_id = str(
-                (connection.config or {}).get('trusted_external_user_id') or ''
-            ).strip()
+            trusted_external_user_id = str((connection.config or {}).get('trusted_external_user_id') or '').strip()
             if not trusted_external_user_id or trusted_external_user_id != external_user_id:
                 return None
             result = await session.execute(
@@ -672,31 +1287,47 @@ class BotGatewayTable:
             now = int(time.time())
             if item is None:
                 existing = (
-                    await session.execute(
-                        select(BotGatewayBinding).where(
-                            BotGatewayBinding.connection_id == connection_id,
-                            BotGatewayBinding.enabled.is_(True),
-                            BotGatewayBinding.blocked.is_(False),
+                    (
+                        await session.execute(
+                            select(BotGatewayBinding).where(
+                                BotGatewayBinding.connection_id == connection_id,
+                                BotGatewayBinding.enabled.is_(True),
+                                BotGatewayBinding.blocked.is_(False),
+                            )
                         )
                     )
-                ).scalars().first()
+                    .scalars()
+                    .first()
+                )
                 if existing is not None:
                     return None
                 item = BotGatewayBinding(
-                    id=str(uuid4()), connection_id=connection_id,
-                    user_id=connection.owner_user_id, external_user_id=external_user_id,
-                    display_name=display_name, enabled=True, blocked=False,
-                    created_at=now, updated_at=now,
+                    id=str(uuid4()),
+                    connection_id=connection_id,
+                    user_id=connection.owner_user_id,
+                    external_user_id=external_user_id,
+                    display_name=display_name,
+                    enabled=True,
+                    blocked=False,
+                    created_at=now,
+                    updated_at=now,
                 )
                 session.add(item)
                 await session.flush()
-                session.add(BotGatewayBindingHistory(
-                    id=str(uuid4()), user_id=connection.owner_user_id,
-                    connection_id=connection_id, channel=connection.channel,
-                    external_user_id=external_user_id, display_name=display_name,
-                    action='auto_bound', actor_user_id=connection.owner_user_id,
-                    metadata_json={'source': 'personal_connection'}, created_at=now,
-                ))
+                session.add(
+                    BotGatewayBindingHistory(
+                        id=str(uuid4()),
+                        user_id=connection.owner_user_id,
+                        connection_id=connection_id,
+                        channel=connection.channel,
+                        external_user_id=external_user_id,
+                        display_name=display_name,
+                        action='auto_bound',
+                        actor_user_id=connection.owner_user_id,
+                        metadata_json={'source': 'personal_connection'},
+                        created_at=now,
+                    )
+                )
             elif item.user_id != connection.owner_user_id or item.blocked or not item.enabled:
                 return None
             else:
@@ -797,9 +1428,7 @@ class BotGatewayTable:
                 raise BotGatewayBindingError('invalid_or_expired_code')
             await session.commit()
             await session.refresh(binding)
-            return BotGatewayBindingModel.model_validate(binding).model_copy(
-                update={'is_new_binding': is_new_binding}
-            )
+            return BotGatewayBindingModel.model_validate(binding).model_copy(update={'is_new_binding': is_new_binding})
 
     async def list_bindings(
         self,
@@ -1335,3 +1964,5 @@ class BotGatewayTable:
 
 
 BotGateway = BotGatewayTable()
+BotGatewayCredentials = BotGatewayCredentialTable()
+BotGatewayCheckpoints = BotGatewayCheckpointTable()

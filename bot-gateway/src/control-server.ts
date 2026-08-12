@@ -4,7 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { ChannelAdapter, MockInjectableAdapter } from './adapters/types.js';
 import { AdapterError } from './adapters/types.js';
 import type { GatewayConfig } from './config.js';
-import { deriveShardBridgeSecret } from './config.js';
+import { deriveLeaseBridgeSecret, deriveShardBridgeSecret } from './config.js';
+import type { GatewayCoordinator } from './coordination.js';
 import { EventValidationError } from './event.js';
 import type { RyanAiGateway } from './gateway.js';
 import { Logger, safeErrorFields } from './logger.js';
@@ -93,6 +94,17 @@ function sendJson(
 	response.end(body);
 }
 
+function sendText(response: ServerResponse, statusCode: number, body: string, contentType: string): void {
+	const bytes = Buffer.from(body, 'utf8');
+	response.writeHead(statusCode, {
+		'content-type': contentType,
+		'content-length': bytes.length,
+		'cache-control': 'no-store',
+		'x-content-type-options': 'nosniff'
+	});
+	response.end(bytes);
+}
+
 export class ControlServer {
 	private server: Server | undefined;
 	private readonly nonces: NonceReplayCache;
@@ -103,6 +115,7 @@ export class ControlServer {
 		private readonly state: GatewayStateStore,
 		private readonly vault: CredentialVault,
 		private readonly gateway: RyanAiGateway,
+		private readonly coordinator: GatewayCoordinator,
 		private readonly logger: Logger
 	) {
 		this.nonces = new NonceReplayCache(config.signatureMaxSkewSeconds * 2_000);
@@ -144,6 +157,11 @@ export class ControlServer {
 		let statusCode = 500;
 
 		try {
+			if (method === 'GET' && pathWithQuery === '/metrics') {
+				statusCode = 200;
+				sendText(response, 200, this.gateway.metrics.render(), 'text/plain; version=0.0.4; charset=utf-8');
+				return;
+			}
 			if (method === 'GET' && pathWithQuery === '/health') {
 				const health = this.adapter.health();
 				statusCode = health.ready ? 200 : 503;
@@ -162,7 +180,7 @@ export class ControlServer {
 			}
 
 			const body = await readBody(request, this.config.maxControlBodyBytes);
-			this.authenticate(request, method, pathWithQuery, body);
+			await this.authenticate(request, method, pathWithQuery, body);
 			const url = new URL(pathWithQuery, 'http://bot-gateway.internal');
 			statusCode = await this.route(
 				method,
@@ -206,12 +224,12 @@ export class ControlServer {
 		}
 	}
 
-	private authenticate(
+	private async authenticate(
 		request: IncomingMessage,
 		method: string,
 		pathWithQuery: string,
 		body: Buffer
-	): void {
+	): Promise<void> {
 		const isBridgePath = pathWithQuery.split('?', 1)[0] === this.config.bridgePath;
 		const shardId = isBridgePath
 			? headerValue(request, 'x-ryanai-shard-id')?.trim() || undefined
@@ -221,11 +239,29 @@ export class ControlServer {
 		}
 		// Selecting the shard-derived key by header is itself the authentication:
 		// a request signed with another shard's key cannot verify under this one.
-		const secret = isBridgePath
-			? shardId
-				? deriveShardBridgeSecret(this.config.hmacSecret, shardId)
-				: this.config.bridgeHmacSecret
-			: this.config.hmacSecret;
+		let secret = this.config.hmacSecret;
+		if (isBridgePath) {
+			if (!shardId) {
+				secret = this.config.bridgeHmacSecret;
+			} else if (this.coordinator.mode === 'redis') {
+				const nodeId = headerValue(request, 'x-ryanai-node-id')?.trim();
+				const epoch = Number(headerValue(request, 'x-ryanai-lease-epoch'));
+				const generation = Number(headerValue(request, 'x-ryanai-assignment-generation'));
+				if (!nodeId || !Number.isSafeInteger(epoch) || !Number.isSafeInteger(generation)) {
+					throw new HttpError(409, 'stale_fence');
+				}
+				const lease = await this.coordinator.current(shardId).catch(() => undefined);
+				if (
+					!lease || lease.nodeId !== nodeId || lease.epoch !== epoch ||
+					lease.assignmentGeneration !== generation
+				) {
+					throw new HttpError(409, 'stale_fence');
+				}
+				secret = deriveLeaseBridgeSecret(this.config.hmacSecret, shardId, nodeId, epoch);
+			} else {
+				secret = deriveShardBridgeSecret(this.config.hmacSecret, shardId);
+			}
+		}
 		const verification = verifyRequest({
 			secret,
 			method,
@@ -251,6 +287,36 @@ export class ControlServer {
 		eventIdHeader?: string,
 		shardIdHeader?: string
 	): Promise<number> {
+		if (method === 'GET' && url.pathname === '/v1/operations') {
+			const snapshot = this.adapter.operationsSnapshot
+				? await this.adapter.operationsSnapshot()
+				: { node_id: this.config.nodeId, shards: [] };
+			sendJson(response, 200, { version: '1.0', ...snapshot }, requestId);
+			return 200;
+		}
+
+		if (method === 'POST' && url.pathname === '/v1/operations/drain') {
+			if (!this.adapter.setDraining) throw new HttpError(409, 'operation_not_supported');
+			await this.adapter.setDraining(true);
+			sendJson(response, 200, { version: '1.0', drained: true, node_id: this.config.nodeId }, requestId);
+			return 200;
+		}
+
+		if (method === 'POST' && url.pathname === '/v1/operations/resume') {
+			if (!this.adapter.setDraining) throw new HttpError(409, 'operation_not_supported');
+			await this.adapter.setDraining(false);
+			sendJson(response, 200, { version: '1.0', drained: false, node_id: this.config.nodeId }, requestId);
+			return 200;
+		}
+
+		const circuitMatch = url.pathname.match(/^\/v1\/operations\/connections\/([^/]+)\/circuit\/reset$/);
+		if (method === 'POST' && circuitMatch) {
+			if (!this.adapter.resetCircuit) throw new HttpError(409, 'operation_not_supported');
+			await this.adapter.resetCircuit(decodeSegment(circuitMatch[1]!));
+			sendJson(response, 200, { version: '1.0', reset: true }, requestId);
+			return 200;
+		}
+
 		if (method === 'GET' && url.pathname === '/v1/connections') {
 			const ownerUserId = url.searchParams.get('owner_user_id') || url.searchParams.get('user_id') || undefined;
 			const channel = url.searchParams.get('channel') || undefined;
@@ -289,28 +355,40 @@ export class ControlServer {
 				throw new HttpError(400, 'event_id_mismatch');
 			}
 			let connection: ConnectionSnapshot | undefined;
-			if (event.shardId || shardIdHeader) {
+				if (event.shardId || shardIdHeader) {
 				// Shared-shard events: the shard id verified by the HMAC key selection
 				// must match the event's claim, and the account→connection mapping is
 				// resolved here, never trusted from the shard process.
-				if (!event.shardId || event.shardId !== shardIdHeader || !event.accountKey) {
+					if (!event.shardId || event.shardId !== shardIdHeader || !event.accountKey) {
 					throw new HttpError(400, 'shard_event_mismatch');
-				}
-				connection = this.state
-					.listConnections()
-					.find(
-						(entry) =>
-							entry.channel === event.channel &&
-							entry.accountKey === event.accountKey &&
-							entry.shardId === event.shardId
-					);
-				if (connection) {
-					event.connectionId = connection.id;
-					delete event.accountKey;
-					delete event.shardId;
+					}
+					if (
+						this.coordinator.mode === 'redis' &&
+						(!event.nodeId || event.leaseEpoch === undefined ||
+							event.assignmentGeneration === undefined)
+					) throw new HttpError(409, 'stale_fence');
+					connection = (await this.state.listConnections()).find(
+					(entry) =>
+						entry.channel === event.channel &&
+						entry.accountKey === event.accountKey &&
+						entry.shardId === event.shardId
+				);
+					if (connection) {
+						if (
+							this.coordinator.mode === 'redis' &&
+							(connection.assignmentGeneration ?? 0) !== event.assignmentGeneration
+						) throw new HttpError(409, 'stale_fence');
+						event.connectionId = connection.id;
+						delete event.accountKey;
+						if (this.coordinator.mode === 'single') {
+							delete event.shardId;
+							delete event.nodeId;
+							delete event.leaseEpoch;
+							delete event.assignmentGeneration;
+						}
 				}
 			} else {
-				connection = this.state.getConnection(event.connectionId);
+				connection = await this.state.getConnection(event.connectionId);
 			}
 			const reply =
 				!connection || !connection.enabled
@@ -414,7 +492,7 @@ export class ControlServer {
 		}
 
 		if (suffix === 'groups' && method === 'GET') {
-			const groups = this.state.listGroups({ connectionId });
+			const groups = await this.state.listGroups({ connectionId });
 			sendJson(response, 200, { version: '1.0', groups }, requestId);
 			return 200;
 		}

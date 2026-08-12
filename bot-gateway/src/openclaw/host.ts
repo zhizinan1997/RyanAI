@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import type { GatewayConfig } from '../config.js';
-import { deriveShardBridgeSecret } from '../config.js';
+import { deriveLeaseBridgeSecret, deriveShardBridgeSecret } from '../config.js';
 import { Logger, safeErrorFields } from '../logger.js';
 import type { Channel } from '../types.js';
 import { withOpenClawEnv } from './env-mutex.js';
@@ -217,6 +217,19 @@ export async function normalizeWeixinAccountKey(value: string): Promise<string> 
 	return accountIds.normalizeAccountId(value);
 }
 
+export interface OpenClawExitEvent {
+	pid?: number;
+	exitCode: number | null;
+	signal: NodeJS.Signals | null;
+	runtimeMs: number;
+	expected: boolean;
+}
+
+export interface OpenClawProcessSnapshot {
+	pid?: number;
+	rssBytes?: number;
+}
+
 export class OpenClawHost {
 	private child: ChildProcessByStdio<null, Readable, Readable> | undefined;
 	private packageRoots: Record<string, PackageInfo> | undefined;
@@ -225,6 +238,7 @@ export class OpenClawHost {
 	private shard: ShardAssignment | undefined;
 	private detail = 'OpenClaw host has not started';
 	private commandTail: Promise<void> = Promise.resolve();
+	private exitHandler?: (event: OpenClawExitEvent) => void;
 
 	readonly configPath: string;
 	private readonly tempDir: string;
@@ -243,6 +257,21 @@ export class OpenClawHost {
 
 	healthDetail(): string {
 		return this.detail;
+	}
+
+	async processSnapshot(): Promise<OpenClawProcessSnapshot> {
+		const pid = this.child?.pid;
+		if (!pid) return {};
+		try {
+			const residentPages = Number((await readFile(`/proc/${pid}/statm`, 'utf8')).trim().split(/\s+/)[1]);
+			return { pid, ...(Number.isFinite(residentPages) ? { rssBytes: residentPages * 4096 } : {}) };
+		} catch {
+			return { pid };
+		}
+	}
+
+	onUnexpectedExit(handler: (event: OpenClawExitEvent) => void): void {
+		this.exitHandler = handler;
 	}
 
 	async start(
@@ -332,6 +361,7 @@ export class OpenClawHost {
 			}
 		);
 		this.child = child;
+		const launchedAt = Date.now();
 		let stderrTail = '';
 		let startupError: Error | undefined;
 		child.stderr.setEncoding('utf8');
@@ -347,6 +377,13 @@ export class OpenClawHost {
 				exit_code: code,
 				signal,
 				stderr_tail: stderrTail.trim().slice(-4_096)
+			});
+			this.exitHandler?.({
+				pid: child.pid,
+				exitCode: code,
+				signal,
+				runtimeMs: Date.now() - launchedAt,
+				expected: false
 			});
 		});
 		child.once('error', (error) => {
@@ -746,7 +783,16 @@ export class OpenClawHost {
 			BOT_GATEWAY_ADAPTER: 'openclaw',
 			BOT_GATEWAY_INTERNAL_PORT: String(this.config.internalPort),
 			BOT_GATEWAY_HMAC_SECRET: this.shard
-				? deriveShardBridgeSecret(this.config.hmacSecret, this.shard.shardId)
+				? this.config.coordinationMode === 'redis' &&
+						this.config.openClawNodeId &&
+						this.config.openClawLeaseEpoch !== undefined
+					? deriveLeaseBridgeSecret(
+							this.config.hmacSecret,
+							this.shard.shardId,
+							this.config.openClawNodeId,
+							this.config.openClawLeaseEpoch
+						)
+					: deriveShardBridgeSecret(this.config.hmacSecret, this.shard.shardId)
 				: this.config.bridgeHmacSecret,
 			BOT_GATEWAY_DATA_DIR: this.config.dataDir,
 			BOT_GATEWAY_OPENCLAW_STATE_DIR: this.config.openClawStateDir,
@@ -766,7 +812,26 @@ export class OpenClawHost {
 			BOT_GATEWAY_WECHAT_ENABLED: this.config.enabledChannels.has('wechat') ? 'true' : 'false',
 			BOT_GATEWAY_QQ_ENABLED: this.config.enabledChannels.has('qq') ? 'true' : 'false',
 			...(this.shard
-				? { BOT_GATEWAY_OPENCLAW_SHARD_ID: this.shard.shardId }
+				? {
+						BOT_GATEWAY_OPENCLAW_SHARD_ID: this.shard.shardId,
+						...(this.config.coordinationMode === 'redis'
+							? {
+									...(this.config.openClawNodeId
+										? { BOT_GATEWAY_NODE_ID: this.config.openClawNodeId }
+										: {}),
+									...(this.config.openClawLeaseEpoch !== undefined
+										? { BOT_GATEWAY_LEASE_EPOCH: String(this.config.openClawLeaseEpoch) }
+										: {}),
+									...(this.config.openClawAssignmentGeneration !== undefined
+										? {
+												BOT_GATEWAY_ASSIGNMENT_GENERATION: String(
+													this.config.openClawAssignmentGeneration
+												)
+											}
+										: {})
+								}
+							: {})
+					}
 				: { BOT_GATEWAY_OPENCLAW_CONNECTION_ID: this.config.openClawConnectionId || '' }),
 			...(!this.shard && this.credentials.qq
 				? {

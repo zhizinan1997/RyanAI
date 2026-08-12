@@ -1,16 +1,26 @@
 import { randomBytes } from 'node:crypto';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { GatewayConfig } from '../config.js';
+import type { GatewayControlPlaneClient } from '../control-plane-client.js';
+import { createCoordinator, type GatewayCoordinator, type ShardLease } from '../coordination.js';
 import { Logger, safeErrorFields } from '../logger.js';
 import {
 	OpenClawHost,
 	normalizeWeixinAccountKey,
 	type OpenClawAccountStatus,
 	type OpenClawCredentialSet,
+	type OpenClawExitEvent,
+	type OpenClawProcessSnapshot,
 	type OpenClawShardMember
 } from '../openclaw/host.js';
-import { assignShard, migrateIsolatedWeixinState } from '../openclaw/shard-manager.js';
+import {
+	assignShard,
+	collectAccountCheckpoint,
+	migrateIsolatedWeixinState,
+	restoreAccountCheckpoint
+} from '../openclaw/shard-manager.js';
 import {
 	startQqOfficialLogin,
 	startWeixinOfficialLogin,
@@ -43,6 +53,7 @@ interface OpenClawHostController {
 	clearCredentials?(): Promise<void>;
 	restart(credentials?: OpenClawCredentialSet, channelEnabled?: Record<Channel, boolean>): Promise<void>;
 	status(channel: Channel, accountKey?: string): Promise<OpenClawAccountStatus>;
+	onUnexpectedExit?(handler: (event: OpenClawExitEvent) => void): void;
 }
 
 /** Controller surface of one shared shard process hosting many accounts. */
@@ -58,7 +69,31 @@ export interface ShardHostController {
 	stop(): Promise<void>;
 	status(channel: Channel, accountKey?: string): Promise<OpenClawAccountStatus>;
 	shardMembers(): OpenClawShardMember[];
+	onUnexpectedExit?(handler: (event: OpenClawExitEvent) => void): void;
+	processSnapshot?(): Promise<OpenClawProcessSnapshot>;
 }
+
+interface SupervisorState {
+	consecutiveFailures: number;
+	failures: number[];
+	nextRetryAt: number;
+	openUntil: number;
+	halfOpen: boolean;
+	lastStartedAt?: number;
+}
+
+interface PendingShardSync {
+	channel: Channel;
+	firstRequestedAt: number;
+	timer: NodeJS.Timeout;
+	promise: Promise<void>;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+}
+
+const RESTART_WINDOW_MS = 10 * 60_000;
+const CIRCUIT_OPEN_MS = 10 * 60_000;
+const HEALTHY_RESET_MS = 5 * 60_000;
 
 type OfficialLogin =
 	| PendingOfficialLogin<WeixinLoginCredential>
@@ -69,6 +104,10 @@ export interface OpenClawAdapterDependencies {
 	createShardHost?: (config: GatewayConfig, logger: Logger) => ShardHostController;
 	startWeixinLogin?: typeof startWeixinOfficialLogin;
 	startQqLogin?: typeof startQqOfficialLogin;
+	coordinator?: GatewayCoordinator;
+	controlPlane?: GatewayControlPlaneClient;
+	shardDebounceMs?: number;
+	shardMaxWaitMs?: number;
 }
 
 function text(value: Record<string, unknown>, keys: readonly string[], max: number): string | undefined {
@@ -198,7 +237,17 @@ export class OpenClawAdapter implements ChannelAdapter {
 	private readonly blockedPorts = new Set<number>();
 	private readonly shardHosts = new Map<string, ShardHostController>();
 	private readonly shardTails = new Map<string, Promise<void>>();
-	private readonly pendingShardSyncs = new Map<string, Promise<void>>();
+	private readonly pendingShardSyncs = new Map<string, PendingShardSync>();
+	private readonly supervisorTimers = new Map<string, NodeJS.Timeout>();
+	private readonly coordinator: GatewayCoordinator;
+	private readonly controlPlane?: GatewayControlPlaneClient;
+	private readonly shardLeases = new Map<string, ShardLease>();
+	private leaseTimer?: NodeJS.Timeout;
+	private checkpointTimer?: NodeJS.Timeout;
+	private readonly checkpointHashes = new Map<string, string>();
+	private draining = false;
+	private readonly shardDebounceMs: number;
+	private readonly shardMaxWaitMs: number;
 
 	constructor(
 		private readonly config: GatewayConfig,
@@ -213,6 +262,10 @@ export class OpenClawAdapter implements ChannelAdapter {
 			dependencies.createShardHost ||
 			((config, logger) => new OpenClawHost(config, logger));
 		this.legacyHostMode = Boolean(dependencies.host);
+		this.coordinator = dependencies.coordinator ?? createCoordinator(config, logger);
+		this.controlPlane = dependencies.controlPlane;
+		this.shardDebounceMs = Math.max(0, dependencies.shardDebounceMs ?? 2_000);
+		this.shardMaxWaitMs = Math.max(this.shardDebounceMs, dependencies.shardMaxWaitMs ?? 10_000);
 		// The injected host remains supported for the existing adapter fixture.
 		if (dependencies.host) this.runtimes.set('__legacy_host__', { snapshot: {} as ConnectionSnapshot, host: dependencies.host });
 	}
@@ -222,10 +275,10 @@ export class OpenClawAdapter implements ChannelAdapter {
 		return this.config.openClawTopology === 'shared' && !this.legacyHostMode;
 	}
 
-	async start(): Promise<void> {
+async start(): Promise<void> {
 		await this.serialize(async () => {
-			if (this.started) throw new Error('OpenClaw adapter is already started');
-			const existing = this.state.listConnections();
+			if (this.started) throw new AdapterError('OpenClaw adapter is already started');
+			const existing = await this.state.listConnections();
 			// Migrate the old env-driven singleton only when it already exists or when
 			// the compatibility flags are explicitly present in a legacy deployment.
 			for (const channel of this.legacyHostMode ? this.config.enabledChannels : []) {
@@ -237,7 +290,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 			const legacy = this.runtimes.get('__legacy_host__');
 			if (legacy) {
 				const credentials: OpenClawCredentialSet = {};
-				for (const connection of this.state.listConnections()) {
+				for (const connection of await this.state.listConnections()) {
 					const raw = await this.vault.get(connection.id);
 					if (connection.channel === 'qq') {
 						const credential = parseQqCredential(raw);
@@ -258,11 +311,13 @@ export class OpenClawAdapter implements ChannelAdapter {
 					// Credential materialization temporarily points OpenClaw's parent-process
 					// environment at a connection-specific directory. Restore hosts in order
 					// so two users can never write WeChat credentials into each other's state.
-					for (const connection of this.state.listConnections()) {
+					for (const connection of await this.state.listConnections()) {
 						await this.serializeConnection(connection.id, () => this.ensureRuntime(connection));
 					}
 				}
 				this.startSupervisor();
+				this.startLeaseRenewal();
+				this.startCheckpointSync();
 			} catch (error) {
 				this.started = false;
 				await this.stopAllRuntimes();
@@ -275,9 +330,120 @@ export class OpenClawAdapter implements ChannelAdapter {
 		await this.serialize(async () => {
 			this.started = false;
 			this.stopSupervisor();
+			this.stopLeaseRenewal();
+			this.stopCheckpointSync();
 			await this.stopAllRuntimes();
 			this.detail = 'OpenClaw channel hosts are stopped';
 		});
+	}
+
+	async setDraining(draining: boolean): Promise<void> {
+		await this.serialize(async () => {
+			this.draining = draining;
+			await this.coordinator.setDraining(draining);
+			if (draining) {
+				for (const [shardId, host] of this.shardHosts) {
+					if (host.isRunning()) await host.stop();
+					await this.releaseShardLease(shardId);
+				}
+				this.detail = 'Gateway node is draining';
+				return;
+			}
+			if (!this.started || !this.sharedTopology) return;
+			await this.startSharedTopology();
+			this.detail = 'Gateway node resumed';
+		});
+	}
+
+	async resetCircuit(connectionId: string): Promise<void> {
+		const connection = await this.state.getConnection(connectionId);
+		if (!connection) throw new AdapterError('connection_not_found', 404);
+		const shardId = connection.shardId;
+		if (!shardId) return;
+		const timer = this.supervisorTimers.get(shardId);
+		if (timer) clearTimeout(timer);
+		this.supervisorTimers.delete(shardId);
+		await this.state.setRuntimeState(this.supervisorKey(shardId), {
+			consecutiveFailures: 0,
+			failures: [],
+			nextRetryAt: 0,
+			openUntil: 0,
+			halfOpen: false
+		} satisfies SupervisorState);
+		if (this.started && !this.draining) await this.syncShard(shardId, connection.channel, true);
+	}
+
+	async fenceShard(shardId: string): Promise<void> {
+		await this.serializeShard(shardId, async () => {
+			const host = this.shardHosts.get(shardId);
+			if (host?.isRunning()) await host.stop();
+			await this.releaseShardLease(shardId);
+			await this.markShardMembersUnavailable(shardId, 'Shard fencing rejected by RyanAI');
+		});
+	}
+
+	async operationsSnapshot(): Promise<Record<string, unknown>> {
+		const shards = [];
+		for (const [shardId, host] of this.shardHosts) {
+			const lease = this.shardLeases.get(shardId);
+			const supervisor = await this.supervisorState(shardId);
+			const processSnapshot = await host.processSnapshot?.() ?? {};
+			shards.push({
+				shard_id: shardId,
+				running: host.isRunning(),
+				detail: host.healthDetail(),
+				pid: processSnapshot.pid ?? null,
+				rss_bytes: processSnapshot.rssBytes ?? null,
+				member_count: host.shardMembers().length,
+				lease_epoch: lease?.epoch ?? null,
+				assignment_generation: lease?.assignmentGeneration ?? null,
+				lease_expires_at: lease && Number.isFinite(lease.expiresAt) ? lease.expiresAt : null,
+				restart_count: supervisor.failures.length,
+				circuit_state: supervisor.openUntil > Date.now()
+					? 'open'
+					: supervisor.halfOpen ? 'half_open' : 'closed',
+				next_retry_at: supervisor.nextRetryAt || null
+			});
+		}
+		return {
+			node_id: this.config.nodeId,
+			draining: this.draining,
+			coordination_mode: this.coordinator.mode,
+			shards
+		};
+	}
+
+	async reconcile(): Promise<void> {
+		if (!this.started) return;
+		const desired = await this.state.listConnections();
+		const desiredIds = new Set(desired.map((item) => item.id));
+		const affectedShards = new Map<string, Channel>();
+		for (const [connectionId, runtime] of [...this.runtimes]) {
+			if (connectionId === '__legacy_host__') continue;
+			if (runtime.snapshot.shardId) {
+				affectedShards.set(runtime.snapshot.shardId, runtime.snapshot.channel);
+			}
+			if (desiredIds.has(connectionId)) continue;
+			this.clearRetry(runtime);
+			const pending = runtime.pending;
+			runtime.pending = undefined;
+			runtime.qrCode = undefined;
+			pending?.cancel();
+			if (!this.sharedTopology && runtime.host.isRunning()) await runtime.host.stop();
+			await this.vault.delete(connectionId);
+			await this.removeIsolatedConnectionState(connectionId);
+			this.releasePort(connectionId);
+			this.checkpointHashes.delete(connectionId);
+			this.runtimes.delete(connectionId);
+		}
+		for (const connection of desired) {
+			await this.ensureRuntime(connection, false);
+			if (connection.shardId) affectedShards.set(connection.shardId, connection.channel);
+		}
+		if (!this.sharedTopology || this.draining) return;
+		for (const [shardId, channel] of affectedShards) {
+			await this.syncShard(shardId, channel, true);
+		}
 	}
 
 	health(): AdapterHealth {
@@ -287,7 +453,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	async listConnections(): Promise<ConnectionSnapshot[]> {
-		return this.state.listConnections().filter((entry) => entry.id !== '__legacy_host__');
+		return (await this.state.listConnections()).filter((entry) => entry.id !== '__legacy_host__');
 	}
 
 	async createConnection(input: CreateConnectionInput): Promise<ConnectionSnapshot> {
@@ -295,7 +461,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		const ownerUserId = validOwner(input.ownerUserId);
 		const id = validId(input.id || `${input.channel}-${cryptoRandomId()}`);
 		return this.serializeConnection(id, async () => {
-			if (this.state.getConnection(id)) throw new AdapterError('connection_already_exists', 409);
+			if (await this.state.getConnection(id)) throw new AdapterError('connection_already_exists', 409);
 			const snapshot: ConnectionSnapshot = {
 				id, channel: input.channel, ownerUserId, enabled: input.enabled !== false,
 				status: input.enabled === false ? 'disabled' : 'logged_out',
@@ -305,14 +471,14 @@ export class OpenClawAdapter implements ChannelAdapter {
 			};
 			await this.state.upsertConnection(snapshot);
 			if (this.started && snapshot.enabled) await this.ensureRuntime(snapshot);
-			return structuredClone(this.state.getConnection(id) || snapshot);
+			return structuredClone((await this.state.getConnection(id)) || snapshot);
 		});
 	}
 
 	async deleteConnection(connectionId: string): Promise<void> {
 		await this.serializeConnection(connectionId, async () => {
 			const runtime = this.runtimes.get(connectionId);
-			const snapshot = runtime?.snapshot ?? this.state.getConnection(connectionId);
+			const snapshot = runtime?.snapshot ?? (await this.state.getConnection(connectionId));
 			const shardId = snapshot?.shardId;
 			if (runtime) {
 				this.clearRetry(runtime);
@@ -326,6 +492,8 @@ export class OpenClawAdapter implements ChannelAdapter {
 			await this.vault.delete(connectionId);
 			const deleted = await this.state.deleteConnection(connectionId);
 			this.releasePort(connectionId);
+			this.checkpointHashes.delete(connectionId);
+			await this.removeIsolatedConnectionState(connectionId);
 			if (this.sharedTopology && shardId && snapshot) {
 				await this.syncShard(shardId, snapshot.channel);
 			}
@@ -389,7 +557,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 			// that will host the account, so the shard must be assigned up front.
 			if (this.sharedTopology) await this.ensureShardAssigned(runtime);
 			const pending = runtime.snapshot.channel === 'wechat'
-				? await this.startWeixinLogin(this.connectionConfig(runtime.snapshot), this.logger, parseWeixinCredential(await this.vault.get(connectionId)), connectionId)
+				? await this.startWeixinLogin(await this.connectionConfig(runtime.snapshot), this.logger, parseWeixinCredential(await this.vault.get(connectionId)), connectionId)
 				: await this.startQqLogin(this.logger, connectionId);
 			runtime.pending = pending;
 			runtime.qrCode = structuredClone(pending.qrCode);
@@ -473,16 +641,25 @@ export class OpenClawAdapter implements ChannelAdapter {
 		startHosts = true
 	): Promise<RuntimeConnection> {
 		const existing = this.runtimes.get(snapshot.id);
-		if (existing) { existing.snapshot = snapshot; return existing; }
+		if (existing) {
+			existing.snapshot = snapshot;
+			if (this.coordinator.mode === 'redis' && !snapshot.credentialsConfigured) {
+				existing.credentials = undefined;
+			}
+			return existing;
+		}
 		const legacy = this.runtimes.get('__legacy_host__');
 		const host = this.sharedTopology
 			? this.createMemberFacade(snapshot.id)
 			: legacy && snapshot.id.endsWith('-default')
 				? legacy.host
-				: new OpenClawHost(this.connectionConfig(snapshot), this.logger.child(snapshot.id));
+				: new OpenClawHost(await this.connectionConfig(snapshot), this.logger.child(snapshot.id));
 		const runtime: RuntimeConnection = { snapshot, host };
 		this.runtimes.set(snapshot.id, runtime);
-		const raw = await this.vault.get(snapshot.id);
+		// In clustered mode SQL is authoritative and credentials may only be
+		// materialized after this node owns the shard lease. A stale local mirror
+		// must never be enough to start polling an account.
+		const raw = this.coordinator.mode === 'redis' ? undefined : await this.vault.get(snapshot.id);
 		runtime.credentials = snapshot.channel === 'qq' ? parseQqCredential(raw) : parseWeixinCredential(raw);
 		await this.persistCredentialIdentity(runtime);
 		if (!(await this.ensureAccountRegistration(runtime))) return runtime;
@@ -491,10 +668,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 		// credential host underneath it.
 		if (runtime.pending) return runtime;
 		if (!runtime.snapshot.enabled) return runtime;
-		if (!runtime.credentials) {
+		if (!runtime.credentials && !runtime.snapshot.credentialsConfigured) {
 			runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured');
 			return runtime;
 		}
+		if (!runtime.credentials && this.coordinator.mode === 'redis') return runtime;
 		if (!startHosts) return runtime;
 		try {
 			if (!runtime.host.isRunning()) {
@@ -520,21 +698,25 @@ export class OpenClawAdapter implements ChannelAdapter {
 	 * unavailable for the supervisor to retry.
 	 */
 	private async startSharedTopology(): Promise<void> {
-		for (const connection of this.state.listConnections()) {
+		for (const connection of await this.state.listConnections()) {
 			await this.serializeConnection(connection.id, async () => {
 				await this.ensureRuntime(connection, false);
 			});
 		}
 		const shardChannels = new Map<string, Channel>();
 		for (const runtime of this.runtimes.values()) {
-			if (!runtime.snapshot.id || !runtime.snapshot.enabled || !runtime.credentials) continue;
+			if (
+				!runtime.snapshot.id ||
+				!runtime.snapshot.enabled ||
+				(!runtime.credentials && !runtime.snapshot.credentialsConfigured)
+			) continue;
 			if (runtime.snapshot.shardId) {
 				shardChannels.set(runtime.snapshot.shardId, runtime.snapshot.channel);
 			}
 		}
 		for (const [shardId, channel] of shardChannels) {
 			try {
-				await this.syncShard(shardId, channel);
+				await this.syncShard(shardId, channel, true);
 			} catch (error) {
 				this.logger.error('Shared OpenClaw shard failed to start', {
 					shard_id: shardId,
@@ -543,7 +725,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 			}
 		}
 		for (const runtime of this.runtimes.values()) {
-			if (!runtime.snapshot.id || !runtime.snapshot.enabled || !runtime.credentials) continue;
+			if (
+				!runtime.snapshot.id ||
+				!runtime.snapshot.enabled ||
+				(!runtime.credentials && !runtime.snapshot.credentialsConfigured)
+			) continue;
 			await this.serializeConnection(runtime.snapshot.id, async () => {
 				try {
 					if (runtime.host.isRunning()) await this.refresh(runtime);
@@ -572,9 +758,10 @@ export class OpenClawAdapter implements ChannelAdapter {
 	 */
 	private createMemberFacade(connectionId: string): OpenClawHostController {
 		const shardHost = (): ShardHostController | undefined => {
-			const shardId =
-				this.runtimes.get(connectionId)?.snapshot.shardId ??
-				this.state.getConnection(connectionId)?.shardId;
+			// The runtime map is authoritative once a connection is materialized:
+			// every persisted snapshot change also replaces `runtime.snapshot`, so
+			// there is no state the facade needs to re-read from the store.
+			const shardId = this.runtimes.get(connectionId)?.snapshot.shardId;
 			return shardId ? this.shardHosts.get(shardId) : undefined;
 		};
 		return {
@@ -601,7 +788,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 
 	private async syncShardForConnection(connectionId: string): Promise<void> {
 		const runtime = this.runtimes.get(connectionId);
-		const snapshot = runtime?.snapshot ?? this.state.getConnection(connectionId);
+		const snapshot = runtime?.snapshot ?? (await this.state.getConnection(connectionId));
 		if (!snapshot) return;
 		let shardId = snapshot.shardId;
 		if (!shardId && runtime?.credentials && runtime.snapshot.enabled) {
@@ -611,10 +798,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 		await this.syncShard(shardId, snapshot.channel);
 	}
 
-	private shardHostFor(shardId: string, channel: Channel): ShardHostController {
+	private shardHostFor(shardId: string, channel: Channel, lease?: ShardLease): ShardHostController {
 		let host = this.shardHosts.get(shardId);
 		if (!host) {
-			host = this.createShardHost(this.shardConfig(shardId, channel), this.logger.child(shardId));
+			host = this.createShardHost(this.shardConfig(shardId, channel, lease), this.logger.child(shardId));
+			host.onUnexpectedExit?.((event) => this.onShardExit(shardId, channel, event));
 			this.shardHosts.set(shardId, host);
 		}
 		return host;
@@ -625,38 +813,146 @@ export class OpenClawAdapter implements ChannelAdapter {
 	 * while a sync is still queued join it instead of stacking restarts, since
 	 * membership is computed when the sync actually runs.
 	 */
-	private syncShard(shardId: string, channel: Channel): Promise<void> {
-		const pending = this.pendingShardSyncs.get(shardId);
-		if (pending) return pending;
-		const task: Promise<void> = this.serializeShard(shardId, async () => {
-			if (this.pendingShardSyncs.get(shardId) === task) this.pendingShardSyncs.delete(shardId);
-			await this.runShardSync(shardId, channel);
+	private syncShard(shardId: string, channel: Channel, immediate = false): Promise<void> {
+		const existing = this.pendingShardSyncs.get(shardId);
+		if (existing) {
+			existing.channel = channel;
+			if (immediate) this.armShardSync(shardId, existing, 0);
+			else {
+				const remaining = Math.max(0, existing.firstRequestedAt + this.shardMaxWaitMs - Date.now());
+				this.armShardSync(shardId, existing, Math.min(this.shardDebounceMs, remaining));
+			}
+			return existing.promise;
+		}
+		let resolve!: () => void;
+		let reject!: (error: unknown) => void;
+		const promise = new Promise<void>((onResolve, onReject) => {
+			resolve = onResolve;
+			reject = onReject;
 		});
-		this.pendingShardSyncs.set(shardId, task);
-		task.catch(() => {
-			if (this.pendingShardSyncs.get(shardId) === task) this.pendingShardSyncs.delete(shardId);
-		});
-		return task;
+		const pending: PendingShardSync = {
+			channel,
+			firstRequestedAt: Date.now(),
+			timer: undefined as unknown as NodeJS.Timeout,
+			promise,
+			resolve,
+			reject
+		};
+		this.pendingShardSyncs.set(shardId, pending);
+		this.armShardSync(shardId, pending, immediate ? 0 : this.shardDebounceMs);
+		return promise;
+	}
+
+	private armShardSync(shardId: string, pending: PendingShardSync, delayMs: number): void {
+		if (pending.timer) clearTimeout(pending.timer);
+		pending.timer = setTimeout(() => {
+			if (this.pendingShardSyncs.get(shardId) !== pending) return;
+			this.pendingShardSyncs.delete(shardId);
+			void this.serializeShard(shardId, () => this.runShardSync(shardId, pending.channel)).then(
+				pending.resolve,
+				pending.reject
+			);
+		}, delayMs);
+		pending.timer.unref();
 	}
 
 	private async runShardSync(shardId: string, channel: Channel): Promise<void> {
-		if (!this.started) return;
-		const members = this.eligibleShardMembers(shardId);
-		let host = this.shardHostFor(shardId, channel);
-		if (members.length === 0) {
-			if (host.isRunning()) await host.stop();
+		if (!this.started || this.draining) return;
+		const candidates = [...this.runtimes.values()].filter(
+			(runtime) =>
+				runtime.snapshot.shardId === shardId &&
+				runtime.snapshot.channel === channel &&
+				runtime.snapshot.enabled &&
+				(runtime.credentials || runtime.snapshot.credentialsConfigured)
+		);
+		if (candidates.length === 0) {
+			const host = this.shardHosts.get(shardId);
+			if (host?.isRunning()) await host.stop();
+			await this.releaseShardLease(shardId);
 			return;
 		}
+		const assignmentGeneration = Math.max(
+			0,
+			...candidates.map((runtime) => runtime.snapshot.assignmentGeneration ?? 0)
+		);
+		let lease = this.shardLeases.get(shardId);
+		let acquiredLease = false;
+		if (!lease || lease.assignmentGeneration !== assignmentGeneration) {
+			if (lease) {
+				const staleHost = this.shardHosts.get(shardId);
+				if (staleHost?.isRunning()) await staleHost.stop();
+				this.shardHosts.delete(shardId);
+				await this.releaseShardLease(shardId);
+			}
+			lease = await this.coordinator.acquire(shardId, assignmentGeneration);
+			if (!lease) {
+				await this.markShardMembersUnavailable(shardId, 'Shard lease is held by another gateway node');
+				return;
+			}
+			this.shardLeases.set(shardId, lease);
+			acquiredLease = true;
+		}
+		if (this.coordinator.mode === 'redis' && this.controlPlane) {
+			for (const runtime of acquiredLease ? candidates : []) {
+				if (!runtime.snapshot.credentialsConfigured) continue;
+				try {
+					const raw = await this.controlPlane.fetchCredential(runtime.snapshot.id, this.vault);
+					runtime.credentials = runtime.snapshot.channel === 'qq'
+						? parseQqCredential(raw)
+						: parseWeixinCredential(raw);
+				} catch (error) {
+					runtime.credentials = undefined;
+					runtime.snapshot = await this.setStatus(
+						runtime,
+						'degraded',
+						'Credential synchronization from RyanAI failed'
+					);
+					this.logger.error('Shard credential synchronization failed', {
+						connection_id: runtime.snapshot.id,
+						shard_id: shardId,
+						...safeErrorFields(error)
+					});
+				}
+			}
+			for (const runtime of candidates) {
+				if (runtime.snapshot.channel !== 'wechat' || !runtime.snapshot.accountKey) continue;
+				try {
+					const checkpoint = await this.controlPlane.fetchCheckpoint(runtime.snapshot.id);
+					if (!checkpoint) continue;
+					await restoreAccountCheckpoint(
+						path.join(this.config.openClawStateDir, 'shards', shardId, 'state'),
+						runtime.snapshot.accountKey,
+						checkpoint.payload
+					);
+					this.checkpointHashes.set(runtime.snapshot.id, checkpoint.sha256);
+				} catch (error) {
+					this.logger.warn('Account checkpoint restore failed; account will re-sync', {
+						connection_id: runtime.snapshot.id,
+						shard_id: shardId,
+						...safeErrorFields(error)
+					});
+				}
+			}
+		}
+		const members = this.eligibleShardMembers(shardId);
+		if (members.length === 0) {
+			const host = this.shardHosts.get(shardId);
+			if (host?.isRunning()) await host.stop();
+			await this.releaseShardLease(shardId);
+			return;
+		}
+		let host = this.shardHostFor(shardId, channel, lease);
 		if (host.isRunning() && sameShardMembers(host.shardMembers(), members)) return;
 		await this.migrateIsolatedStateFor(shardId, members);
 		for (let attempt = 0; attempt < 3; attempt += 1) {
 			try {
-				if (host.isRunning()) await host.restartShard(members);
-				else await host.startShard(shardId, channel, members);
-				return;
+					if (host.isRunning()) await host.restartShard(members);
+					else await host.startShard(shardId, channel, members);
+					await this.markSupervisorStarted(shardId);
+					return;
 			} catch (error) {
 				if (!isPortConflict(error) || !this.rebindShard(shardId)) throw error;
-				host = this.shardHostFor(shardId, channel);
+				host = this.shardHostFor(shardId, channel, lease);
 			}
 		}
 		throw new Error('OpenClaw shard could not acquire a free port');
@@ -724,7 +1020,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		if (existing) return existing;
 		const shardId = assignShard(
 			runtime.snapshot.channel,
-			this.state.listConnections(),
+			await this.state.listConnections(),
 			this.config.openClawShardCapacity
 		);
 		runtime.snapshot = { ...runtime.snapshot, shardId, updatedAt: new Date().toISOString() };
@@ -792,7 +1088,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		return true;
 	}
 
-	private shardConfig(shardId: string, channel: Channel): GatewayConfig {
+	private shardConfig(shardId: string, channel: Channel, lease?: ShardLease): GatewayConfig {
 		const openClawStateDir = path.join(this.config.openClawStateDir, 'shards', shardId, 'state');
 		const openClawHomeDir = path.join(this.config.openClawHomeDir, 'shards', shardId, 'home');
 		const parentGeneratedRoots = new Set([
@@ -810,10 +1106,103 @@ export class OpenClawAdapter implements ChannelAdapter {
 			openClawPort: this.allocatePort(`shard:${shardId}`),
 			openClawStateDir,
 			openClawHomeDir,
+			...(lease ? {
+				openClawNodeId: lease.nodeId,
+				openClawLeaseEpoch: lease.epoch,
+				openClawAssignmentGeneration: lease.assignmentGeneration
+			} : {}),
 			attachmentRoots: [...new Set(attachmentRoots)]
 		};
 		delete shardConfig.openClawConnectionId;
 		return shardConfig;
+	}
+
+	private startLeaseRenewal(): void {
+		this.stopLeaseRenewal();
+		if (this.coordinator.mode !== 'redis') return;
+		this.leaseTimer = setInterval(() => void this.renewShardLeases(), this.config.leaseRenewMs);
+		this.leaseTimer.unref();
+	}
+
+	private stopLeaseRenewal(): void {
+		if (this.leaseTimer) clearInterval(this.leaseTimer);
+		this.leaseTimer = undefined;
+	}
+
+	private startCheckpointSync(): void {
+		this.stopCheckpointSync();
+		if (this.coordinator.mode !== 'redis' || !this.controlPlane) return;
+		this.checkpointTimer = setInterval(() => void this.uploadChangedCheckpoints(), 30_000);
+		this.checkpointTimer.unref();
+	}
+
+	private stopCheckpointSync(): void {
+		if (this.checkpointTimer) clearInterval(this.checkpointTimer);
+		this.checkpointTimer = undefined;
+	}
+
+	private async uploadChangedCheckpoints(): Promise<void> {
+		if (!this.controlPlane) return;
+		for (const runtime of this.runtimes.values()) {
+			const shardId = runtime.snapshot.shardId;
+			const accountKey = runtime.snapshot.accountKey;
+			if (
+				runtime.snapshot.channel !== 'wechat' || !shardId || !accountKey ||
+				!this.shardLeases.has(shardId)
+			) continue;
+			try {
+				const checkpoint = await collectAccountCheckpoint(
+					path.join(this.config.openClawStateDir, 'shards', shardId, 'state'),
+					accountKey
+				);
+				if (!checkpoint || this.checkpointHashes.get(runtime.snapshot.id) === checkpoint.sha256) continue;
+				await this.controlPlane.uploadCheckpoint(runtime.snapshot.id, checkpoint);
+				this.checkpointHashes.set(runtime.snapshot.id, checkpoint.sha256);
+			} catch (error) {
+				this.logger.warn('Account checkpoint upload failed', {
+					connection_id: runtime.snapshot.id,
+					shard_id: shardId,
+					...safeErrorFields(error)
+				});
+			}
+		}
+	}
+
+	private async renewShardLeases(): Promise<void> {
+		for (const [shardId, lease] of [...this.shardLeases]) {
+			let renewed = false;
+			let definitiveLoss = false;
+			try {
+				renewed = await this.coordinator.renew(lease);
+				definitiveLoss = !renewed;
+			} catch {
+				renewed = false;
+			}
+			if (renewed) continue;
+			if (!definitiveLoss && Date.now() < lease.expiresAt - 5_000) {
+				this.logger.warn('OpenClaw shard lease renewal was temporarily unavailable', {
+					shard_id: shardId,
+					lease_expires_at: lease.expiresAt
+				});
+				continue;
+			}
+			this.shardLeases.delete(shardId);
+			const host = this.shardHosts.get(shardId);
+			if (host?.isRunning()) await host.stop();
+			this.shardHosts.delete(shardId);
+			await this.markShardMembersUnavailable(shardId, 'Shard lease was lost; local host fenced');
+			this.logger.error('OpenClaw shard lease lost', { shard_id: shardId });
+		}
+	}
+
+	private async releaseShardLease(shardId: string): Promise<void> {
+		const lease = this.shardLeases.get(shardId);
+		this.shardLeases.delete(shardId);
+		// A Redis shard host embeds node/epoch fencing material in its child
+		// environment. Never reuse that controller after relinquishing its lease.
+		if (this.coordinator.mode === 'redis') this.shardHosts.delete(shardId);
+		if (!lease) return;
+		await this.coordinator.release(lease).catch(() => false);
 	}
 
 	/** Per-shard exclusive section, mirroring the per-connection queues. */
@@ -859,7 +1248,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 	}
 
 	private async runtimeFor(id: string): Promise<RuntimeConnection> {
-		const snapshot = this.state.getConnection(id);
+		const snapshot = await this.state.getConnection(id);
 		if (!snapshot) throw new AdapterError('connection_not_found', 404);
 		return this.runtimes.get(id) || this.ensureRuntime(snapshot);
 	}
@@ -951,7 +1340,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		if (
 			!this.started ||
 			this.runtimes.get(runtime.snapshot.id) !== runtime ||
-			!this.state.getConnection(runtime.snapshot.id) ||
+			!(await this.state.getConnection(runtime.snapshot.id)) ||
 			runtime.pending !== pending
 		) return;
 		const unchangedCredential = sameCredential(runtime.credentials, credential);
@@ -1001,7 +1390,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		if (
 			!this.started ||
 			this.runtimes.get(runtime.snapshot.id) !== runtime ||
-			!this.state.getConnection(runtime.snapshot.id) ||
+			!(await this.state.getConnection(runtime.snapshot.id)) ||
 			runtime.pending !== pending
 		) return;
 		runtime.pending = undefined; runtime.qrCode = undefined;
@@ -1015,9 +1404,9 @@ export class OpenClawAdapter implements ChannelAdapter {
 
 	private channelFlags(snapshot: ConnectionSnapshot): Record<Channel, boolean> { return { wechat: snapshot.channel === 'wechat' && snapshot.enabled, qq: snapshot.channel === 'qq' && snapshot.enabled }; }
 
-	private connectionConfig(snapshot: ConnectionSnapshot): GatewayConfig {
+	private async connectionConfig(snapshot: ConnectionSnapshot): Promise<GatewayConfig> {
 		if (this.sharedTopology) {
-			const shardId = snapshot.shardId ?? this.state.getConnection(snapshot.id)?.shardId;
+			const shardId = snapshot.shardId ?? (await this.state.getConnection(snapshot.id))?.shardId;
 			if (!shardId) throw new AdapterError('shard_not_assigned', 500);
 			return this.shardConfig(shardId, snapshot.channel);
 		}
@@ -1047,6 +1436,16 @@ export class OpenClawAdapter implements ChannelAdapter {
 		const next: ConnectionSnapshot = { ...runtime.snapshot, status, detail, updatedAt: new Date().toISOString(), ...(accountLabel ? { accountLabel } : {}) };
 		await this.state.upsertConnection(next); return next;
 	}
+
+	private async removeIsolatedConnectionState(connectionId: string): Promise<void> {
+		const stateDir = path.join(this.config.openClawStateDir, connectionId);
+		const homeDir = path.join(this.config.openClawHomeDir, connectionId);
+		await Promise.all([
+			rm(stateDir, { recursive: true, force: true }),
+			rm(homeDir, { recursive: true, force: true })
+		]);
+	}
+
 	private accountLabel(credential: Credential): string { return 'appId' in credential ? credential.appId : credential.accountId; }
 	private trustedOwnerExternalId(credential: Credential | undefined): string | undefined {
 		const value = credential && ('appId' in credential ? credential.userOpenid : credential.userId);
@@ -1100,7 +1499,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		this.releasePort(connectionId);
 		if (runtime.host.isRunning()) await runtime.host.stop();
 		runtime.host = new OpenClawHost(
-			this.connectionConfig(runtime.snapshot),
+			await this.connectionConfig(runtime.snapshot),
 			this.logger.child(connectionId)
 		);
 		this.logger.warn('OpenClaw connection host moved to a free port', {
@@ -1138,13 +1537,130 @@ export class OpenClawAdapter implements ChannelAdapter {
 		}, 15_000);
 		this.supervisorTimer.unref();
 	}
+
+	private onShardExit(shardId: string, channel: Channel, event: OpenClawExitEvent): void {
+		if (!this.started || event.expected) return;
+		this.logger.warn('Unexpected OpenClaw shard exit detected', {
+			shard_id: shardId,
+			pid: event.pid,
+			exit_code: event.exitCode,
+			signal: event.signal,
+			runtime_ms: event.runtimeMs
+		});
+		void this.scheduleShardRecovery(shardId, channel, event.runtimeMs).catch((error) =>
+			this.logger.error('OpenClaw shard recovery scheduling failed', {
+				shard_id: shardId,
+				...safeErrorFields(error)
+			})
+		);
+	}
+
+	private supervisorKey(shardId: string): string {
+		return `openclaw-supervisor:${shardId}`;
+	}
+
+	private async supervisorState(shardId: string): Promise<SupervisorState> {
+		return (await this.state.getRuntimeState<SupervisorState>(this.supervisorKey(shardId))) ?? {
+			consecutiveFailures: 0,
+			failures: [],
+			nextRetryAt: 0,
+			openUntil: 0,
+			halfOpen: false
+		};
+	}
+
+	private async scheduleShardRecovery(
+		shardId: string,
+		channel: Channel,
+		runtimeMs = 0,
+		immediate = false
+	): Promise<void> {
+		if (this.supervisorTimers.has(shardId)) return;
+		const now = Date.now();
+		const state = await this.supervisorState(shardId);
+		if (runtimeMs >= HEALTHY_RESET_MS) {
+			state.consecutiveFailures = 0;
+			state.failures = [];
+		}
+		state.failures = state.failures.filter((timestamp) => timestamp > now - RESTART_WINDOW_MS);
+		if (state.openUntil > now) return;
+		if (state.openUntil > 0 && state.openUntil <= now) {
+			if (state.halfOpen) return;
+			state.halfOpen = true;
+		}
+		state.failures.push(now);
+		state.consecutiveFailures += 1;
+		if (state.failures.length > 5) {
+			state.openUntil = now + CIRCUIT_OPEN_MS;
+			state.nextRetryAt = state.openUntil;
+			state.halfOpen = false;
+			await this.state.setRuntimeState(this.supervisorKey(shardId), state);
+			await this.markShardMembersUnavailable(shardId, 'OpenClaw shard circuit breaker is open');
+			return;
+		}
+		const base = Math.min(60_000, 1_000 * 2 ** Math.max(0, state.consecutiveFailures - 1));
+		const jittered = immediate ? 0 : Math.max(250, Math.round(base * (0.8 + Math.random() * 0.4)));
+		state.nextRetryAt = now + jittered;
+		await this.state.setRuntimeState(this.supervisorKey(shardId), state);
+		await this.markShardMembersUnavailable(shardId, 'OpenClaw shard stopped; reconnect scheduled');
+		const timer = setTimeout(() => {
+			this.supervisorTimers.delete(shardId);
+			void this.syncShard(shardId, channel, true).then(
+				async () => {
+					const current = await this.supervisorState(shardId);
+					current.halfOpen = false;
+					current.openUntil = 0;
+					await this.state.setRuntimeState(this.supervisorKey(shardId), current);
+					await this.refreshShardMembers(shardId);
+				},
+				(error) => this.scheduleShardRecovery(shardId, channel).catch(() => {
+					this.logger.error('OpenClaw shard recovery failed', { shard_id: shardId, ...safeErrorFields(error) });
+				})
+			);
+		}, jittered);
+		timer.unref();
+		this.supervisorTimers.set(shardId, timer);
+	}
+
+	private async refreshShardMembers(shardId: string): Promise<void> {
+		for (const runtime of this.runtimes.values()) {
+			if (runtime.snapshot.shardId !== shardId || !runtime.credentials) continue;
+			await this.serializeConnection(runtime.snapshot.id, async () => {
+				if (runtime.host.isRunning()) await this.refresh(runtime);
+			});
+		}
+	}
+
+	private async markSupervisorStarted(shardId: string): Promise<void> {
+		const state = await this.supervisorState(shardId);
+		state.lastStartedAt = Date.now();
+		state.nextRetryAt = 0;
+		await this.state.setRuntimeState(this.supervisorKey(shardId), state);
+	}
+
+	private async markShardMembersUnavailable(shardId: string, detail: string): Promise<void> {
+		for (const runtime of this.runtimes.values()) {
+			if (runtime.snapshot.shardId !== shardId) continue;
+			runtime.snapshot = await this.setStatus(runtime, 'degraded', detail);
+		}
+	}
 	private stopSupervisor(): void {
 		if (!this.supervisorTimer) return;
 		clearInterval(this.supervisorTimer);
 		this.supervisorTimer = undefined;
+		for (const timer of this.supervisorTimers.values()) clearTimeout(timer);
+		this.supervisorTimers.clear();
 	}
 	private superviseRuntimes(): void {
-		if (!this.started) return;
+		if (!this.started || this.draining) return;
+		if (this.sharedTopology) {
+			for (const [shardId, host] of this.shardHosts) {
+				if (host.isRunning() || this.supervisorTimers.has(shardId)) continue;
+				const channel = host.shardMembers()[0]?.qq ? 'qq' : 'wechat';
+				void this.scheduleShardRecovery(shardId, channel, 0, true);
+			}
+			return;
+		}
 		for (const runtime of this.runtimes.values()) {
 			const connectionId = runtime.snapshot.id;
 			if (
@@ -1187,6 +1703,11 @@ export class OpenClawAdapter implements ChannelAdapter {
 		}
 	}
 	private async stopAllRuntimes(): Promise<void> {
+		for (const pending of this.pendingShardSyncs.values()) {
+			clearTimeout(pending.timer);
+			pending.resolve();
+		}
+		this.pendingShardSyncs.clear();
 		for (const runtime of this.runtimes.values()) {
 			this.clearRetry(runtime);
 			const pending = runtime.pending;
@@ -1198,6 +1719,7 @@ export class OpenClawAdapter implements ChannelAdapter {
 		for (const host of this.shardHosts.values()) {
 			if (host.isRunning()) await host.stop();
 		}
+		for (const shardId of [...this.shardLeases.keys()]) await this.releaseShardLease(shardId);
 	}
 	/** Adapter-wide exclusive section, for whole-adapter lifecycle only. */
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {

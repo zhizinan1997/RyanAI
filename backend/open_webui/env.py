@@ -435,6 +435,19 @@ else:
         REDIS_RECONNECT_DELAY = None
 
 ####################################
+# BOT GATEWAY CREDENTIAL CENTER
+####################################
+
+# Master key for the backend credential center (AES-256-GCM envelope storage).
+# 64 hex characters or base64 decoding to exactly 32 bytes.  When empty the
+# credential center APIs fail closed (503 credential_center_disabled).
+BOT_GATEWAY_CREDENTIAL_MASTER_KEY = os.getenv('BOT_GATEWAY_CREDENTIAL_MASTER_KEY', '')
+BOT_GATEWAY_SCHEDULER_MODE = os.getenv('BOT_GATEWAY_SCHEDULER_MODE', 'shadow').strip().lower()
+BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY = int(os.getenv('BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY', '12'))
+BOT_GATEWAY_SHARD_LOAD_CAPACITY = int(os.getenv('BOT_GATEWAY_SHARD_LOAD_CAPACITY', '12'))
+BOT_GATEWAY_COORDINATION_MODE = os.getenv('BOT_GATEWAY_COORDINATION_MODE', 'single').strip().lower()
+
+####################################
 # Uvicorn
 ####################################
 
