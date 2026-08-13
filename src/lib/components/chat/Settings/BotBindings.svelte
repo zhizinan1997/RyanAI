@@ -212,8 +212,19 @@
 		busyChannel = channel;
 		try {
 			await logoutBotGatewayUserConnection(localStorage.token, channel);
-			connections = await getBotGatewayUserConnections(localStorage.token);
+			if (channel === 'qq') stopQQStatusPolling();
+			else {
+				showLogin = false;
+				loginSession = null;
+				stopPolling();
+			}
+			connections = connections.filter((item) => item.channel !== channel);
 			toast.success($i18n.t('{{bot}} bot unbound and disconnected.', { bot: botLabel }));
+			try {
+				connections = await getBotGatewayUserConnections(localStorage.token);
+			} catch {
+				// Keep the confirmed local removal when the follow-up refresh is temporarily unavailable.
+			}
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : $i18n.t('Failed to unbind bot.'));
 		} finally {

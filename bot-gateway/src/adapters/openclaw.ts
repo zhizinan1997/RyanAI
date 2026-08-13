@@ -595,12 +595,14 @@ async start(): Promise<void> {
 			runtime.credentials = undefined;
 			const previousShardId = runtime.snapshot.shardId;
 			const {
+				credentialsConfigured: _credentialsConfigured,
+				accountLabel: _accountLabel,
 				trustedOwnerExternalId: _trustedOwnerExternalId,
 				accountKey: _accountKey,
 				shardId: _shardId,
 				...withoutBoundIdentity
 			} = runtime.snapshot;
-			runtime.snapshot = withoutBoundIdentity;
+			runtime.snapshot = { ...withoutBoundIdentity, credentialsConfigured: false };
 			await this.vault.delete(connectionId);
 			if (this.sharedTopology) {
 				// The shard slot is freed before the shard resync so a fresh login can
@@ -668,7 +670,17 @@ async start(): Promise<void> {
 		// In clustered mode SQL is authoritative and credentials may only be
 		// materialized after this node owns the shard lease. A stale local mirror
 		// must never be enough to start polling an account.
-		const raw = this.coordinator.mode === 'redis' ? undefined : await this.vault.get(snapshot.id);
+		let raw = this.coordinator.mode === 'redis' ? undefined : await this.vault.get(snapshot.id);
+		if (!raw && snapshot.credentialsConfigured && this.coordinator.mode !== 'redis' && this.controlPlane) {
+			try {
+				raw = await this.controlPlane.fetchCredential(snapshot.id, this.vault);
+			} catch (error) {
+				this.logger.error('Connection credential synchronization failed', {
+					connection_id: snapshot.id,
+					...safeErrorFields(error)
+				});
+			}
+		}
 		runtime.credentials = snapshot.channel === 'qq' ? parseQqCredential(raw) : parseWeixinCredential(raw);
 		// A successfully decrypted local vault entry is authoritative evidence that
 		// this gateway can restore the account. Keep the cached marker in sync so
@@ -692,7 +704,7 @@ async start(): Promise<void> {
 			runtime.snapshot = await this.setStatus(runtime, 'logged_out', 'Credentials are not configured');
 			return runtime;
 		}
-		if (!runtime.credentials && this.coordinator.mode === 'redis') return runtime;
+		if (!runtime.credentials) return runtime;
 		if (!startHosts) return runtime;
 		try {
 			if (!runtime.host.isRunning()) {
@@ -1381,11 +1393,33 @@ async start(): Promise<void> {
 				return;
 			}
 		}
+		const rawCredential = credential as unknown as Record<string, unknown>;
+		try {
+			if (!this.controlPlane) throw new Error('credential_control_plane_unavailable');
+			await this.controlPlane.storeCredential(
+				runtime.snapshot.id,
+				runtime.snapshot.channel,
+				rawCredential
+			);
+			await this.vault.put(runtime.snapshot.id, rawCredential);
+		} catch (error) {
+			runtime.pending = undefined;
+			runtime.qrCode = undefined;
+			runtime.snapshot = await this.setStatus(
+				runtime,
+				runtime.credentials ? 'degraded' : 'logged_out',
+				'Credential storage in RyanAI failed; scanned credentials were not applied'
+			);
+			this.logger.error('QR credential storage failed', {
+				connection_id: runtime.snapshot.id,
+				...safeErrorFields(error)
+			});
+			return;
+		}
 		runtime.pending = undefined;
 		runtime.credentials = credential;
 		await this.markCredentialsConfigured(runtime);
 		await this.persistCredentialIdentity(runtime);
-		await this.vault.put(runtime.snapshot.id, credential as unknown as Record<string, unknown>);
 		await this.ensureAccountRegistration(runtime);
 		if (unchangedCredential && runtime.host.isRunning()) {
 			runtime.snapshot = await this.setStatus(

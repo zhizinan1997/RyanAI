@@ -65,8 +65,27 @@ export async function parseOpenClawBridgeEvent(
 		if (error instanceof EventValidationError) throw error;
 		throw new EventValidationError('invalid_bridge_event', 'Bridge event JSON is invalid');
 	}
-	if (raw.version !== '1.0') {
+	if (raw.version !== '1.0' && raw.version !== '1.1') {
 		throw new EventValidationError('invalid_bridge_event', 'Unsupported bridge event version');
+	}
+	const fencingFields = ['node_id', 'lease_epoch', 'assignment_generation'] as const;
+	let shardId: string | undefined;
+	let nodeId: string | undefined;
+	let leaseEpoch: number | undefined;
+	let assignmentGeneration: number | undefined;
+	if (raw.version === '1.0') {
+		if (fencingFields.some((field) => Object.hasOwn(raw, field))) {
+			throw new EventValidationError(
+				'invalid_bridge_event',
+				'Bridge event version 1.0 must not include fencing fields'
+			);
+		}
+		shardId = optionalString(raw.shard_id);
+	} else {
+		shardId = string(raw.shard_id, 'shard_id');
+		nodeId = string(raw.node_id, 'node_id');
+		leaseEpoch = integer(raw.lease_epoch, 'lease_epoch');
+		assignmentGeneration = integer(raw.assignment_generation, 'assignment_generation');
 	}
 
 	const conversation = object(raw.conversation, 'conversation');
@@ -135,11 +154,6 @@ export async function parseOpenClawBridgeEvent(
 	}
 
 	const accountId = optionalString(raw.account_id);
-	const shardId = optionalString(raw.shard_id);
-	const nodeId = optionalString(raw.node_id);
-	const leaseEpoch = typeof raw.lease_epoch === 'number' ? raw.lease_epoch : undefined;
-	const assignmentGeneration = typeof raw.assignment_generation === 'number'
-		? raw.assignment_generation : undefined;
 	return {
 		eventId: string(raw.event_id, 'event_id'),
 		occurredAt,

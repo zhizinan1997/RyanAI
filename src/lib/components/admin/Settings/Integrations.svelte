@@ -101,6 +101,7 @@
 
 	let botConnections: BotGatewayConnection[] | null = null;
 	let botLoadError = false;
+	let botConnectionsLoading = false;
 	let botBusy: Record<string, boolean> = {};
 	let userBotQuery = '';
 	let adminBindings: BotGatewayBinding[] | null = null;
@@ -233,6 +234,8 @@
 	};
 
 	const loadBotConnections = async (notify = false) => {
+		if (botConnectionsLoading) return;
+		botConnectionsLoading = true;
 		try {
 			botConnections = await getBotGatewayConnections(localStorage.token);
 			botLoadError = false;
@@ -240,6 +243,8 @@
 			botConnections = [];
 			botLoadError = true;
 			if (notify) toast.error($i18n.t('Failed to load messaging bot connections.'));
+		} finally {
+			botConnectionsLoading = false;
 		}
 	};
 
@@ -689,7 +694,10 @@
 		servers = (toolResult?.TOOL_SERVER_CONNECTIONS ?? []) as ToolServerConnection[];
 		terminalConnections = (terminalResult?.TERMINAL_SERVER_CONNECTIONS ??
 			[]) as TerminalConnection[];
-		operationsPoll = setInterval(() => void loadOperations(), 5_000);
+		operationsPoll = setInterval(() => {
+			void loadOperations();
+			void loadBotConnections();
+		}, 5_000);
 	});
 
 	onDestroy(() => {

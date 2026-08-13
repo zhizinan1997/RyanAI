@@ -319,6 +319,50 @@ test('messages in the same conversation are serialized', async () => {
 	assert.equal(maxActive, 1);
 });
 
+test('conversation queue wait uses the queue bound instead of the backend timeout', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, {
+		requestTimeoutMs: 5_000,
+		maxQueueWaitMs: 25
+	});
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	await state.initialize();
+	let releaseHead!: () => void;
+	let markStarted!: () => void;
+	const started = new Promise<void>((resolve) => { markStarted = resolve; });
+	const gateway = new RyanAiGateway(
+		config,
+		state,
+		{
+			async send(event) {
+				if (event.eventId === 'queue-head') {
+					markStarted();
+					await new Promise<void>((resolve) => { releaseHead = resolve; });
+				}
+				return { text: 'ok' };
+			}
+		},
+		quietLogger()
+	);
+	const head = gateway.handle(inboundEvent({ eventId: 'queue-head' }));
+	await started;
+	try {
+		const queued = gateway.handle(inboundEvent({ eventId: 'queue-waiter' }));
+		const reply = await Promise.race([
+			queued,
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error('queue did not expire')), 500)
+			)
+		]);
+		assert.equal(reply.reason, 'safe-error');
+	} finally {
+		releaseHead();
+		await head;
+		await state.close();
+		await rm(dataDir, { recursive: true, force: true });
+	}
+});
+
 test('backend failure remains handled and returns only the safe error', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir);

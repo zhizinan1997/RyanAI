@@ -627,9 +627,12 @@ async def _save_authoritative_credential(
     connection: BotGatewayConnectionModel,
     credentials: dict[str, Any],
 ) -> None:
-    """Write SQL first when enabled, then maintain the legacy sidecar cache."""
-    if _credential_center_enabled():
+    """Write SQL first, rolling it back if the sidecar rejects the update."""
+    credential_center_enabled = _credential_center_enabled()
+    previous_credentials: dict[str, Any] | None = None
+    if credential_center_enabled:
         try:
+            previous_credentials = await BotGatewayCredentials.get_credential(db, connection.id)
             await BotGatewayCredentials.save_credential(
                 db,
                 connection.id,
@@ -648,11 +651,30 @@ async def _save_authoritative_credential(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid bot credentials',
             ) from exc
-    await _sidecar_request(
-        'PUT',
-        f'/v1/connections/{quote(connection.id, safe="")}/credentials',
-        credentials,
-    )
+    try:
+        await _sidecar_request(
+            'PUT',
+            f'/v1/connections/{quote(connection.id, safe="")}/credentials',
+            credentials,
+        )
+    except Exception:
+        if credential_center_enabled:
+            try:
+                if previous_credentials is None:
+                    await BotGatewayCredentials.delete_credential(db, connection.id)
+                else:
+                    await BotGatewayCredentials.save_credential(
+                        db,
+                        connection.id,
+                        connection.channel,
+                        previous_credentials,
+                    )
+            except Exception:
+                log.exception(
+                    'Failed to restore authoritative credentials for connection %s',
+                    connection.id,
+                )
+        raise
 
 
 def _internal_error_response(status_code: int, code: str) -> JSONResponse:
@@ -1095,18 +1117,8 @@ async def reconnect(connection_id: str, user=Depends(get_admin_user)):
 @router.post('/admin/connections/{connection_id}/logout', status_code=status.HTTP_204_NO_CONTENT)
 async def logout(connection_id: str, user=Depends(get_admin_user)):
     connection = await _get_connection_or_404(connection_id)
-    remote = await _sidecar_request('POST', f'/v1/connections/{quote(connection_id, safe="")}/logout')
-    connection = await _sync_connection(connection, _remote_object(remote, 'connection'))
-    await BotGateway.update_connection(
-        connection.id,
-        {
-            'status': 'logged_out',
-            'credentials_configured': False,
-            'account_id': None,
-            'account_name': None,
-            'last_error': None,
-        },
-    )
+    await _sidecar_request('POST', f'/v1/connections/{quote(connection_id, safe="")}/logout')
+    await BotGateway.clear_connection_credentials(connection.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1453,17 +1465,8 @@ async def logout_user_bot(channel: BotGatewayChannel, user=Depends(get_verified_
         await _sidecar_request('DELETE', f'/v1/connections/{quote(connection.id, safe="")}')
     except HTTPException as exc:
         if exc.status_code != status.HTTP_404_NOT_FOUND:
-            log.warning('Could not immediately remove user bot from sidecar %s: %s', connection.id, exc.detail)
-    async with get_async_db() as db:
-        result = await db.execute(
-            text(
-                'DELETE FROM bot_gateway_connection '
-                'WHERE id = :connection_id AND owner_user_id = :user_id'
-            ),
-            {'connection_id': connection.id, 'user_id': user.id},
-        )
-        await db.commit()
-    if result.rowcount != 1:
+            raise
+    if not await BotGateway.delete_owned_connection(connection.id, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -2011,10 +2014,11 @@ async def _run_chat(  # noqa: C901
     message = await Chats.get_message_by_id_and_message_id(chat_id, assistant_message_id)
     if not message:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='RyanAI did not persist a response')
-    error = message.get('error')
-    if error:
-        detail = error.get('content') if isinstance(error, dict) else str(error)
-        return str(detail or 'Ryan AI 暂时无法处理这条消息。')
+    if message.get('error'):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='RyanAI model failed to produce a response',
+        )
     text = message.get('content') or get_output_text(message.get('output'))
     image_urls = _generated_image_urls(message, user.id)
     if image_urls:
@@ -2172,6 +2176,11 @@ async def _recover_persisted_reply(
     message = await Chats.get_message_by_id_and_message_id(record.chat_id, record.assistant_message_id)
     if not message or message.get('done') is False:
         return None
+    if message.get('error'):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='RyanAI model failed to produce a response',
+        )
     text = message.get('content') or get_output_text(message.get('output'))
     image_urls = _generated_image_urls(message, user_id)
     if image_urls:

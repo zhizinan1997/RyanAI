@@ -74,6 +74,7 @@ export type GatewayRuntime = EnabledGatewayRuntime | DisabledGatewayRuntime;
 export interface RuntimeDependencies {
 	transport?: RyanAiTransport;
 	logger?: Logger;
+	controlPlane?: GatewayControlPlaneClient;
 }
 
 export async function createRuntime(
@@ -103,14 +104,14 @@ export async function createRuntime(
 	const transport = dependencies.transport || new RyanAiClient(config);
 	const gateway = new RyanAiGateway(config, state, transport, logger.child('bridge'));
 	const coordinator = createCoordinator(config, logger);
-	const controlPlane = new GatewayControlPlaneClient(config);
+	const controlPlane = dependencies.controlPlane ?? new GatewayControlPlaneClient(config);
 	const authoritativeControlPlane = config.coordinationMode === 'redis';
 	const adapter: ChannelAdapter =
 		config.adapterMode === 'mock'
 			? new MockAdapter(config, state, gateway)
 			: new OpenClawAdapter(config, state, vault, logger.child('openclaw-adapter'), {
 				coordinator,
-				...(authoritativeControlPlane ? { controlPlane } : {})
+				controlPlane
 			});
 	const controlServer = new ControlServer(
 		config,
@@ -152,6 +153,12 @@ export async function createRuntime(
 				if (authoritativeControlPlane) {
 					await controlPlane.registerNode();
 					await controlPlane.syncDesiredState(state);
+				} else {
+					await controlPlane.syncDesiredState(state).catch((error) =>
+						logger.warn('Bot gateway initial desired-state sync failed', {
+							error_message: error instanceof Error ? error.message : String(error)
+						})
+					);
 				}
 				await adapter.start();
 				if (authoritativeControlPlane) {

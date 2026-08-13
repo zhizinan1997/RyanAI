@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readdir } from 'node:fs/promises';
 
+import type { GatewayControlPlaneClient } from '../src/control-plane-client.js';
 import { createRuntime } from '../src/runtime.js';
 import { signRequest } from '../src/security/hmac.js';
-import { tempDataDir, testConfig } from './helpers.js';
+import { quietLogger, tempDataDir, testConfig } from './helpers.js';
 
 function signedOptions(
 	secret: string,
@@ -150,6 +151,39 @@ test('disabled mode starts health only without initializing state or vault', asy
 		assert.equal(control.status, 503);
 		assert.equal(((await control.json()) as { error: { code: string } }).error.code, 'disabled');
 		assert.deepEqual(await readdir(dataDir), []);
+	} finally {
+		await runtime.stop();
+	}
+});
+
+test('single-node runtime starts when the initial desired-state sync fails', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir);
+	const calls: string[] = [];
+	const controlPlane = {
+		async syncDesiredState() {
+			calls.push('sync');
+			throw new Error('control_plane_unavailable');
+		},
+		async registerNode() {
+			calls.push('register');
+		},
+		async heartbeat() {
+			calls.push('heartbeat');
+		}
+	} as unknown as GatewayControlPlaneClient;
+	const runtime = await createRuntime(config, {
+		controlPlane,
+		logger: quietLogger()
+	});
+	assert.equal(runtime.enabled, true);
+	if (!runtime.enabled) throw new Error('expected enabled runtime');
+
+	try {
+		const port = await runtime.start();
+		assert.ok(port > 0);
+		assert.equal(calls[0], 'sync');
+		assert.equal((await runtime.state.listConnections()).length, 2);
 	} finally {
 		await runtime.stop();
 	}

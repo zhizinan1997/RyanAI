@@ -1032,8 +1032,10 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
             created_at=now,
             updated_at=now,
         )
-        logged_out = connection.model_copy(update={'status': 'logged_out'})
-        update_connection = AsyncMock(return_value=logged_out)
+        clear_credentials = AsyncMock(return_value=connection.model_copy(update={
+            'status': 'logged_out',
+            'credentials_configured': False,
+        }))
         with (
             patch.object(self.gateway_router, '_get_connection_or_404', AsyncMock(return_value=connection)),
             patch.object(
@@ -1041,14 +1043,12 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
                 '_sidecar_request',
                 AsyncMock(return_value={'version': '1.0', 'connection': {'status': 'logged_out'}}),
             ),
-            patch.object(self.gateway_router, '_sync_connection', AsyncMock(return_value=logged_out)),
-            patch.object(self.gateway_router.BotGateway, 'update_connection', update_connection),
+            patch.object(self.gateway_router.BotGateway, 'clear_connection_credentials', clear_credentials),
         ):
             response = await self.gateway_router.logout('qq-default', user=SimpleNamespace(id='admin-1'))
 
         self.assertEqual(response.status_code, 204)
-        values = update_connection.await_args.args[1]
-        self.assertFalse(values['credentials_configured'])
+        clear_credentials.assert_awaited_once_with('qq-default')
 
     async def test_user_unbind_deletes_authoritative_connection_when_sidecar_already_removed_it(self):
         now = int(time.time())
@@ -1063,23 +1063,7 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
             created_at=now,
             updated_at=now,
         )
-        executed: list[tuple[str, dict[str, str]]] = []
-
-        class DeleteResult:
-            rowcount = 1
-
-        class FakeSession:
-            async def execute(self, statement, values):
-                executed.append((str(statement), values))
-                return DeleteResult()
-
-            async def commit(self):
-                return None
-
-        @asynccontextmanager
-        async def session_context():
-            yield FakeSession()
-
+        delete_connection = AsyncMock(return_value=True)
         with (
             patch.object(
                 self.gateway_router.BotGateway,
@@ -1091,19 +1075,14 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
                 '_sidecar_request',
                 AsyncMock(side_effect=self.gateway_router.HTTPException(status_code=404)),
             ),
-            patch.object(self.gateway_router, 'get_async_db', session_context),
+            patch.object(self.gateway_router.BotGateway, 'delete_owned_connection', delete_connection),
         ):
             response = await self.gateway_router.logout_user_bot(
                 'qq', user=SimpleNamespace(id='user-1')
             )
 
         self.assertEqual(response.status_code, 204)
-        self.assertEqual(len(executed), 1)
-        self.assertIn('DELETE FROM bot_gateway_connection', executed[0][0])
-        self.assertEqual(
-            executed[0][1],
-            {'connection_id': 'bot-qq-user-1', 'user_id': 'user-1'},
-        )
+        delete_connection.assert_awaited_once_with('bot-qq-user-1', 'user-1')
 
     async def test_user_unbind_keeps_backend_cleanup_when_sidecar_is_unavailable(self):
         now = int(time.time())
@@ -1119,20 +1098,7 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
             updated_at=now,
         )
 
-        class DeleteResult:
-            rowcount = 1
-
-        class FakeSession:
-            async def execute(self, statement, values):
-                return DeleteResult()
-
-            async def commit(self):
-                return None
-
-        @asynccontextmanager
-        async def session_context():
-            yield FakeSession()
-
+        delete_connection = AsyncMock()
         with (
             patch.object(
                 self.gateway_router.BotGateway,
@@ -1144,13 +1110,13 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
                 '_sidecar_request',
                 AsyncMock(side_effect=self.gateway_router.HTTPException(status_code=503)),
             ),
-            patch.object(self.gateway_router, 'get_async_db', session_context),
+            patch.object(self.gateway_router.BotGateway, 'delete_owned_connection', delete_connection),
         ):
-            response = await self.gateway_router.logout_user_bot(
-                'wechat', user=SimpleNamespace(id='user-1')
-            )
+            with self.assertRaises(self.gateway_router.HTTPException) as caught:
+                await self.gateway_router.logout_user_bot('wechat', user=SimpleNamespace(id='user-1'))
 
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(caught.exception.status_code, 503)
+        delete_connection.assert_not_awaited()
 
     async def test_sidecar_account_label_marks_a_completed_wechat_login_as_configured(self):
         now = int(time.time())

@@ -24,6 +24,7 @@ test('configuration follows the fixed environment contract', () => {
 	assert.deepEqual([...config.enabledChannels], ['wechat']);
 	assert.equal(config.adapterMode, 'openclaw');
 	assert.equal(config.openClawTopology, 'shared');
+	assert.equal(config.requestTimeoutMs, 600_000);
 	assert.equal(config.maxGlobalActiveEvents, 16);
 	assert.equal(config.maxConnectionActiveEvents, 4);
 });

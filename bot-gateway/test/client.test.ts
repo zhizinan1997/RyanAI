@@ -5,10 +5,16 @@ import test from 'node:test';
 
 import { OpenClawBridgeClient } from '../src/openclaw/bridge-client.js';
 import { parseOpenClawBridgeEvent } from '../src/openclaw/bridge-server.js';
-import { buildEventMultipart } from '../src/ryanai-client.js';
+import { buildMultipartBody } from '../src/multipart.js';
+import { buildEventMultipart, buildWireEvent } from '../src/ryanai-client.js';
 import { RyanAiClient } from '../src/ryanai-client.js';
 import { verifyRequest } from '../src/security/hmac.js';
 import { inboundEvent, tempDataDir, testConfig } from './helpers.js';
+
+function bridgeMultipart(overrides: Record<string, unknown>) {
+	const wireEvent = buildWireEvent(inboundEvent({ eventId: 'bridge-protocol' }));
+	return buildMultipartBody(JSON.stringify({ ...wireEvent, ...overrides }), []);
+}
 
 test('RyanAI client sends signed multipart metadata and attachment bytes', async () => {
 	const dataDir = await tempDataDir();
@@ -137,5 +143,88 @@ test('OpenClaw bridge multipart round-trips multiple binary files and Unicode na
 		})),
 		event.attachments
 	);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('OpenClaw bridge accepts single-node 1.0 shard routing without fencing metadata', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir);
+	const multipart = bridgeMultipart({
+		version: '1.0',
+		account_id: 'bot-qq-u1',
+		shard_id: 'qq-shard-000'
+	});
+	const parsed = await parseOpenClawBridgeEvent(multipart.body, multipart.contentType, config);
+	assert.equal(parsed.accountKey, 'bot-qq-u1');
+	assert.equal(parsed.shardId, 'qq-shard-000');
+	assert.equal(parsed.nodeId, undefined);
+	assert.equal(parsed.leaseEpoch, undefined);
+	assert.equal(parsed.assignmentGeneration, undefined);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('OpenClaw bridge accepts complete, valid 1.1 lease metadata', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir);
+	const multipart = bridgeMultipart({
+		version: '1.1',
+		shard_id: 'qq-shard-000',
+		node_id: 'node-a',
+		lease_epoch: 0,
+		assignment_generation: Number.MAX_SAFE_INTEGER
+	});
+	const parsed = await parseOpenClawBridgeEvent(multipart.body, multipart.contentType, config);
+	assert.equal(parsed.shardId, 'qq-shard-000');
+	assert.equal(parsed.nodeId, 'node-a');
+	assert.equal(parsed.leaseEpoch, 0);
+	assert.equal(parsed.assignmentGeneration, Number.MAX_SAFE_INTEGER);
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('OpenClaw bridge rejects fencing metadata on version 1.0', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir);
+	for (const [field, value] of [
+		['node_id', 'node-a'],
+		['lease_epoch', 0],
+		['assignment_generation', 0]
+	] as const) {
+		const multipart = bridgeMultipart({ version: '1.0', [field]: value });
+		await assert.rejects(
+			() => parseOpenClawBridgeEvent(multipart.body, multipart.contentType, config),
+			/version 1\.0 must not include fencing fields/
+		);
+	}
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('OpenClaw bridge rejects incomplete or invalid version 1.1 lease metadata', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir);
+	const validLease = {
+		version: '1.1',
+		shard_id: 'qq-shard-000',
+		node_id: 'node-a',
+		lease_epoch: 1,
+		assignment_generation: 2
+	};
+	const invalidCases: Record<string, unknown>[] = [
+		{ version: '1.1' },
+		{ ...validLease, assignment_generation: undefined },
+		{ ...validLease, shard_id: 42 },
+		{ ...validLease, node_id: '   ' },
+		{ ...validLease, lease_epoch: '1' },
+		{ ...validLease, assignment_generation: null },
+		{ ...validLease, lease_epoch: -1 },
+		{ ...validLease, assignment_generation: 1.5 },
+		{ ...validLease, lease_epoch: Number.MAX_SAFE_INTEGER + 1 }
+	];
+	for (const event of invalidCases) {
+		const multipart = bridgeMultipart(event);
+		await assert.rejects(
+			() => parseOpenClawBridgeEvent(multipart.body, multipart.contentType, config),
+			/required|integer/
+		);
+	}
 	await rm(dataDir, { recursive: true, force: true });
 });

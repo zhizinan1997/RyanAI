@@ -973,6 +973,125 @@ class BotGatewayTable:
             await session.commit()
             return BotGatewayConnectionModel.model_validate(item)
 
+    async def clear_connection_credentials(
+        self,
+        connection_id: str,
+        db: AsyncSession | None = None,
+    ) -> BotGatewayConnectionModel | None:
+        """Clear durable account state and invalidate the current runtime assignment."""
+        async with get_async_db_context(db) as session:
+            stmt = select(BotGatewayConnection).where(BotGatewayConnection.id == connection_id)
+            if session.bind and session.bind.dialect.name == 'postgresql':
+                stmt = stmt.with_for_update()
+            item = (await session.execute(stmt)).scalars().first()
+            if item is None:
+                return None
+
+            await session.execute(
+                delete(BotGatewayCredential).where(BotGatewayCredential.connection_id == connection_id)
+            )
+            await session.execute(
+                delete(BotGatewayAccountCheckpoint).where(
+                    BotGatewayAccountCheckpoint.connection_id == connection_id
+                )
+            )
+
+            runtime_config_keys = {
+                'account_error_streak',
+                'control_operation_in_progress',
+                'credential_migration_in_progress',
+                'half_open',
+                'last_shard_move_at',
+                'overloaded_windows',
+                'runtime_metrics',
+                'scheduler_window_minute',
+                'trusted_external_user_id',
+                'underloaded_windows',
+            }
+            item.config = {
+                key: value
+                for key, value in (item.config if isinstance(item.config, dict) else {}).items()
+                if key not in runtime_config_keys
+            }
+            item.status = 'logged_out'
+            item.credentials_configured = False
+            item.account_id = None
+            item.account_name = None
+            item.account_key = None
+            item.shard_id = None
+            item.last_error = None
+            item.last_seen_at = None
+            item.last_runtime_node_id = None
+            item.last_runtime_at = None
+            item.assignment_generation = int(item.assignment_generation or 0) + 1
+            item.updated_at = int(time.time())
+            await session.commit()
+            return BotGatewayConnectionModel.model_validate(item)
+
+    async def delete_owned_connection(
+        self,
+        connection_id: str,
+        owner_user_id: str,
+        db: AsyncSession | None = None,
+    ) -> bool:
+        """Delete a personal connection and its dependents without relying on FK cascades."""
+        async with get_async_db_context(db) as session:
+            ownership_stmt = select(BotGatewayConnection.id).where(
+                BotGatewayConnection.id == connection_id,
+                BotGatewayConnection.owner_user_id == owner_user_id,
+            )
+            if session.bind and session.bind.dialect.name == 'postgresql':
+                ownership_stmt = ownership_stmt.with_for_update()
+            if await session.scalar(ownership_stmt) is None:
+                return False
+
+            binding_ids = select(BotGatewayBinding.id).where(
+                BotGatewayBinding.connection_id == connection_id
+            )
+            await session.execute(
+                delete(BotGatewayEvent).where(BotGatewayEvent.connection_id == connection_id)
+            )
+            await session.execute(
+                delete(BotGatewayConversation).where(
+                    BotGatewayConversation.connection_id == connection_id
+                )
+            )
+            await session.execute(
+                update(BotGatewayBindingCode)
+                .where(BotGatewayBindingCode.consumed_by_binding_id.in_(binding_ids))
+                .values(consumed_by_binding_id=None)
+            )
+            await session.execute(
+                delete(BotGatewayBinding).where(BotGatewayBinding.connection_id == connection_id)
+            )
+            await session.execute(
+                delete(BotGatewayGroup).where(BotGatewayGroup.connection_id == connection_id)
+            )
+            await session.execute(
+                delete(BotGatewayCredential).where(BotGatewayCredential.connection_id == connection_id)
+            )
+            await session.execute(
+                delete(BotGatewayAccountCheckpoint).where(
+                    BotGatewayAccountCheckpoint.connection_id == connection_id
+                )
+            )
+            await session.execute(
+                update(BotGatewayBindingHistory)
+                .where(BotGatewayBindingHistory.connection_id == connection_id)
+                .values(connection_id=None)
+            )
+            result = await session.execute(
+                delete(BotGatewayConnection).where(
+                    BotGatewayConnection.id == connection_id,
+                    BotGatewayConnection.owner_user_id == owner_user_id,
+                )
+            )
+            if result.rowcount != 1:
+                await session.rollback()
+                return False
+            await session.commit()
+            return True
+
     async def update_connection_runtime_metrics(
         self,
         node_id: str,

@@ -98,6 +98,18 @@ export class GatewayControlPlaneClient {
 		return payload.credentials;
 	}
 
+	async storeCredential(
+		connectionId: string,
+		channel: Channel,
+		credentials: Record<string, unknown>
+	): Promise<void> {
+		await this.request(
+			`/api/v1/internal/bot-gateway/credentials/${encodeURIComponent(connectionId)}`,
+			'POST',
+			{ channel, credentials }
+		);
+	}
+
 	async fetchCheckpoint(connectionId: string): Promise<RemoteCheckpoint | undefined> {
 		try {
 			const result = await this.request<{ payload_base64: string; payload_sha256: string }>(

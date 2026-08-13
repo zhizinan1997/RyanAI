@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { OpenClawAdapter } from '../src/adapters/openclaw.js';
 import type { GatewayConfig } from '../src/config.js';
+import type { GatewayControlPlaneClient } from '../src/control-plane-client.js';
 import { OpenClawHost, type OpenClawCredentialSet } from '../src/openclaw/host.js';
 import type {
 	PendingOfficialLogin,
@@ -298,6 +299,51 @@ test('OpenClaw adapter restores encrypted QQ credentials and stays healthy witho
 	await rm(dataDir, { recursive: true, force: true });
 });
 
+test('OpenClaw adapter restores SQL credentials when the local vault is missing', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
+	await Promise.all([state.initialize(), vault.initialize()]);
+	await state.upsertConnection({
+		id: 'qq-default',
+		channel: 'qq',
+		enabled: true,
+		status: 'logged_out',
+		credentialsConfigured: true,
+		updatedAt: new Date().toISOString()
+	});
+	const fetched: string[] = [];
+	const controlPlane = {
+		async fetchCredential(connectionId: string, targetVault: CredentialVault) {
+			fetched.push(connectionId);
+			const credentials = { app_id: 'sql-app', app_secret: 'sql-secret' };
+			await targetVault.put(connectionId, credentials);
+			return credentials;
+		}
+	} as unknown as GatewayControlPlaneClient;
+	const host = new FakeOpenClawHost();
+	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), { host, controlPlane });
+	const internals = adapter as unknown as {
+		started: boolean;
+		ensureRuntime(snapshot: ConnectionSnapshot): Promise<{ credentials?: { appId?: string } }>;
+	};
+	internals.started = true;
+	const snapshot = await state.getConnection('qq-default');
+	assert.ok(snapshot);
+
+	const runtime = await internals.ensureRuntime(snapshot);
+
+	assert.deepEqual(fetched, ['qq-default']);
+	assert.equal((await vault.get('qq-default'))?.app_id, 'sql-app');
+	assert.equal(runtime.credentials?.appId, 'sql-app');
+	assert.equal(host.credentials.qq?.appId, 'sql-app');
+	assert.equal((await state.getConnection('qq-default'))?.status, 'connected');
+	await adapter.stop();
+	await state.close();
+	await rm(dataDir, { recursive: true, force: true });
+});
+
 test('OpenClaw adapter replaces the generic QQ account id with the configured app id', async () => {
 	const dataDir = await tempDataDir();
 	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
@@ -365,9 +411,18 @@ test('OpenClaw adapter persists an official WeChat QR result and removes it on l
 		completion,
 		cancel: () => undefined
 	};
+	let storedInSql = false;
 	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), {
 		host,
-		startWeixinLogin: async () => pending
+		startWeixinLogin: async () => pending,
+		controlPlane: {
+			async storeCredential() {
+				assert.equal(await vault.get('wechat-default'), undefined);
+				assert.equal(host.restartCount, 0);
+				assert.equal(host.credentials.wechat, undefined);
+				storedInSql = true;
+			}
+		} as unknown as GatewayControlPlaneClient
 	});
 	await adapter.start();
 
@@ -377,6 +432,7 @@ test('OpenClaw adapter persists an official WeChat QR result and removes it on l
 
 	resolveCredential({ accountId: 'wx-account', botToken: 'wx-token' });
 	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'connected');
+	assert.equal(storedInSql, true);
 	assert.equal((await vault.get('wechat-default'))?.botToken, 'wx-token');
 	assert.equal((await state.getConnection('wechat-default'))?.credentialsConfigured, true);
 	assert.equal(host.credentials.wechat?.accountId, 'wx-account');
@@ -384,9 +440,60 @@ test('OpenClaw adapter persists an official WeChat QR result and removes it on l
 
 	const loggedOut = await adapter.logout('wechat-default');
 	assert.equal(loggedOut.status, 'logged_out');
+	assert.equal(loggedOut.credentialsConfigured, false);
+	assert.equal(loggedOut.accountLabel, undefined);
+	assert.equal(loggedOut.trustedOwnerExternalId, undefined);
+	assert.equal(loggedOut.accountKey, undefined);
+	assert.equal(loggedOut.shardId, undefined);
 	assert.equal(await vault.get('wechat-default'), undefined);
 	assert.equal(host.credentials.wechat, undefined);
 	await adapter.stop();
+	await rm(dataDir, { recursive: true, force: true });
+});
+
+test('QR credentials are rejected locally when SQL storage fails', async () => {
+	const dataDir = await tempDataDir();
+	const config = testConfig(dataDir, { adapterMode: 'openclaw' });
+	const state = new GatewayStateStore(dataDir, config.replayTtlMs);
+	const vault = new CredentialVault(dataDir, config.credentialsEncryptionKey);
+	await Promise.all([state.initialize(), vault.initialize()]);
+	const host = new FakeOpenClawHost();
+	let resolveCredential!: (credential: WeixinLoginCredential) => void;
+	const completion = new Promise<WeixinLoginCredential>((resolve) => {
+		resolveCredential = resolve;
+	});
+	const pending: PendingOfficialLogin<WeixinLoginCredential> = {
+		qrCode: {
+			connectionId: 'wechat-default',
+			dataUrl: 'data:image/png;base64,AA==',
+			expiresAt: new Date(Date.now() + 60_000).toISOString()
+		},
+		completion,
+		cancel: () => undefined
+	};
+	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), {
+		host,
+		startWeixinLogin: async () => pending,
+		controlPlane: {
+			async storeCredential() {
+				throw new Error('sql_unavailable');
+			}
+		} as unknown as GatewayControlPlaneClient
+	});
+	await adapter.start();
+	await adapter.login('wechat-default', {});
+
+	resolveCredential({ accountId: 'wx-rejected', botToken: 'rejected-token' });
+	await waitFor(async () =>
+		(await state.getConnection('wechat-default'))?.detail?.includes('not applied') === true
+	);
+
+	assert.equal(await vault.get('wechat-default'), undefined);
+	assert.notEqual((await state.getConnection('wechat-default'))?.credentialsConfigured, true);
+	assert.equal(host.credentials.wechat, undefined);
+	assert.equal(host.restartCount, 0);
+	await adapter.stop();
+	await state.close();
 	await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -417,7 +524,10 @@ test('OpenClaw adapter reconnects automatically after a transient startup migrat
 	};
 	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), {
 		host,
-		startWeixinLogin: async () => pending
+		startWeixinLogin: async () => pending,
+		controlPlane: {
+			async storeCredential() {}
+		} as unknown as GatewayControlPlaneClient
 	});
 	await adapter.start();
 	await adapter.login('wechat-default', {});
@@ -455,7 +565,10 @@ test('rescanning an already connected WeChat credential finishes without restart
 	};
 	const adapter = new OpenClawAdapter(config, state, vault, quietLogger(), {
 		host,
-		startWeixinLogin: async () => pending
+		startWeixinLogin: async () => pending,
+		controlPlane: {
+			async storeCredential() {}
+		} as unknown as GatewayControlPlaneClient
 	});
 	await adapter.start();
 	await waitFor(async () => (await state.getConnection('wechat-default'))?.status === 'connected');

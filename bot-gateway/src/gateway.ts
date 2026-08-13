@@ -58,7 +58,7 @@ export class RyanAiGateway {
 		// A slow model turn must not pin every later message in the same
 		// conversation: past this bound the queued event fails fast and safely
 		// instead of holding the channel's delivery slot open indefinitely.
-		this.serialQueue = new KeyedSerialQueue(100, config.requestTimeoutMs);
+		this.serialQueue = new KeyedSerialQueue(100, config.maxQueueWaitMs);
 		this.fairQueue = new FairConnectionQueue({
 			maxGlobalActive: config.maxGlobalActiveEvents,
 			maxConnectionActive: config.maxConnectionActiveEvents,

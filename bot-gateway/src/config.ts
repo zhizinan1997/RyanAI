@@ -312,7 +312,7 @@ export function loadConfig(
 		requestTimeoutMs: parseInteger(
 			'BOT_GATEWAY_REQUEST_TIMEOUT_MS',
 			env.BOT_GATEWAY_REQUEST_TIMEOUT_MS,
-			120_000,
+			600_000,
 			1_000,
 			600_000
 		),
