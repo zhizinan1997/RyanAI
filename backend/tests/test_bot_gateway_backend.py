@@ -760,7 +760,7 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
             {'chat_id': target.chat_id, 'model_id': target.model_id},
         )
 
-    def test_bot_conversation_inherits_latest_document_as_full_context(self):
+    def test_bot_conversation_only_sends_current_turn_files(self):
         old_pdf = {
             'type': 'file',
             'id': 'old-pdf',
@@ -789,14 +789,38 @@ class BotGatewayRouterSemanticsTests(IsolatedAsyncioTestCase):
             {'role': 'assistant', 'content': 'received'},
         ]
 
-        inherited = self.gateway_router._conversation_context_files(history, [image])
-        self.assertEqual([item['id'] for item in inherited], ['current-image', 'latest-pdf'])
-        self.assertNotIn('context', inherited[0])
-        self.assertEqual(inherited[1]['context'], 'full')
+        current = self.gateway_router._conversation_context_files(history, [image])
+        self.assertEqual([item['id'] for item in current], ['current-image'])
+        self.assertNotIn('context', current[0])
 
         replacement = self.gateway_router._conversation_context_files(history, [old_pdf])
         self.assertEqual([item['id'] for item in replacement], ['old-pdf'])
         self.assertEqual(replacement[0]['context'], 'full')
+
+    def test_bot_compaction_policy_uses_user_rounds_and_token_threshold(self):
+        messages = [
+            {'role': 'user', 'content': 'one'},
+            {'role': 'assistant', 'content': 'reply'},
+            {'role': 'user', 'content': 'two'},
+            {'role': 'assistant', 'content': 'reply'},
+        ]
+        current = {'role': 'user', 'content': 'three'}
+        with (
+            patch.object(self.gateway_router, 'BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE', True),
+            patch.object(self.gateway_router, 'BOT_GATEWAY_CONTEXT_COMPACTION_ROUND_THRESHOLD', 3),
+            patch.object(self.gateway_router, 'BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD', 10_000),
+        ):
+            enabled, forced = self.gateway_router._bot_compaction_policy(messages, current)
+
+        self.assertTrue(enabled)
+        self.assertTrue(forced)
+
+    def test_bot_compaction_policy_can_be_disabled(self):
+        with patch.object(self.gateway_router, 'BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE', False):
+            self.assertEqual(
+                self.gateway_router._bot_compaction_policy([], {'role': 'user', 'content': 'hello'}),
+                (False, False),
+            )
 
     async def test_duplicate_nonce_returns_409_before_payload_parsing(self):
         request = SimpleNamespace(form=AsyncMock())

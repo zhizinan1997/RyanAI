@@ -447,6 +447,19 @@ BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY = int(os.getenv('BOT_GATEWAY_SHARD_ACCOUNT_CA
 BOT_GATEWAY_SHARD_LOAD_CAPACITY = int(os.getenv('BOT_GATEWAY_SHARD_LOAD_CAPACITY', '12'))
 BOT_GATEWAY_COORDINATION_MODE = os.getenv('BOT_GATEWAY_COORDINATION_MODE', 'single').strip().lower()
 
+# Bot gateway uses its own context-compaction policy (independent of the global
+# chat.context_compaction.enable flag) so WeChat/QQ conversations are summarized
+# aggressively even when the global setting is off.  Web chats are untouched.
+BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE = (
+    os.getenv('BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+)
+BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD = int(
+    os.getenv('BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD', '10000')
+)
+BOT_GATEWAY_CONTEXT_COMPACTION_ROUND_THRESHOLD = int(
+    os.getenv('BOT_GATEWAY_CONTEXT_COMPACTION_ROUND_THRESHOLD', '8')
+)
+
 ####################################
 # Uvicorn
 ####################################

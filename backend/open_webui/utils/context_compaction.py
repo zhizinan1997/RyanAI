@@ -49,7 +49,15 @@ async def compact_messages_for_request(
     system_prompt: str = '',
 ) -> tuple[list[dict], str | None, bool]:
     config = await _load_config()
-    if not config['enable']:
+
+    # Bot gateway requests carry their own compaction policy on request.state so
+    # that WeChat/QQ conversations are summarized aggressively even when the
+    # global ``chat.context_compaction.enable`` flag is off.  Web chats never set
+    # these attributes, so they keep the global behavior unchanged.
+    bot_compaction_enabled = bool(getattr(request.state, 'bot_compaction_enabled', False))
+    bot_force_compaction = bool(getattr(request.state, 'bot_force_compaction', False))
+
+    if not config['enable'] and not bot_compaction_enabled:
         return messages, None, False
 
     system_messages = [messages[0]] if messages and messages[0].get('role') == 'system' else []
@@ -57,7 +65,12 @@ async def compact_messages_for_request(
 
     messages, previous_summary = _apply_latest_summary_checkpoint(messages)
     token_threshold = _resolve_token_threshold(config['token_threshold'], config['token_cap'], metadata)
-    if not _exceeds_token_threshold(messages, system_prompt, previous_summary, token_threshold) or len(messages) <= 3:
+    # Bot gateway may force compaction by round count even when the token budget
+    # has not been exhausted (e.g. many short messages, or large images).
+    exceeds_threshold = (
+        _exceeds_token_threshold(messages, system_prompt, previous_summary, token_threshold) or bot_force_compaction
+    )
+    if not exceeds_threshold or len(messages) <= 3:
         return [*system_messages, *messages], previous_summary, False
 
     boundary = _find_compaction_boundary(messages, config['retention_percentage'])
@@ -485,3 +498,12 @@ def _estimate_tokens(value: Any) -> int:
         return 0
 
     return max(1, len(value) // 4)
+
+
+def estimate_messages_tokens(messages: list[dict]) -> int:
+    """Public wrapper around the token estimator used by the compaction engine.
+
+    Exposed so the bot gateway can decide whether to force-compaction before
+    dispatching the chat request, without depending on private helpers.
+    """
+    return _estimate_messages_tokens(messages)

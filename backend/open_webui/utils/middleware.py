@@ -2322,8 +2322,17 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             system_message = get_system_message(form_data.get('messages', []))
             form_data['messages'] = [system_message, *db_messages] if system_message else db_messages
 
-            # Inject image files into content as image_url parts (mirrors frontend logic)
+            # Bot gateway sends only the current turn's attachments. Historical
+            # attachments stay persisted in the chat but are not re-uploaded to
+            # the model on every subsequent gateway message.
+            bot_gateway_request = bool(getattr(request.state, 'bot_gateway_request', False))
             for message in form_data['messages']:
+                is_current_bot_message = message.get('id') == user_message_id
+                if bot_gateway_request and not is_current_bot_message:
+                    message.pop('files', None)
+                    continue
+
+                # Inject image files into content as image_url parts (mirrors frontend logic)
                 image_files = [
                     f
                     for f in message.get('files', [])

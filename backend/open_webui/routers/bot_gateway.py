@@ -28,6 +28,9 @@ import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from open_webui.env import (
+    BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE,
+    BOT_GATEWAY_CONTEXT_COMPACTION_ROUND_THRESHOLD,
+    BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD,
     BOT_GATEWAY_SCHEDULER_MODE,
     BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY,
     BOT_GATEWAY_SHARD_LOAD_CAPACITY,
@@ -1794,38 +1797,33 @@ def _conversation_context_files(
     current_files: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     normalized_current = []
-    has_current_document = False
     for file in current_files:
         if not isinstance(file, dict):
             continue
         item = dict(file)
         if _is_document_attachment(item):
             item['context'] = 'full'
-            has_current_document = True
         normalized_current.append(item)
 
-    if has_current_document:
-        return normalized_current
+    # Historical messages remain in the saved chat for web display, but their
+    # attachments must not be sent again on every bot turn.  The current turn's
+    # files are sufficient; document retrieval can use their extracted content.
+    return normalized_current
 
-    inherited_documents = []
-    for message in reversed(message_list):
-        if message.get('role') != 'user':
-            continue
-        inherited_documents = [
-            {**file, 'context': 'full'} for file in message.get('files', []) if _is_document_attachment(file)
-        ]
-        if inherited_documents:
-            break
 
-    seen = set()
-    result = []
-    for file in [*normalized_current, *inherited_documents]:
-        identity = file.get('id') or file.get('url') or json.dumps(file, sort_keys=True)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        result.append(file)
-    return result
+def _bot_compaction_policy(
+    message_list: list[dict[str, Any]], user_message: dict[str, Any]
+) -> tuple[bool, bool]:
+    if not BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE:
+        return False, False
+
+    messages = [*message_list, user_message]
+    rounds = sum(1 for message in messages if message.get('role') == 'user')
+    force_compaction = (
+        rounds >= BOT_GATEWAY_CONTEXT_COMPACTION_ROUND_THRESHOLD
+        or estimate_messages_tokens(messages) >= BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD
+    )
+    return True, force_compaction
 
 
 async def _prepare_chat(
@@ -1944,6 +1942,7 @@ async def _run_chat(  # noqa: C901
             detail='Bot gateway event lease was lost',
         )
     request = _build_chat_request(source_request, user)
+    request.state.bot_gateway_request = True
     model = request.app.state.MODELS.get(model_id, {})
     meta = model.get('info', {}).get('meta', {})
     tool_ids = list(meta.get('toolIds') or [])
@@ -1966,6 +1965,7 @@ async def _run_chat(  # noqa: C901
     history = (chat.chat or {}).get('history') if chat else {}
     history_messages = history.get('messages') if isinstance(history, dict) else {}
     message_list = get_message_list(history_messages or {}, parent_id) if parent_id else []
+
     user_message = {
         'id': user_message_id,
         'parentId': parent_id,
@@ -1977,6 +1977,21 @@ async def _run_chat(  # noqa: C901
         'timestamp': int(time.time()),
         'meta': {'source': 'bot_gateway', 'channel': event.channel, 'event_id': event.event_id},
     }
+
+    # Bot gateway compaction policy: summarize aggressively so WeChat/QQ
+    # conversations do not accumulate unbounded history (and re-upload images /
+    # files) across many turns.  This runs *independently* of the global
+    # chat.context_compaction.enable flag, so web chats are never affected.
+    bot_compaction_enabled, bot_force_compaction = _bot_compaction_policy(message_list, user_message)
+    if bot_compaction_enabled:
+        # Always expose the bot compaction policy so compact_messages_for_request
+        # honors it even when the global setting is off.
+        request.state.bot_compaction_enabled = True
+        request.state.bot_force_compaction = bot_force_compaction
+    else:
+        request.state.bot_compaction_enabled = False
+        request.state.bot_force_compaction = False
+
     context_files = _conversation_context_files(message_list, files)
     form_data: dict[str, Any] = {
         'model': model_id,
@@ -1989,7 +2004,10 @@ async def _run_chat(  # noqa: C901
         'session_id': f'bot-gateway:{conversation.id}',
         'background_tasks': {},
         'files': context_files or None,
+        'params': {},
     }
+    if bot_compaction_enabled:
+        form_data['params']['compact_token_threshold'] = BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD
     if tool_ids:
         form_data['tool_ids'] = tool_ids
     if filter_ids:
