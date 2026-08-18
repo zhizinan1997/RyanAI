@@ -2032,7 +2032,16 @@ async def convert_url_images_to_base64(form_data, user=None):
                         }
                     )
                 else:
-                    new_content.append(item)
+                    # A non-URL image reference is an Open WebUI file ID. If the
+                    # backing file was deleted, forwarding the ID makes compatible
+                    # gateways interpret it as raw Base64 and fail the request.
+                    if image_url.startswith(('http://', 'https://')):
+                        new_content.append(item)
+                    else:
+                        log.warning(
+                            'Dropping unresolved image file reference before model request: %s',
+                            f'{image_url[:120]}{"..." if len(image_url) > 120 else ""}',
+                        )
             except Exception as e:
                 log.debug(f'Error converting image URL to base64: {e}')
                 new_content.append(item)
