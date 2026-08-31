@@ -35,6 +35,7 @@ from open_webui.env import (
     AIOHTTP_POOL_CONNECTIONS_PER_HOST,
     AIOHTTP_POOL_DNS_TTL,
 )
+from open_webui.utils.misc import stream_chunks_handler
 
 log = logging.getLogger(__name__)
 
@@ -143,12 +144,10 @@ async def stream_wrapper(*args, content_handler=None, is_embedding=False, passth
         raise TypeError('stream_wrapper expected response arguments')
 
     try:
-        if content_handler:
-            stream = content_handler(response.content)
-        elif passthrough:
+        if passthrough:
             stream = response.content.iter_any()
         else:
-            stream = response.content
+            stream = content_handler(response.content) if content_handler else stream_chunks_handler(response.content)
         if user is not None and model_id is not None and form_data is not None:
             from open_webui.utils.credit.usage import CreditDeduct
 

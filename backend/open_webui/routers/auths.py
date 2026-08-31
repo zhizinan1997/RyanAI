@@ -5,21 +5,19 @@ import datetime
 import logging
 import re
 import time
-import urllib.parse
+import urllib
 import uuid
-from pathlib import Path
 from ssl import CERT_NONE, CERT_REQUIRED, PROTOCOL_TLS
 
-from aiohttp import BasicAuth, ClientSession, ClientTimeout
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from aiohttp import BasicAuth, ClientSession
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse, Response
 from ldap3 import NONE, Connection, Server, Tls
 from ldap3.utils.conv import escape_filter_chars
 from ldap3.utils.dn import parse_dn
 from open_webui.config import (
     ENABLE_PASSWORD_AUTH,
     OAUTH_PROVIDERS,
-    UPLOAD_DIR,
 )
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
@@ -52,7 +50,6 @@ from open_webui.models.auths import (
     UpdatePasswordForm,
 )
 from open_webui.models.config import Config
-from open_webui.models.credits import Credits
 from open_webui.models.groups import Groups
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.models.users import (
@@ -72,11 +69,9 @@ from open_webui.utils.auth import (
     get_http_authorization_cred,
     get_password_hash,
     get_verified_user,
-    has_unconsumed_email_verification,
     invalidate_token,
-    send_verify_email,
+    revoke_user_tokens,
     validate_password,
-    verify_email_by_code,
     verify_password,
 )
 from open_webui.utils.groups import apply_default_group_assignment
@@ -91,22 +86,9 @@ router = APIRouter()
 
 log = logging.getLogger(__name__)
 
-SPLASH_NOTICE_MEDIA_DIR = UPLOAD_DIR / 'splash_notice'
-SPLASH_NOTICE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
-SPLASH_NOTICE_MEDIA_MAX_SIZE = 15 * 1024 * 1024
-SPLASH_NOTICE_MEDIA_ALLOWED_TYPES = {
-    'image/png',
-    'image/jpeg',
-    'image/gif',
-    'image/webp',
-}
-SPLASH_NOTICE_MEDIA_ALLOWED_SUFFIXES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
-
 # Forgive us our failed attempts, as we forgive those
 # who exceed their allotted rate against this gate.
 signin_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=5 * 3, window=60 * 3)
-signup_verify_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=10, window=10 * 60)
-signup_verify_resend_rate_limiter = RateLimiter(redis_client=get_redis_client(), limit=3, window=10 * 60)
 # Best-effort throttle only: there is no caller identity before the provider answers,
 # and deployments may derive request.client from proxy headers.
 token_exchange_rate_limiter = (
@@ -125,24 +107,12 @@ ADMIN_CONFIG_KEYS = {
     'ADMIN_EMAIL': 'auth.admin.email',
     'WEBUI_URL': 'webui.url',
     'ENABLE_SIGNUP': 'ui.enable_signup',
-    'ENABLE_SIGNUP_VERIFY': 'ui.signup_verify.enabled',
-    'SIGNUP_EMAIL_DOMAIN_WHITELIST': 'ui.signup.email_domain_whitelist',
-    'ENABLE_CF_TURNSTILE': 'auth.cf_turnstile.enabled',
-    'CF_TURNSTILE_SITE_KEY': 'auth.cf_turnstile.site_key',
-    'CF_TURNSTILE_SECRET_KEY': 'auth.cf_turnstile.secret_key',
-    'SMTP_HOST': 'ui.smtp.host',
-    'SMTP_PORT': 'ui.smtp.port',
-    'SMTP_USERNAME': 'ui.smtp.username',
-    'SMTP_PASSWORD': 'ui.smtp.password',
-    'SMTP_SENT_FROM': 'ui.smtp.sent_from',
-    'ENABLE_AI_ERROR_EMAIL_NOTIFICATION': 'notifications.ai_error_email.enabled',
-    'AI_ERROR_EMAIL_COOLDOWN_SECONDS': 'notifications.ai_error_email.cooldown_seconds',
-    'AI_ERROR_EMAIL_RECIPIENT_MODE': 'notifications.ai_error_email.recipient_mode',
     'ENABLE_API_KEYS': 'auth.enable_api_keys',
     'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS': 'auth.api_key.endpoint_restrictions',
     'API_KEYS_ALLOWED_ENDPOINTS': 'auth.api_key.allowed_endpoints',
     'DEFAULT_USER_ROLE': 'ui.default_user_role',
     'DEFAULT_GROUP_ID': 'ui.default_group_id',
+    'DEFAULT_INTERFACE_SETTINGS': 'ui.default_interface_settings',
     'JWT_EXPIRES_IN': 'auth.jwt_expiry',
     'ENABLE_COMMUNITY_SHARING': 'ui.enable_community_sharing',
     'ENABLE_MESSAGE_RATING': 'ui.enable_message_rating',
@@ -161,9 +131,6 @@ ADMIN_CONFIG_KEYS = {
     'ENABLE_USER_STATUS': 'users.enable_status',
     'PENDING_USER_OVERLAY_TITLE': 'ui.pending_user_overlay_title',
     'PENDING_USER_OVERLAY_CONTENT': 'ui.pending_user_overlay_content',
-    'ENABLE_SPLASH_NOTICE': 'ui.splash_notice_enabled',
-    'SPLASH_NOTICE_TITLE': 'ui.splash_notice_title',
-    'SPLASH_NOTICE_CONTENT': 'ui.splash_notice_content',
     'RESPONSE_WATERMARK': 'ui.watermark',
 }
 
@@ -187,87 +154,9 @@ LDAP_SERVER_CONFIG_KEYS = {
 }
 
 
-def get_splash_notice_media_url(file_name: str | None) -> str:
-    if not file_name:
-        return ''
-    return f'/api/v1/auths/admin/config/splash-notice/media/{urllib.parse.quote(Path(file_name).name)}'
-
-
-def get_splash_notice_media_file_path(file_name: str | None) -> Path | None:
-    if not file_name:
-        return None
-    safe_name = Path(file_name).name
-    if not safe_name:
-        return None
-    return SPLASH_NOTICE_MEDIA_DIR / safe_name
-
-
-def delete_splash_notice_media_file(file_name: str | None) -> None:
-    file_path = get_splash_notice_media_file_path(file_name)
-    if not file_path or not file_path.exists():
-        return
-    try:
-        file_path.unlink()
-    except Exception as e:
-        log.warning(f'Failed to delete splash notice media {file_name}: {e}')
-
-
 async def get_config_values(key_map: dict[str, str]) -> dict:
     values = await Config.get_many(*key_map.values())
     return {field: values[storage_key] for field, storage_key in key_map.items() if storage_key in values}
-
-
-async def verify_cf_turnstile(request: Request, token: str | None) -> None:
-    turnstile_config = await Config.get_many(
-        'auth.cf_turnstile.enabled',
-        'auth.cf_turnstile.secret_key',
-    )
-
-    if not turnstile_config.get('auth.cf_turnstile.enabled'):
-        return
-
-    secret_key = (turnstile_config.get('auth.cf_turnstile.secret_key') or '').strip()
-    if not secret_key:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail='Cloudflare Turnstile is not configured.',
-        )
-
-    if not token:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail='Please complete the Cloudflare verification.',
-        )
-
-    payload = {
-        'secret': secret_key,
-        'response': token,
-    }
-    if request.client and request.client.host:
-        payload['remoteip'] = request.client.host
-
-    try:
-        timeout = ClientTimeout(total=10)
-        async with ClientSession(timeout=timeout, trust_env=True) as session:
-            async with session.post(
-                'https://challenges.cloudflare.com/turnstile/v0/siteverify',
-                data=payload,
-                ssl=AIOHTTP_CLIENT_SESSION_SSL,
-            ) as response:
-                result = await response.json()
-    except Exception as e:
-        log.warning(f'Cloudflare Turnstile verification request failed: {e}')
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail='Cloudflare Turnstile verification failed.',
-        )
-
-    if not result.get('success'):
-        log.warning(f'Cloudflare Turnstile verification rejected: {result.get("error-codes")}')
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail='Cloudflare Turnstile verification failed.',
-        )
 
 
 def config_updates(data: dict, key_map: dict[str, str]) -> dict:
@@ -317,7 +206,6 @@ async def create_session_response(
         )
 
     user_permissions = await get_permissions(user.id, await Config.get('user.permissions'), db=db)
-    credit = Credits.init_credit_by_user_id(user.id)
     await publish_event(
         request,
         EVENTS.AUTH_LOGIN,
@@ -337,7 +225,6 @@ async def create_session_response(
         'name': user.name,
         'role': user.role,
         'profile_image_url': f'/api/v1/users/{user.id}/profile/image',
-        'credit': float(credit.credit or 0),
         'permissions': user_permissions,
     }
 
@@ -350,7 +237,6 @@ async def create_session_response(
 class SessionUserResponse(Token, UserProfileImageResponse):
     expires_at: int | None = None
     permissions: dict | None = None
-    credit: float = 0
 
 
 class SessionUserInfoResponse(SessionUserResponse, UserStatus):
@@ -402,7 +288,6 @@ async def get_session_user(
         )
 
     user_permissions = await get_permissions(user.id, await Config.get('user.permissions'), db=db)
-    credit = Credits.init_credit_by_user_id(user.id)
 
     response_data = {
         'token': token,
@@ -419,7 +304,6 @@ async def get_session_user(
         'status_emoji': user.status_emoji,
         'status_message': user.status_message,
         'status_expires_at': user.status_expires_at,
-        'credit': float(credit.credit or 0),
         'permissions': user_permissions,
     }
 
@@ -523,6 +407,7 @@ async def update_password(
             hashed = await get_password_hash(form_data.new_password)
             success = await Auths.update_user_password_by_id(user.id, hashed, db=db)
             if success:
+                await revoke_user_tokens(request, user.id)
                 await publish_event(
                     request,
                     EVENTS.AUTH_PASSWORD_CHANGED,
@@ -666,8 +551,8 @@ async def ldap_auth(
         ]
         if ENABLE_LDAP_GROUP_MANAGEMENT:
             search_attributes.append(f'{LDAP_ATTRIBUTE_FOR_GROUPS}')
-            log.info(f'LDAP Group Management enabled. Adding {LDAP_ATTRIBUTE_FOR_GROUPS} to search attributes')
-        log.info(f'LDAP search attributes: {search_attributes}')
+            log.info('LDAP Group Management enabled. Adding %s to search attributes', LDAP_ATTRIBUTE_FOR_GROUPS)
+        log.info('LDAP search attributes: %s', search_attributes)
 
         search_success = await asyncio.to_thread(
             connection_app.search,
@@ -704,30 +589,30 @@ async def ldap_auth(
         user_groups = []
         if ENABLE_LDAP_GROUP_MANAGEMENT and LDAP_ATTRIBUTE_FOR_GROUPS in entry:
             group_dns = entry[LDAP_ATTRIBUTE_FOR_GROUPS]
-            log.info(f'LDAP raw group DNs for user {username_list}: {group_dns}')
+            log.info('LDAP raw group DNs for user %s: %s', username_list, group_dns)
 
             if group_dns:
-                log.info(f'LDAP group_dns original: {group_dns}')
-                log.info(f'LDAP group_dns type: {type(group_dns)}')
-                log.info(f'LDAP group_dns length: {len(group_dns)}')
+                log.info('LDAP group_dns original: %s', group_dns)
+                log.info('LDAP group_dns type: %s', type(group_dns))
+                log.info('LDAP group_dns length: %s', len(group_dns))
 
                 if hasattr(group_dns, 'value'):
                     group_dns = group_dns.value
-                    log.info(f'Extracted .value property: {group_dns}')
+                    log.info('Extracted .value property: %s', group_dns)
                 elif hasattr(group_dns, '__iter__') and not isinstance(group_dns, (str, bytes)):
                     group_dns = list(group_dns)
-                    log.info(f'Converted to list: {group_dns}')
+                    log.info('Converted to list: %s', group_dns)
 
                 if isinstance(group_dns, list):
                     group_dns = [str(item) for item in group_dns]
                 else:
                     group_dns = [str(group_dns)]
 
-                log.info(f'LDAP group_dns after processing - type: {type(group_dns)}, length: {len(group_dns)}')
+                log.info('LDAP group_dns after processing - type: %s, length: %s', type(group_dns), len(group_dns))
 
                 for group_idx, group_dn in enumerate(group_dns):
                     group_dn = str(group_dn)
-                    log.info(f'Processing group DN #{group_idx + 1}: {group_dn}')
+                    log.info('Processing group DN #%s: %s', group_idx + 1, group_dn)
 
                     try:
                         group_cn = extract_group_cn_from_dn(group_dn)
@@ -739,9 +624,9 @@ async def ldap_auth(
                     except Exception as e:
                         log.warning(f'Failed to extract group name from DN {group_dn}: {e}')
 
-                log.info(f'LDAP groups for user {username_list}: {user_groups} (total: {len(user_groups)})')
+                log.info('LDAP groups for user %s: %s (total: %s)', username_list, user_groups, len(user_groups))
             else:
-                log.info(f'No groups found for user {username_list}')
+                log.info('No groups found for user %s', username_list)
         elif ENABLE_LDAP_GROUP_MANAGEMENT:
             log.warning(
                 f'LDAP Group Management enabled but {LDAP_ATTRIBUTE_FOR_GROUPS} attribute not found in user entry'
@@ -809,7 +694,7 @@ async def ldap_auth(
                         if ENABLE_LDAP_GROUP_CREATION:
                             await Groups.create_groups_by_group_names(user.id, user_groups, db=db)
                         await Groups.sync_groups_by_group_names(user.id, user_groups, db=db)
-                        log.info(f'Successfully synced groups for user {user.id}: {user_groups}')
+                        log.info('Successfully synced groups for user %s: %s', user.id, user_groups)
                     except Exception as e:
                         log.error(f'Failed to sync groups for user {user.id}: {e}')
 
@@ -885,7 +770,17 @@ async def signin(
                 trusted_role = request.headers.get(WEBUI_AUTH_TRUSTED_ROLE_HEADER, '').lower().strip()
                 if trusted_role in {'admin', 'user', 'pending'}:
                     if user.role != trusted_role:
-                        await Users.update_user_role_by_id(user.id, trusted_role, db=db)
+                        updated_user = await Users.update_user_role_by_id(user.id, trusted_role, db=db)
+                        if updated_user:
+                            user = updated_user
+                            await publish_event(
+                                request,
+                                EVENTS.USER_ROLE_UPDATED,
+                                actor=updated_user,
+                                subject_id=updated_user.id,
+                                source='trusted_header',
+                                data={'role': updated_user.role},
+                            )
                 elif trusted_role:
                     log.warning(f'Ignoring invalid trusted role header value: {trusted_role}')
 
@@ -925,8 +820,6 @@ async def signin(
                 detail=ERROR_MESSAGES.RATE_LIMIT_EXCEEDED,
             )
 
-        await verify_cf_turnstile(request, form_data.cf_turnstile_token)
-
         user = await Auths.authenticate_user(
             form_data.email.lower(),
             lambda pw: verify_password(form_data.password, pw),
@@ -942,11 +835,6 @@ async def signin(
 ############################
 # SignUp
 ############################
-
-
-class SignupVerifyForm(BaseModel):
-    email: str
-    code: str
 
 
 async def signup_handler(
@@ -970,16 +858,13 @@ async def signup_handler(
     # If has_users() is checked before insert, concurrent requests during
     # first-user registration can all see an empty table and each get admin.
     hashed = await get_password_hash(password)
-    has_users = await Users.has_users(db=db)
-    should_verify_email = has_users and await Config.get('ui.signup_verify.enabled', False)
-    role = 'pending' if should_verify_email else await Config.get('ui.default_user_role')
 
     user = await Auths.insert_new_auth(
         email=email.lower(),
         password=hashed,
         name=name,
         profile_image_url=profile_image_url,
-        role=role,
+        role=await Config.get('ui.default_user_role'),
         db=db,
     )
     if not user:
@@ -991,8 +876,6 @@ async def signup_handler(
         await Users.update_user_role_by_id(user.id, 'admin', db=db)
         user = await Users.get_user_by_id(user.id, db=db)
         await Config.upsert({'ui.enable_signup': False})
-    elif should_verify_email:
-        await send_verify_email(email=email.lower(), db=db)
 
     await apply_default_group_assignment(
         await Config.get('ui.default_group_id'),
@@ -1035,25 +918,10 @@ async def signup(
     if not validate_email_format(form_data.email.lower()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.INVALID_EMAIL_FORMAT)
 
-    email_domain_whitelist = [
-        domain.strip().lower()
-        for domain in ((await Config.get('ui.signup.email_domain_whitelist', '')) or '').split(',')
-        if domain.strip()
-    ]
-    if email_domain_whitelist:
-        domain = form_data.email.split('@')[-1].lower()
-        if domain not in email_domain_whitelist:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Only emails from {", ".join(email_domain_whitelist)} are allowed',
-            )
-
     if await Users.get_user_by_email(form_data.email.lower(), db=db):
         raise HTTPException(400, detail=ERROR_MESSAGES.EMAIL_TAKEN)
 
     try:
-        await verify_cf_turnstile(request, form_data.cf_turnstile_token)
-
         try:
             validate_password(form_data.password)
         except Exception as e:
@@ -1083,72 +951,6 @@ async def signup(
         raise HTTPException(500, detail='An internal error occurred during signup.')
 
 
-@router.get('/signup_verify/{code}')
-async def signup_verify(request: Request, code: str, db: AsyncSession = Depends(get_async_session)):
-    email = await verify_email_by_code(code=code, db=db)
-    if not email:
-        raise HTTPException(status_code=400, detail='Invalid or expired verification code')
-
-    user = await Users.get_user_by_email(email, db=db)
-    if user and user.role == 'pending':
-        activation_role = await Config.get('ui.default_user_role', 'user') or 'user'
-        if activation_role == 'pending':
-            activation_role = 'user'
-        await Users.update_user_role_by_id(user.id, activation_role, db=db)
-
-    return RedirectResponse(url=(await Config.get('webui.url', '')) or '/')
-
-
-@router.post('/signup_verify')
-async def signup_verify_code(
-    request: Request,
-    form_data: SignupVerifyForm,
-    response: Response,
-    db: AsyncSession = Depends(get_async_session),
-):
-    email = form_data.email.strip().lower()
-    code = form_data.code.strip()
-    if not validate_email_format(email):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Invalid email address')
-    if not re.fullmatch(r'\d{6}', code):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='??? 6 ??????')
-    if signup_verify_rate_limiter.is_limited(email):
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail='???????????????')
-
-    user = await Users.get_user_by_email(email, db=db)
-    if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail='????????')
-
-    verified_email = await verify_email_by_code(code=code, email=email, db=db)
-    if not verified_email:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='?????????')
-
-    if user.role == 'pending':
-        activation_role = await Config.get('ui.default_user_role', 'user') or 'user'
-        if activation_role == 'pending':
-            activation_role = 'user'
-        await Users.update_user_role_by_id(user.id, activation_role, db=db)
-        user = await Users.get_user_by_id(user.id, db=db)
-
-    return await create_session_response(request, user, db, response, set_cookie=True, source='email_verify')
-
-
-@router.post('/signup_verify/resend')
-async def resend_signup_verify_code(
-    user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_session),
-):
-    if user.role != 'pending':
-        return {'status': True}
-    if not await has_unconsumed_email_verification(user.email, db=db):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail='????????????????')
-    if signup_verify_resend_rate_limiter.is_limited(user.email):
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail='???????????????')
-
-    await send_verify_email(email=user.email, db=db)
-    return {'status': True}
-
-
 @router.post('/signout')
 async def signout(request: Request, response: Response, db: AsyncSession = Depends(get_async_session)):
     # get auth token from headers or cookies
@@ -1160,6 +962,9 @@ async def signout(request: Request, response: Response, db: AsyncSession = Depen
             token = auth_cred.credentials
     if token is None:
         token = request.cookies.get('token')
+
+    oauth_session_id = request.cookies.get('oauth_session_id')
+    session = await OAuthSessions.get_session_by_id(oauth_session_id, db=db) if oauth_session_id else None
 
     if token:
         actor = None
@@ -1173,17 +978,20 @@ async def signout(request: Request, response: Response, db: AsyncSession = Depen
             actor=actor,
             subject_id=actor.id if actor else None,
             subject_type='user' if actor else None,
+            **({'source': 'oauth', 'data': {'auth_method': 'oauth', 'provider': session.provider}} if session else {}),
         )
 
     response.delete_cookie('token')
+    try:
+        request.session.clear()
+    except Exception:
+        pass
+    response.delete_cookie('owui-session')
     response.delete_cookie('oui-session')
     response.delete_cookie('oauth_id_token')
 
-    oauth_session_id = request.cookies.get('oauth_session_id')
     if oauth_session_id:
         response.delete_cookie('oauth_session_id')
-
-        session = await OAuthSessions.get_session_by_id(oauth_session_id, db=db)
 
         # If a custom end_session_endpoint is configured (e.g. AWS Cognito), redirect
         # there directly instead of attempting OIDC discovery.
@@ -1367,7 +1175,7 @@ async def get_admin_details(
         admin_email = await Config.get('auth.admin.email')
         admin_name = None
 
-        log.info(f'Admin details - Email: {admin_email}, Name: {admin_name}')
+        log.info('Admin details - Email: %s, Name: %s', admin_email, admin_name)
 
         if admin_email:
             admin = await Users.get_user_by_email(admin_email, db=db)
@@ -1394,9 +1202,7 @@ async def get_admin_details(
 
 @router.get('/admin/config')
 async def get_admin_config(request: Request, user=Depends(get_admin_user)):
-    config = await get_config_values(ADMIN_CONFIG_KEYS)
-    config['SPLASH_NOTICE_MEDIA_URL'] = get_splash_notice_media_url(await Config.get('ui.splash_notice_media', ''))
-    return config
+    return await get_config_values(ADMIN_CONFIG_KEYS)
 
 
 class AdminConfig(BaseModel):
@@ -1404,24 +1210,12 @@ class AdminConfig(BaseModel):
     ADMIN_EMAIL: str | None = None
     WEBUI_URL: str
     ENABLE_SIGNUP: bool
-    ENABLE_SIGNUP_VERIFY: bool = False
-    SIGNUP_EMAIL_DOMAIN_WHITELIST: str = ''
-    ENABLE_CF_TURNSTILE: bool = False
-    CF_TURNSTILE_SITE_KEY: str = ''
-    CF_TURNSTILE_SECRET_KEY: str = ''
-    SMTP_HOST: str = ''
-    SMTP_PORT: str = '465'
-    SMTP_USERNAME: str = ''
-    SMTP_PASSWORD: str = ''
-    SMTP_SENT_FROM: str = ''
-    ENABLE_AI_ERROR_EMAIL_NOTIFICATION: bool = False
-    AI_ERROR_EMAIL_COOLDOWN_SECONDS: int = 600
-    AI_ERROR_EMAIL_RECIPIENT_MODE: str = 'admin'
     ENABLE_API_KEYS: bool
     ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: bool
     API_KEYS_ALLOWED_ENDPOINTS: str
     DEFAULT_USER_ROLE: str
     DEFAULT_GROUP_ID: str
+    DEFAULT_INTERFACE_SETTINGS: dict | None = None
     JWT_EXPIRES_IN: str
     ENABLE_COMMUNITY_SHARING: bool
     ENABLE_MESSAGE_RATING: bool
@@ -1440,36 +1234,18 @@ class AdminConfig(BaseModel):
     ENABLE_USER_STATUS: bool
     PENDING_USER_OVERLAY_TITLE: str | None = None
     PENDING_USER_OVERLAY_CONTENT: str | None = None
-    ENABLE_SPLASH_NOTICE: bool = False
-    SPLASH_NOTICE_TITLE: str | None = None
-    SPLASH_NOTICE_CONTENT: str | None = None
     RESPONSE_WATERMARK: str | None = None
 
 
 @router.post('/admin/config')
 async def update_admin_config(request: Request, form_data: AdminConfig, user=Depends(get_admin_user)):
-    if form_data.ENABLE_CF_TURNSTILE and (
-        not form_data.CF_TURNSTILE_SITE_KEY.strip() or not form_data.CF_TURNSTILE_SECRET_KEY.strip()
-    ):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail='Cloudflare Turnstile Site Key and Secret Key are required when verification is enabled.',
-        )
-
     updates = config_updates(form_data.model_dump(), ADMIN_CONFIG_KEYS)
+    updates['ui.default_interface_settings'] = form_data.DEFAULT_INTERFACE_SETTINGS or {}
     updates['folders.max_file_count'] = int(form_data.FOLDER_MAX_FILE_COUNT) if form_data.FOLDER_MAX_FILE_COUNT else ''
     updates['automations.max_count'] = int(form_data.AUTOMATION_MAX_COUNT) if form_data.AUTOMATION_MAX_COUNT else ''
     updates['automations.min_interval'] = (
         int(form_data.AUTOMATION_MIN_INTERVAL) if form_data.AUTOMATION_MIN_INTERVAL else ''
     )
-    updates['notifications.ai_error_email.cooldown_seconds'] = max(1, int(form_data.AI_ERROR_EMAIL_COOLDOWN_SECONDS))
-    recipient_mode = str(form_data.AI_ERROR_EMAIL_RECIPIENT_MODE or 'admin').strip().lower().replace('-', '_')
-    if recipient_mode in {'admin_only', 'admin'}:
-        updates['notifications.ai_error_email.recipient_mode'] = 'admin'
-    elif recipient_mode in {'admin_and_user', 'admin_user', 'both', 'all'}:
-        updates['notifications.ai_error_email.recipient_mode'] = 'admin_and_user'
-    else:
-        updates['notifications.ai_error_email.recipient_mode'] = 'admin'
 
     if form_data.DEFAULT_USER_ROLE not in ['pending', 'user', 'admin']:
         updates.pop('ui.default_user_role', None)
@@ -1484,71 +1260,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         updates.pop('auth.jwt_expiry', None)
 
     await Config.upsert(updates)
-    config = await get_config_values(ADMIN_CONFIG_KEYS)
-    config['SPLASH_NOTICE_MEDIA_URL'] = get_splash_notice_media_url(await Config.get('ui.splash_notice_media', ''))
-    return config
-
-
-@router.post('/admin/config/splash-notice/media')
-async def upload_splash_notice_media(
-    media: UploadFile | None = File(None),
-    file: UploadFile | None = File(None),
-    user=Depends(get_admin_user),
-):
-    upload = media or file
-    if upload is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='No file selected')
-
-    original_name = Path(upload.filename or 'splash-notice').name
-    suffix = Path(original_name).suffix
-    if (
-        upload.content_type not in SPLASH_NOTICE_MEDIA_ALLOWED_TYPES
-        or suffix.lower() not in SPLASH_NOTICE_MEDIA_ALLOWED_SUFFIXES
-    ):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail='Unsupported image format. Please upload a PNG, JPG, GIF, or WebP file.',
-        )
-
-    content = await upload.read(SPLASH_NOTICE_MEDIA_MAX_SIZE + 1)
-    if not content:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Uploaded file is empty')
-    if len(content) > SPLASH_NOTICE_MEDIA_MAX_SIZE:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail='Image is too large. Please keep it under 15 MB.',
-        )
-
-    file_name = f'{uuid.uuid4().hex}{suffix}'
-    file_path = SPLASH_NOTICE_MEDIA_DIR / file_name
-    file_path.write_bytes(content)
-
-    previous_file_name = await Config.get('ui.splash_notice_media', '')
-    await Config.upsert({'ui.splash_notice_media': file_name})
-    delete_splash_notice_media_file(previous_file_name)
-
-    return {'file_name': file_name, 'url': get_splash_notice_media_url(file_name)}
-
-
-@router.delete('/admin/config/splash-notice/media')
-async def delete_splash_notice_media(user=Depends(get_admin_user)):
-    previous_file_name = await Config.get('ui.splash_notice_media', '')
-    await Config.upsert({'ui.splash_notice_media': ''})
-    delete_splash_notice_media_file(previous_file_name)
-    return {'url': ''}
-
-
-@router.get('/admin/config/splash-notice/media/{file_name}')
-async def get_splash_notice_media(file_name: str):
-    configured_file_name = await Config.get('ui.splash_notice_media', '')
-    if not configured_file_name or Path(file_name).name != Path(configured_file_name).name:
-        raise HTTPException(status_code=404, detail='File not found')
-
-    file_path = get_splash_notice_media_file_path(configured_file_name)
-    if not file_path or not file_path.exists():
-        raise HTTPException(status_code=404, detail='File not found')
-
-    return FileResponse(file_path)
+    return await get_config_values(ADMIN_CONFIG_KEYS)
 
 
 class LdapServerConfig(BaseModel):
@@ -1734,11 +1446,13 @@ def _parse_oauth_update_value(field: str, value):
 
 async def get_oauth_config_values() -> dict:
     values = await Config.get_many(*OAUTH_CONFIG_KEYS.values())
-    return {
+    form_values = {
         field: _format_oauth_form_value(field, values[storage_key])
         for field, storage_key in OAUTH_CONFIG_KEYS.items()
         if storage_key in values
     }
+    form_values['ENABLE_OAUTH_PERSISTENT_CONFIG'] = Config.OAUTH_PERSISTENT_ENABLED
+    return form_values
 
 
 def oauth_config_updates(data: dict) -> dict:
@@ -1749,12 +1463,16 @@ def oauth_config_updates(data: dict) -> dict:
     }
 
 
-@router.get('/admin/config/oauth', response_model=OAuthConfigForm)
+class OAuthConfigResponse(OAuthConfigForm):
+    ENABLE_OAUTH_PERSISTENT_CONFIG: bool
+
+
+@router.get('/admin/config/oauth', response_model=OAuthConfigResponse)
 async def get_oauth_config(request: Request, user=Depends(get_admin_user)):
     return await get_oauth_config_values()
 
 
-@router.post('/admin/config/oauth', response_model=OAuthConfigForm)
+@router.post('/admin/config/oauth', response_model=OAuthConfigResponse)
 async def update_oauth_config(request: Request, form_data: OAuthConfigForm, user=Depends(get_admin_user)):
     await Config.upsert(oauth_config_updates(form_data.model_dump(exclude_none=True)))
     return await get_oauth_config_values()
@@ -1953,6 +1671,7 @@ async def token_exchange(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token missing required 'sub' claim",
         )
+    sub = str(sub)
 
     email = user_data.get(email_claim, '')
     if not email:
@@ -1982,12 +1701,34 @@ async def token_exchange(
         user = await Users.get_user_by_email(email, db=db)
         if user:
             # Link the OAuth sub to this user
-            await Users.update_user_oauth_by_id(user.id, provider, sub, db=db)
+            user = await Users.update_user_oauth_by_id(user.id, provider, sub, db=db) or user
+
+    if user:
+        provider_oauth = (user.oauth or {}).get(provider) if isinstance(user.oauth, dict) else None
+        # Lazy repair for legacy rows that stored numeric provider ids as JSON numbers.
+        if isinstance(provider_oauth, dict) and provider_oauth.get('sub') != sub:
+            user = await Users.update_user_oauth_by_id(user.id, provider, sub, db=db) or user
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='User not found. Please sign in via the web interface first.',
+        )
+
+    user = await oauth_manager.update_user_role_from_oauth(
+        request=request,
+        user=user,
+        user_data=user_data,
+        provider=provider,
+        db=db,
+    )
+    if await Config.get('oauth.enable_group_mapping'):
+        await oauth_manager.update_user_groups(
+            request=request,
+            user=user,
+            user_data=user_data,
+            default_permissions=await Config.get('user.permissions'),
+            db=db,
         )
 
     return await create_session_response(request, user, db, source='oauth')

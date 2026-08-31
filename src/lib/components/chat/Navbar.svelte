@@ -4,6 +4,7 @@
 
 	import {
 		WEBUI_NAME,
+		banners,
 		chatId,
 		config,
 		mobile,
@@ -35,8 +36,6 @@
 	import ChatCheck from '../icons/ChatCheck.svelte';
 	import Knobs from '../icons/Knobs.svelte';
 	import { isTemporaryChatId } from '$lib/utils/chatId';
-	import NotificationCenter from './NotificationCenter.svelte';
-	import UsageCenter from './UsageCenter.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -53,6 +52,17 @@
 	export let archiveChatHandler: (id: string) => void;
 	export let deleteChatHandler: (id: string) => void;
 	export let moveChatHandler: (id: string, folderId: string) => void;
+
+	let closedBannerIds = [];
+
+	const getDismissedBannerIds = (): string[] => {
+		try {
+			return JSON.parse(localStorage.getItem('dismissedBannerIds') ?? '[]');
+		} catch {
+			return [];
+		}
+	};
+
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
 </script>
@@ -108,7 +118,7 @@
 					{#if chat?.id}
 						<div class="flex max-w-full min-w-0 items-center gap-2 mr-2">
 							<div
-								class="min-w-0 truncate py-1 text-left text-[15px] font-normal text-gray-700 dark:text-gray-300"
+								class="min-w-0 truncate py-1 text-left text-[0.9375rem] font-normal text-gray-700 dark:text-gray-300"
 							>
 								{title || chat?.chat?.title || $i18n.t('New Chat')}
 							</div>
@@ -143,7 +153,7 @@
 					{:else}
 						<div class="pointer-events-none invisible flex max-w-full min-w-0 items-center gap-2">
 							<div
-								class="min-w-0 truncate py-1 text-left text-[15px] font-normal text-gray-700 dark:text-gray-300"
+								class="min-w-0 truncate py-1 text-left text-[0.9375rem] font-normal text-gray-700 dark:text-gray-300"
 							>
 								{$i18n.t('New Chat')}
 							</div>
@@ -151,10 +161,8 @@
 					{/if}
 				</div>
 
-				<div class="mr-1 flex flex-none items-center gap-2 self-center">
-					<!-- <div class="md:hidden flex self-center w-[1px] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
-					<NotificationCenter />
-					<UsageCenter />
+				<div class="lg:mr-1 flex flex-none items-center gap-2 self-center">
+					<!-- <div class="md:hidden flex self-center w-[0.0625rem] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
 
 					{#if $user?.role === 'user' ? ($user?.permissions?.chat?.temporary ?? true) && !($user?.permissions?.chat?.temporary_enforced ?? false) : true}
 						{#if !chat?.id}
@@ -247,7 +255,7 @@
 	{/if}
 
 	<div class="absolute top-[100%] left-0 right-0 h-fit">
-		{#if !history.currentId && !$chatId && (($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
+		{#if !history.currentId && !$chatId && ($banners.length > 0 || ($config?.license_metadata?.type ?? null) === 'trial' || (($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats))}
 			<div class=" w-full z-30">
 				<div
 					class=" flex flex-col gap-1 w-full max-h-28 overflow-y-auto overscroll-contain md:max-h-none md:overflow-visible"
@@ -276,6 +284,27 @@
 						/>
 					{/if}
 
+					{#each $banners.filter((b) => ![...getDismissedBannerIds(), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
+						<Banner
+							{banner}
+							on:dismiss={(e) => {
+								const bannerId = e.detail;
+
+								if (banner.dismissible) {
+									localStorage.setItem(
+										'dismissedBannerIds',
+										JSON.stringify(
+											[bannerId, ...getDismissedBannerIds()].filter((id) =>
+												$banners.find((b) => b.id === id)
+											)
+										)
+									);
+								} else {
+									closedBannerIds = [...closedBannerIds, bannerId];
+								}
+							}}
+						/>
+					{/each}
 				</div>
 			</div>
 		{/if}

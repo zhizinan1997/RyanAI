@@ -93,19 +93,7 @@
 	};
 
 	const setUserSettings = async (cb?: () => Promise<void>) => {
-		let userSettings = await getUserSettings(localStorage.token).catch((error) => {
-			console.error(error);
-			return null;
-		});
-
-		if (!userSettings) {
-			try {
-				userSettings = JSON.parse(localStorage.getItem('settings') ?? '{}');
-			} catch (e: unknown) {
-				console.error('Failed to parse settings from localStorage', e);
-				userSettings = {};
-			}
-		}
+		const userSettings = await getUserSettings(localStorage.token);
 
 		if (userSettings?.ui) {
 			settings.set(userSettings.ui);
@@ -176,7 +164,8 @@
 						})
 						.map((data, i) => ({
 							...data,
-							key: enabledTerminals[i]?.key ?? ''
+							key: enabledTerminals[i]?.key ?? '',
+							config: enabledTerminals[i]?.config ?? data?.config ?? {}
 						}))
 				: []),
 			// Store with proxy URL and session key for FileNav file browsing
@@ -184,7 +173,9 @@
 				id: t.id,
 				url: `${WEBUI_API_BASE_URL}/terminals/${t.id}`,
 				name: t.name,
-				key: localStorage.token
+				key: localStorage.token,
+				contexts: t.contexts ?? {},
+				config: t.config ?? {}
 			}))
 		]);
 	};
@@ -350,7 +341,7 @@
 				} else if (shortcut === Shortcut.OPEN_MODEL_SELECTOR) {
 					console.log('Shortcut triggered: OPEN_MODEL_SELECTOR');
 					event.preventDefault();
-					document.getElementById('model-selector-0-button')?.click();
+					document.getElementById('model-selector-model-button')?.click();
 				} else if (shortcut === Shortcut.NEW_TEMPORARY_CHAT) {
 					console.log('Shortcut triggered: NEW_TEMPORARY_CHAT');
 					event.preventDefault();
@@ -367,6 +358,24 @@
 					console.log('Shortcut triggered: GENERATE_MESSAGE_PAIR');
 					event.preventDefault();
 					document.getElementById('generate-message-pair-button')?.click();
+				} else if (shortcut === Shortcut.ALLOW_TOOL_CALL) {
+					const button = [...document.getElementsByClassName('tool-call-allow-button')]
+						.reverse()
+						.find((el) => !(el as HTMLButtonElement).disabled) as HTMLButtonElement | undefined;
+					if (button) {
+						console.log('Shortcut triggered: ALLOW_TOOL_CALL');
+						event.preventDefault();
+						button.click();
+					}
+				} else if (shortcut === Shortcut.DENY_TOOL_CALL) {
+					const button = [...document.getElementsByClassName('tool-call-deny-button')]
+						.reverse()
+						.find((el) => !(el as HTMLButtonElement).disabled) as HTMLButtonElement | undefined;
+					if (button) {
+						console.log('Shortcut triggered: DENY_TOOL_CALL');
+						event.preventDefault();
+						button.click();
+					}
 				} else if (
 					shortcut === Shortcut.REGENERATE_RESPONSE &&
 					document.activeElement?.id === 'chat-input'
@@ -572,22 +581,22 @@
 		overflow: auto;
 
 		/* make space  */
-		margin: 5px 0;
+		margin: 0.3125rem 0;
 		padding: 1.75rem 0 1.75rem 1rem;
-		border-radius: 10px;
+		border-radius: 0.625rem;
 	}
 
 	pre[class*='language-'] button {
 		position: absolute;
-		top: 5px;
-		right: 5px;
+		top: 0.3125rem;
+		right: 0.3125rem;
 
 		font-size: 0.9rem;
 		padding: 0.15rem;
 		background-color: #828282;
 
 		border: ridge 1px #7b7b7c;
-		border-radius: 5px;
+		border-radius: 0.3125rem;
 		text-shadow: #c4c4c4 0 0 2px;
 	}
 

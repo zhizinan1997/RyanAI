@@ -224,7 +224,7 @@
 			// Get version for filename
 			const versionRes = await getVersion(localStorage.token).catch(() => null);
 			const version = versionRes?.version ?? '0.0.0';
-			const filename = `ryanai-stats-${version}-${Date.now()}.json`;
+			const filename = `open-webui-stats-${version}-${Date.now()}.json`;
 
 			// Start streaming download
 			const searchParams = eventData?.searchParams ?? {};
@@ -371,12 +371,18 @@
 
 			<div class="px-5 pt-2 pb-5">
 				<div class="text-sm text-gray-500 dark:text-gray-400">
-					{$i18n.t('Do you want to sync your usage stats with RyanAI?')}
+					<!-- LICENSE covers this Open WebUI Community wordmark.
+					Do not alter, remove, obscure, or replace it except as LICENSE permits:
+					https://docs.openwebui.com/license. -->
+					{$i18n.t('Do you want to sync your usage stats with Open WebUI Community?')}
 				</div>
 
 				<div class="mt-2 text-xs text-gray-500">
+					<!-- LICENSE covers this Open WebUI wordmark.
+					Do not alter, remove, obscure, or replace it except as LICENSE permits:
+					https://docs.openwebui.com/license. -->
 					{$i18n.t(
-						'Participate in community leaderboards and evaluations! Syncing aggregated usage stats helps drive research and improvements to RyanAI. Your privacy is paramount: no message content is ever shared.'
+						'Participate in community leaderboards and evaluations! Syncing aggregated usage stats helps drive research and improvements to Open WebUI. Your privacy is paramount: no message content is ever shared.'
 					)}
 				</div>
 
@@ -385,7 +391,10 @@
 						{$i18n.t('What is shared:')}
 					</div>
 					<ul class="list-disc list-inside space-y-0.5 ml-1 mb-2">
-						<li>{$i18n.t('RyanAI version')}</li>
+						<!-- LICENSE covers this Open WebUI wordmark.
+						Do not alter, remove, obscure, or replace it except as LICENSE permits:
+						https://docs.openwebui.com/license. -->
+						<li>{$i18n.t('Open WebUI version')}</li>
 						<li>{$i18n.t('Model names and usage frequency')}</li>
 						<li>{$i18n.t('Message counts and response timestamps')}</li>
 						<li>{$i18n.t('Content lengths (character counts only)')}</li>

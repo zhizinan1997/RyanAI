@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import random
 import sys
@@ -34,6 +33,7 @@ from open_webui.utils.filter import (
 )
 from open_webui.utils.credit.usage import CreditDeduct
 from open_webui.utils.credit.utils import check_credit_by_user_id
+from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.models import check_model_access, get_all_models
 from open_webui.utils.payload import convert_payload_openai_to_ollama
 from open_webui.utils.response import (
@@ -70,7 +70,7 @@ async def generate_direct_chat_completion(
         )
 
     channel = f'{user_id}:{session_id}:{request_id}'
-    logging.info(f'WebSocket channel: {channel}')
+    logging.info('WebSocket channel: %s', channel)
 
     if form_data.get('stream'):
         q = asyncio.Queue()
@@ -97,7 +97,7 @@ async def generate_direct_chat_completion(
             }
         )
 
-        log.info(f'res: {res}')
+        log.info('res: %s', res)
 
         if res.get('status', False):
             # Define a generator to stream responses
@@ -110,14 +110,14 @@ async def generate_direct_chat_completion(
                             if 'done' in data and data['done']:
                                 break  # Stop streaming when 'done' is received
 
-                            yield f'data: {json.dumps(data)}\n\n'
+                            yield f'data: {JSONCodec.dumps(data)}\n\n'
                         elif isinstance(data, str):
                             if 'data:' in data:
                                 yield f'{data}\n\n'
                             else:
                                 yield f'data: {data}\n\n'
                 except Exception as e:
-                    log.debug(f'Error in event generator: {e}')
+                    log.debug('Error in event generator: %s', e)
                     pass
 
             # Define a background task to run the event generator
@@ -159,7 +159,7 @@ async def generate_chat_completion(
 ):
     check_credit_by_user_id(user_id=user.id, form_data=form_data)
 
-    log.debug(f'generate_chat_completion: {form_data}')
+    log.debug('generate_chat_completion: %s', form_data)
     if BYPASS_MODEL_ACCESS_CONTROL:
         bypass_filter = True
 
@@ -188,7 +188,7 @@ async def generate_chat_completion(
             **dict(request.app.state.MODELS.items()),
             request.state.model['id']: request.state.model,
         }
-        log.debug(f'direct connection to model: {request.state.model["id"]}')
+        log.debug('direct connection to model: %s', request.state.model['id'])
     else:
         models = request.app.state.MODELS
 
@@ -253,7 +253,7 @@ async def generate_chat_completion(
             if form_data.get('stream') == True:
 
                 async def stream_wrapper(stream):
-                    yield f'data: {json.dumps({"selected_model_id": selected_model_id})}\n\n'
+                    yield f'data: {JSONCodec.dumps({"selected_model_id": selected_model_id})}\n\n'
                     async for chunk in stream:
                         yield chunk
 
@@ -336,7 +336,7 @@ async def chat_completed(request: Request, form_data: dict, user: Any):
 
     if getattr(request.state, 'direct', False) and hasattr(request.state, 'model'):
         models = {
-            **request.app.state.MODELS,
+            **dict(request.app.state.MODELS.items()),
             request.state.model['id']: request.state.model,
         }
     else:

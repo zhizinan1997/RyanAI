@@ -30,7 +30,10 @@ class ExternalWebLoader(BaseLoader):
                 response = requests.post(
                     self.external_url,
                     headers={
-                        'User-Agent': 'RyanAI (https://github.com/zhizinan1997/RyanAI) External Web Loader',
+                        # LICENSE covers this Open WebUI user-agent identifier.
+                        # Do not alter, remove, obscure, or replace it except as LICENSE permits:
+                        # https://docs.openwebui.com/license.
+                        'User-Agent': 'Open WebUI (https://github.com/open-webui/open-webui) External Web Loader',
                         'Authorization': f'Bearer {self.external_api_key}',
                     },
                     json={

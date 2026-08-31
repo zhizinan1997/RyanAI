@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import { getContext, onDestroy, onMount } from 'svelte';
+	import { v4 as uuidv4 } from 'uuid';
+	import { getModels as _getModels } from '$lib/apis';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
 
@@ -649,11 +651,13 @@
 				(terminal) => !terminal.id
 			);
 			const systemTerminals = await getTerminalServers(localStorage.token);
-			const systemEntries = systemTerminals.map((terminal) => ({
-				id: terminal.id,
-				url: `${WEBUI_API_BASE_URL}/terminals/${terminal.id}`,
-				name: terminal.name,
-				key: localStorage.token
+			const systemEntries = systemTerminals.map((t) => ({
+				id: t.id,
+				url: `${WEBUI_API_BASE_URL}/terminals/${t.id}`,
+				name: t.name,
+				key: localStorage.token,
+				contexts: t.contexts ?? {},
+				config: t.config ?? {}
 			}));
 			terminalServers.set([...existingDirectTerminals, ...systemEntries] as any);
 		}
@@ -662,7 +666,7 @@
 	const addTerminalConnection = (server: TerminalConnection) => {
 		terminalConnections = [
 			...terminalConnections,
-			{ ...server, id: server.id ?? crypto.randomUUID() }
+			{ ...server, id: server.id ?? crypto.randomUUID?.() ?? uuidv4() }
 		];
 		saveTerminalServers();
 	};

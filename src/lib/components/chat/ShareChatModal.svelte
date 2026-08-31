@@ -36,8 +36,33 @@
 	};
 
 	const shareChat = async () => {
-		toast.success($i18n.t('Opening RyanAI repository'));
-		await window.open('https://github.com/zhizinan1997/RyanAI', '_blank');
+		const _chat = chat.chat;
+		console.log('share', _chat);
+
+		// LICENSE covers this Open WebUI Community wordmark.
+		// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+		// https://docs.openwebui.com/license.
+		toast.success($i18n.t('Redirecting you to Open WebUI Community'));
+		const url = 'https://openwebui.com';
+		// const url = 'http://localhost:5173';
+
+		const tab = await window.open(`${url}/chats/upload`, '_blank');
+		window.addEventListener(
+			'message',
+			(event) => {
+				if (event.origin !== url) return;
+				if (event.data === 'loaded') {
+					tab.postMessage(
+						JSON.stringify({
+							chat: _chat,
+							models: $models.filter((m) => _chat.models.includes(m.id))
+						}),
+						'*'
+					);
+				}
+			},
+			false
+		);
 	};
 
 	const loadAccessGrants = async () => {
@@ -153,7 +178,10 @@
 								shareChat();
 							}}
 						>
-							{$i18n.t('Open RyanAI repository')}
+							<!-- LICENSE covers this Open WebUI Community wordmark.
+							Do not alter, remove, obscure, or replace it except as LICENSE permits:
+							https://docs.openwebui.com/license. -->
+							{$i18n.t('Share to Open WebUI Community')}
 						</button>
 					{/if}
 

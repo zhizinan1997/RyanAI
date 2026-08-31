@@ -53,13 +53,16 @@ def search_yacy(
         # Strip all query parameters from the URL
         query_url = query_url.rstrip('/') + '/yacysearch.json'
 
-    log.debug(f'searching {query_url}')
+    log.debug('searching %s', query_url)
 
     response = requests.get(
         query_url,
         auth=yacy_auth,
         headers={
-            'User-Agent': 'RyanAI (https://github.com/zhizinan1997/RyanAI) RAG Bot',
+            # LICENSE covers this Open WebUI user-agent identifier.
+            # Do not alter, remove, obscure, or replace it except as LICENSE permits:
+            # https://docs.openwebui.com/license.
+            'User-Agent': 'Open WebUI (https://github.com/open-webui/open-webui) RAG Bot',
             'Accept': 'text/html',
             'Accept-Encoding': 'gzip, deflate',
             'Accept-Language': 'en-US,en;q=0.5',

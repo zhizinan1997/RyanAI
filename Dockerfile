@@ -157,17 +157,23 @@ RUN set -e; \
     pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/$USE_CUDA_DOCKER_VER --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    python -c "import nltk; nltk.download('punkt_tab')"; \
+    python -c "import nltk; nltk.download('punkt_tab', download_dir='/usr/local/share/nltk_data')"; \
     else \
     pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
     if [ "$USE_SLIM" != "true" ]; then \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    python -c "import nltk; nltk.download('punkt_tab')"; \
+    python -c "import nltk; nltk.download('punkt_tab', download_dir='/usr/local/share/nltk_data')"; \
     fi; \
     fi; \
     mkdir -p /app/backend/data; chown -R $UID:$GID /app/backend/data/; \
+    if [ -d /app/backend/data/cache ]; then chmod -R a+rX /app/backend/data/cache; fi; \
     rm -rf /var/lib/apt/lists/*;
+
+# Optional: PPTX parsing through unstructured may need spaCy's English model.
+# Keep this out of the default image to avoid the extra image bloat; deployments
+# with read-only site-packages can uncomment it and bake the model in.
+# RUN python -m spacy download en_core_web_sm
 
 # Install Ollama if requested
 RUN if [ "$USE_OLLAMA" = "true" ]; then \
