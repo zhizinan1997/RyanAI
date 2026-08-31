@@ -9,16 +9,16 @@ services:
     restart: unless-stopped
     image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
 
-  ryanai:
+  open-webui:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         USE_SLIM: "true"
     image: ghcr.io/zhizinan1997/ryanai:${WEBUI_DOCKER_TAG-main}
-    container_name: ryanai
+    container_name: open-webui
     volumes:
-      - ryanai:/app/backend/data
+      - open-webui:/app/backend/data
     ports:
       - ${OPEN_WEBUI_PORT-3000}:8080
     environment:
@@ -49,13 +49,13 @@ services:
     image: ${BOT_GATEWAY_IMAGE-ghcr.io/zhizinan1997/ryanai-bot-gateway}:${BOT_GATEWAY_DOCKER_TAG-latest}
     container_name: ryanai-bot-gateway
     depends_on:
-      ryanai:
+      open-webui:
         condition: service_healthy
     expose:
       - '${BOT_GATEWAY_INTERNAL_PORT:-8787}'
     environment:
       - 'NODE_ENV=production'
-      - 'BOT_GATEWAY_ENABLED=${BOT_GATEWAY_ENABLED:-false}'
+      - 'BOT_GATEWAY_ENABLED=${BOT_GATEWAY_ENABLED:-true}'
       - 'BOT_GATEWAY_INTERNAL_PORT=${BOT_GATEWAY_INTERNAL_PORT:-8787}'
       - 'BOT_GATEWAY_HMAC_SECRET=${BOT_GATEWAY_HMAC_SECRET-}'
       - 'BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY=${BOT_GATEWAY_CREDENTIALS_ENCRYPTION_KEY-}'
@@ -71,12 +71,14 @@ services:
       - 'BOT_GATEWAY_ADVERTISE_URL=${BOT_GATEWAY_ADVERTISE_URL-}'
       - 'BOT_GATEWAY_LEASE_TTL_MS=${BOT_GATEWAY_LEASE_TTL_MS-45000}'
       - 'BOT_GATEWAY_LEASE_RENEW_MS=${BOT_GATEWAY_LEASE_RENEW_MS-15000}'
-      - 'RYANAI_BASE_URL=http://ryanai:8080'
+      - 'RYANAI_BASE_URL=http://open-webui:8080'
     volumes:
       - ryanai-bot-gateway:/data
     restart: unless-stopped
 
 volumes:
   ollama: {}
-  ryanai: {}
-  ryanai-bot-gateway: {}
+  open-webui:
+    name: open-webui
+  ryanai-bot-gateway:
+    name: ryanai-bot-gateway

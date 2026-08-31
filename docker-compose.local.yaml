@@ -1,10 +1,10 @@
 services:
-  ryanai:
+  open-webui:
     image: ryanai:local
     ports:
       - "3000:8080"
     volumes:
-      - ryanai_ryanai:/app/backend/data
+      - open-webui:/app/backend/data
     environment:
       BOT_GATEWAY_ENABLED: "true"
       BOT_GATEWAY_INTERNAL_URL: "http://ryanai-bot-gateway:8787"
@@ -36,12 +36,14 @@ services:
       BOT_GATEWAY_ADVERTISE_URL: "${BOT_GATEWAY_ADVERTISE_URL-}"
       BOT_GATEWAY_LEASE_TTL_MS: "${BOT_GATEWAY_LEASE_TTL_MS:-45000}"
       BOT_GATEWAY_LEASE_RENEW_MS: "${BOT_GATEWAY_LEASE_RENEW_MS:-15000}"
-      RYANAI_BASE_URL: "http://ryanai:8080"
+      RYANAI_BASE_URL: "http://open-webui:8080"
     volumes:
-      - ryanai_ryanai-bot-gateway:/data
+      - ryanai-bot-gateway:/data
 
 volumes:
-  ryanai_ryanai:
+  open-webui:
     external: true
-  ryanai_ryanai-bot-gateway:
+    name: open-webui
+  ryanai-bot-gateway:
     external: true
+    name: ryanai-bot-gateway

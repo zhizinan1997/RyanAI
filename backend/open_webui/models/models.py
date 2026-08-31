@@ -5,14 +5,15 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from open_webui.internal.db import Base, JSONField, get_async_db_context
+from open_webui.internal.db import Base, JSONField, get_async_db_context, get_db
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
 from open_webui.utils.misc import json_text_variants
 from open_webui.utils.validate import validate_profile_image_url
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, update
+from sqlalchemy import JSON, BigInteger, Boolean, Column, String, Text, cast, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = logging.getLogger(__name__)
@@ -125,6 +126,7 @@ class Model(Base):
     name = Column(Text)  # human-readable display name
     params = Column(JSONField)  # see ModelParams
     meta = Column(JSONField)  # see ModelMeta
+    price = Column(JSON().with_variant(JSONB, 'postgresql'), nullable=True)
     is_active = Column(Boolean, default=True)  # soft-disable toggle
     updated_at = Column(BigInteger)  # epoch seconds
     created_at = Column(BigInteger)  # epoch seconds
@@ -138,6 +140,7 @@ class ModelModel(BaseModel):
     name: str
     params: ModelParams
     meta: ModelMeta
+    price: dict | None = None
 
     access_grants: list[AccessGrantModel] = Field(default_factory=list)
 
@@ -172,6 +175,12 @@ class ModelAccessListResponse(BaseModel):
     total: int
 
 
+class ModelPriceForm(BaseModel):
+    # Pricing is per successful API call. Legacy token pricing fields are ignored.
+    call_price: float = Field(default=0, description='credit charged per successful call', ge=0)
+    minimum_credit: float = Field(default=0, description='minimum credit required for this model', ge=0)
+
+
 class ModelForm(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
@@ -180,6 +189,7 @@ class ModelForm(BaseModel):
     name: str
     meta: ModelMeta
     params: ModelParams
+    price: ModelPriceForm | None = None
     access_grants: list[dict | None] = None
     is_active: bool = True
 
@@ -505,6 +515,14 @@ class ModelsTable:
         except Exception:
             return None
 
+    def get_model_by_id_sync(self, id: str) -> ModelModel | None:
+        try:
+            with get_db() as db:
+                model = db.query(Model).filter_by(id=id).first()
+                return ModelModel.model_validate(model) if model else None
+        except Exception:
+            return None
+
     async def get_models_by_ids(self, ids: list[str], db: AsyncSession | None = None) -> list[ModelModel]:
         try:
             async with get_async_db_context(db) as db:
@@ -543,7 +561,7 @@ class ModelsTable:
         try:
             async with get_async_db_context(db) as db:
                 # update only the fields that are present in the model
-                data = model.model_dump(exclude={'id', 'access_grants'})
+                data = model.model_dump(exclude={'id', 'access_grants'}, exclude_unset=True)
                 data['updated_at'] = int(time.time())
                 await db.execute(update(Model).filter_by(id=id).values(**data))
 

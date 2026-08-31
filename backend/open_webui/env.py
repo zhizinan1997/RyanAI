@@ -374,7 +374,7 @@ RAG_SYSTEM_CONTEXT = os.getenv('RAG_SYSTEM_CONTEXT', 'False').lower() == 'true'
 REDIS_URL = os.getenv('REDIS_URL', '')
 REDIS_CLUSTER = os.getenv('REDIS_CLUSTER', 'False').lower() == 'true'
 
-REDIS_KEY_PREFIX = os.getenv('REDIS_KEY_PREFIX', 'open-webui')
+REDIS_KEY_PREFIX = os.getenv('REDIS_KEY_PREFIX', 'ryanai')
 
 try:
     REDIS_RESPONSE_STREAM_TTL = int(os.getenv('REDIS_RESPONSE_STREAM_TTL', '3600'))
@@ -438,6 +438,30 @@ else:
             REDIS_RECONNECT_DELAY = None
     except Exception:
         REDIS_RECONNECT_DELAY = None
+
+####################################
+# BOT GATEWAY CREDENTIAL CENTER
+####################################
+
+# Master key for the backend credential center (AES-256-GCM envelope storage).
+# 64 hex characters or base64 decoding to exactly 32 bytes. When empty, the
+# credential center APIs fail closed.
+BOT_GATEWAY_CREDENTIAL_MASTER_KEY = os.getenv('BOT_GATEWAY_CREDENTIAL_MASTER_KEY', '')
+BOT_GATEWAY_SCHEDULER_MODE = os.getenv('BOT_GATEWAY_SCHEDULER_MODE', 'shadow').strip().lower()
+BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY = int(os.getenv('BOT_GATEWAY_SHARD_ACCOUNT_CAPACITY', '12'))
+BOT_GATEWAY_SHARD_LOAD_CAPACITY = int(os.getenv('BOT_GATEWAY_SHARD_LOAD_CAPACITY', '12'))
+BOT_GATEWAY_COORDINATION_MODE = os.getenv('BOT_GATEWAY_COORDINATION_MODE', 'single').strip().lower()
+
+# Bot gateway compaction is independent of the global chat setting.
+BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE = (
+    os.getenv('BOT_GATEWAY_CONTEXT_COMPACTION_ENABLE', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+)
+BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD = int(
+    os.getenv('BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD', '10000')
+)
+BOT_GATEWAY_CONTEXT_COMPACTION_ROUND_THRESHOLD = int(
+    os.getenv('BOT_GATEWAY_CONTEXT_COMPACTION_ROUND_THRESHOLD', '8')
+)
 
 ####################################
 # Uvicorn
@@ -667,6 +691,16 @@ if AIOHTTP_FILE_STREAM_CHUNK_SIZE <= 0:
 # Accepts "True", "False", or a path to a CA bundle file.
 # When "True", falls back to AIOHTTP_CLIENT_SSL_CERT_FILE if set.
 AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL = _parse_ssl_env(os.getenv('AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL', 'True'))
+
+AIOHTTP_CLIENT_READ_BUFFER_SIZE_DEFAULT = 128 * 1024 * 1024
+_aiohttp_read_buffer_size = os.getenv(
+    'AIOHTTP_CLIENT_READ_BUFFER_SIZE',
+    str(AIOHTTP_CLIENT_READ_BUFFER_SIZE_DEFAULT),
+)
+try:
+    AIOHTTP_CLIENT_READ_BUFFER_SIZE = int(_aiohttp_read_buffer_size)
+except (TypeError, ValueError):
+    AIOHTTP_CLIENT_READ_BUFFER_SIZE = AIOHTTP_CLIENT_READ_BUFFER_SIZE_DEFAULT
 
 AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER = os.getenv('AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER', '')
 
@@ -933,15 +967,13 @@ if LICENSE_PUBLIC_KEY:
 # visual, textual, symbolic identifiers, metadata, and surrounding UI.
 # Do not alter, remove, obscure, or replace it except as LICENSE permits:
 # https://docs.openwebui.com/license.
-WEBUI_NAME = os.getenv('WEBUI_NAME', 'Open WebUI')
-if WEBUI_NAME != 'Open WebUI':
-    WEBUI_NAME += ' (Open WebUI)'
+WEBUI_NAME = os.getenv('WEBUI_NAME', 'RyanAI')
 
 # LICENSE covers this Open WebUI branding surface, including this favicon
 # and any visual, textual, or symbolic identifiers it preserves.
 # Do not alter, remove, obscure, or replace it except as LICENSE permits:
 # https://docs.openwebui.com/license.
-WEBUI_FAVICON_URL = 'https://openwebui.com/favicon.png'
+WEBUI_FAVICON_URL = 'https://raw.githubusercontent.com/zhizinan1997/RyanAI/main/static/favicon.png'
 WEBUI_BUILD_HASH = os.getenv('WEBUI_BUILD_HASH', 'dev-build')
 TRUSTED_SIGNATURE_KEY = os.getenv('TRUSTED_SIGNATURE_KEY', '')
 
@@ -975,17 +1007,17 @@ PROFILE_IMAGE_MAX_DATA_URI_SIZE = int(_profile_image_max_data_uri_size) if _prof
 
 ENABLE_FORWARD_USER_INFO_HEADERS = os.getenv('ENABLE_FORWARD_USER_INFO_HEADERS', 'False').lower() == 'true'
 
-FORWARD_USER_INFO_HEADER_USER_NAME = os.getenv('FORWARD_USER_INFO_HEADER_USER_NAME', 'X-OpenWebUI-User-Name')
-FORWARD_USER_INFO_HEADER_USER_ID = os.getenv('FORWARD_USER_INFO_HEADER_USER_ID', 'X-OpenWebUI-User-Id')
-FORWARD_USER_INFO_HEADER_USER_EMAIL = os.getenv('FORWARD_USER_INFO_HEADER_USER_EMAIL', 'X-OpenWebUI-User-Email')
-FORWARD_USER_INFO_HEADER_USER_ROLE = os.getenv('FORWARD_USER_INFO_HEADER_USER_ROLE', 'X-OpenWebUI-User-Role')
-FORWARD_SESSION_INFO_HEADER_MESSAGE_ID = os.getenv('FORWARD_SESSION_INFO_HEADER_MESSAGE_ID', 'X-OpenWebUI-Message-Id')
-FORWARD_SESSION_INFO_HEADER_CHAT_ID = os.getenv('FORWARD_SESSION_INFO_HEADER_CHAT_ID', 'X-OpenWebUI-Chat-Id')
+FORWARD_USER_INFO_HEADER_USER_NAME = os.getenv('FORWARD_USER_INFO_HEADER_USER_NAME', 'X-RyanAI-User-Name')
+FORWARD_USER_INFO_HEADER_USER_ID = os.getenv('FORWARD_USER_INFO_HEADER_USER_ID', 'X-RyanAI-User-Id')
+FORWARD_USER_INFO_HEADER_USER_EMAIL = os.getenv('FORWARD_USER_INFO_HEADER_USER_EMAIL', 'X-RyanAI-User-Email')
+FORWARD_USER_INFO_HEADER_USER_ROLE = os.getenv('FORWARD_USER_INFO_HEADER_USER_ROLE', 'X-RyanAI-User-Role')
+FORWARD_SESSION_INFO_HEADER_MESSAGE_ID = os.getenv('FORWARD_SESSION_INFO_HEADER_MESSAGE_ID', 'X-RyanAI-Message-Id')
+FORWARD_SESSION_INFO_HEADER_CHAT_ID = os.getenv('FORWARD_SESSION_INFO_HEADER_CHAT_ID', 'X-RyanAI-Chat-Id')
 
 # If set while ENABLE_FORWARD_USER_INFO_HEADERS is True, send one signed HS256 JWT
-# (FORWARD_USER_INFO_HEADER_JWT) instead of separate X-OpenWebUI-User-* headers.
+# (FORWARD_USER_INFO_HEADER_JWT) instead of separate X-RyanAI-User-* headers.
 FORWARD_USER_INFO_HEADER_JWT_SECRET = (os.environ.get('FORWARD_USER_INFO_HEADER_JWT_SECRET') or '').strip() or None
-FORWARD_USER_INFO_HEADER_JWT = os.environ.get('FORWARD_USER_INFO_HEADER_JWT', 'X-OpenWebUI-User-Jwt')
+FORWARD_USER_INFO_HEADER_JWT = os.environ.get('FORWARD_USER_INFO_HEADER_JWT', 'X-RyanAI-User-Jwt')
 try:
     FORWARD_USER_INFO_HEADER_JWT_EXPIRES_SECONDS = int(
         os.environ.get('FORWARD_USER_INFO_HEADER_JWT_EXPIRES_SECONDS', '300')
@@ -1254,7 +1286,7 @@ OTEL_METRICS_EXPORTER_OTLP_INSECURE = (
 OTEL_LOGS_EXPORTER_OTLP_INSECURE = (
     os.getenv('OTEL_LOGS_EXPORTER_OTLP_INSECURE', str(OTEL_EXPORTER_OTLP_INSECURE)).lower() == 'true'
 )
-OTEL_SERVICE_NAME = os.getenv('OTEL_SERVICE_NAME', 'open-webui')
+OTEL_SERVICE_NAME = os.getenv('OTEL_SERVICE_NAME', 'ryanai')
 OTEL_RESOURCE_ATTRIBUTES = os.getenv('OTEL_RESOURCE_ATTRIBUTES', '')  # e.g. key1=val1,key2=val2
 OTEL_TRACES_SAMPLER = os.getenv('OTEL_TRACES_SAMPLER', 'parentbased_always_on').lower()
 OTEL_BASIC_AUTH_USERNAME = os.getenv('OTEL_BASIC_AUTH_USERNAME', '')
