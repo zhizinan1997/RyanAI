@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3.2] - 2026-09-01
+
+### Fixed
+
+- 恢复 v0.11.1→v0.11.3 合并中被覆盖的主界面右上角入口：通知中心（NotificationCenter）与用量中心（UsageCenter，含积分、用量、排行榜、签到），桌面端与移动端均可见。
+
 ## [0.11.3.1] - 2026-09-01
 
 ### Fixed
