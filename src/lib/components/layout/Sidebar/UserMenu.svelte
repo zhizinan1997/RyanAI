@@ -5,7 +5,7 @@
 	import { fade, slide } from 'svelte/transition';
 
 	import { getUsage } from '$lib/apis';
-	import { getSessionUser, userSignOut } from '$lib/apis/auths';
+	import { getLogoutRedirectUrl, getSessionUser, userSignOut } from '$lib/apis/auths';
 
 	import { showSettings, mobile, showSidebar, user, config, settings } from '$lib/stores';
 
@@ -142,7 +142,7 @@
 			{#if $user}
 				<div>
 					<button
-						class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-xs w-full hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none text-left"
+						class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-xs w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none text-left"
 						type="button"
 						on:click={async () => {
 							show = false;
@@ -190,7 +190,7 @@
 				{#if $user?.status_emoji || $user?.status_message}
 					<div class="user-menu-status">
 						<button
-							class="w-full h-[1.6875rem] gap-2 rounded-xl px-2 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none text-xs flex items-center text-left"
+							class="w-full h-[1.6875rem] gap-2 rounded-xl px-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none text-xs flex items-center text-left"
 							type="button"
 							on:click={() => {
 								show = false;
@@ -242,7 +242,7 @@
 				{:else}
 					<div class="user-menu-status">
 						<button
-							class="w-full h-[1.6875rem] gap-2 rounded-xl px-2 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none text-xs flex items-center text-left"
+							class="w-full h-[1.6875rem] gap-2 rounded-xl px-2 hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none text-xs flex items-center text-left"
 							type="button"
 							on:click={() => {
 								show = false;
@@ -267,7 +267,7 @@
 					<a
 						href="/workspace"
 						draggable="false"
-						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 						on:click={async (e) => {
 							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
 							e.preventDefault();
@@ -311,7 +311,7 @@
 					<a
 						href="/notes"
 						draggable="false"
-						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 						on:click={async (e) => {
 							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
 							e.preventDefault();
@@ -355,7 +355,7 @@
 					<a
 						href="/calendar"
 						draggable="false"
-						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 						on:click={async (e) => {
 							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
 							e.preventDefault();
@@ -399,7 +399,7 @@
 					<a
 						href="/automations"
 						draggable="false"
-						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 						on:click={async (e) => {
 							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
 							e.preventDefault();
@@ -443,7 +443,7 @@
 					<a
 						href="/playground"
 						draggable="false"
-						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+						class="flex flex-1 h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 						on:click={async (e) => {
 							if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
 							e.preventDefault();
@@ -492,7 +492,7 @@
 						href="https://docs.openwebui.com"
 						target="_blank"
 						draggable="false"
-						class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+						class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 						id="chat-share-button"
 						on:click={() => {
 							show = false;
@@ -509,7 +509,7 @@
 						href="https://github.com/open-webui/open-webui/releases"
 						target="_blank"
 						draggable="false"
-						class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+						class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 						id="chat-share-button"
 						on:click={() => {
 							show = false;
@@ -523,7 +523,7 @@
 				{/if}
 
 				<button
-					class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+					class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 					type="button"
 					id="chat-share-button"
 					on:click={async () => {
@@ -549,7 +549,7 @@
 				<a
 					href="/admin"
 					draggable="false"
-					class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+					class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 					on:click={async (e) => {
 						if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) {
 							return;
@@ -571,7 +571,7 @@
 			{/if}
 
 			<button
-				class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+				class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 				type="button"
 				on:click={async () => {
 					show = false;
@@ -591,14 +591,13 @@
 			</button>
 
 			<button
-				class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition cursor-pointer select-none"
+				class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-pointer select-none"
 				type="button"
 				on:click={async () => {
 					const res = await userSignOut();
-					user.set(null);
 					localStorage.removeItem('token');
 
-					location.href = res?.redirect_url ?? '/auth';
+					location.href = getLogoutRedirectUrl(res?.redirect_url);
 					show = false;
 				}}
 			>

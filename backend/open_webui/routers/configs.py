@@ -784,7 +784,7 @@ async def set_usage_config(request: Request, form_data: UsageConfigForm, user=De
 class ModelsConfigForm(BaseModel):
     DEFAULT_MODELS: str | None
     DEFAULT_PINNED_MODELS: str | None
-    MODEL_ORDER_LIST: list[str | None]
+    MODEL_ORDER_LIST: list[str] | None
     DEFAULT_MODEL_METADATA: dict | None = None
     DEFAULT_MODEL_PARAMS: dict | None = None
 

@@ -30,6 +30,10 @@
 		scrollToTab(selectedTab);
 	}
 
+	$: if (loaded && selectedTab) {
+		loadCounts();
+	}
+
 	const scrollToTab = (tabId) => {
 		const tabElement = document.getElementById(tabId);
 		if (tabElement) {
@@ -63,7 +67,6 @@
 			await goto('/');
 		}
 
-		await loadCounts();
 		loaded = true;
 
 		const containerElement = document.getElementById('users-tabs-container');

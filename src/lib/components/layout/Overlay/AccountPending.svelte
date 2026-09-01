@@ -5,7 +5,13 @@
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
 
-	import { getAdminDetails, resendSignupVerification, verifySignupEmail } from '$lib/apis/auths';
+	import {
+		getAdminDetails,
+		getLogoutRedirectUrl,
+		resendSignupVerification,
+		userSignOut,
+		verifySignupEmail
+	} from '$lib/apis/auths';
 	import { onMount, getContext } from 'svelte';
 	import { config, user } from '$lib/stores';
 
@@ -169,8 +175,12 @@
 					<button
 						class="text-xs text-center w-full mt-2 text-gray-400 underline"
 						on:click={async () => {
+							const res = await userSignOut().catch((err) => {
+								console.error(err);
+								return null;
+							});
 							localStorage.removeItem('token');
-							location.href = '/auth';
+							location.href = getLogoutRedirectUrl(res?.redirect_url);
 						}}>{$i18n.t('Sign Out')}</button
 					>
 				</div>

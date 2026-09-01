@@ -182,7 +182,9 @@
 
 	onMount(async () => {
 		const redirectPath = $page.url.searchParams.get('redirect');
-		if ($user) {
+		const logout = $page.url.searchParams.get('state') === 'logout';
+
+		if ($user && !logout) {
 			goto(redirectPath || '/');
 		} else {
 			if (redirectPath) {
@@ -200,9 +202,9 @@
 
 		// Auto-redirect to SSO when OAUTH_AUTO_REDIRECT is enabled and the
 		// deployment is unambiguously SSO-only (single provider, no login form,
-		// no LDAP). Suppressed by ?form=, ?error=, onboarding, trusted-header
-		// auth, or an existing session/token.
-		if ($config?.oauth?.auto_redirect && !form && !error) {
+		// no LDAP). Suppressed after logout, by ?form=, ?error=, onboarding,
+		// trusted-header auth, or an existing session/token.
+		if ($config?.oauth?.auto_redirect && !logout && !form && !error) {
 			const providers = Object.keys($config?.oauth?.providers ?? {});
 			if (
 				providers.length === 1 &&

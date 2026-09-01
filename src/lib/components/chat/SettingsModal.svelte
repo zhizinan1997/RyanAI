@@ -275,6 +275,8 @@
 				'full width mode',
 				'haptic feedback',
 				'hapticfeedback',
+				'accessibility mode',
+				'accessibilitymode',
 				'high contrast mode',
 				'highcontrastmode',
 				'iframe sandbox allow forms',
