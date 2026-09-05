@@ -53,6 +53,7 @@ from open_webui.models.auths import (
     UpdatePasswordForm,
 )
 from open_webui.models.config import Config
+from open_webui.models.credits import Credits
 from open_webui.models.groups import Groups
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.models.users import (
@@ -260,6 +261,7 @@ async def create_session_response(
         )
 
     user_permissions = await get_permissions(user.id, await Config.get('user.permissions'), db=db)
+    credit = Credits.init_credit_by_user_id(user.id)
     await publish_event(
         request,
         EVENTS.AUTH_LOGIN,
@@ -279,6 +281,7 @@ async def create_session_response(
         'name': user.name,
         'role': user.role,
         'profile_image_url': f'/api/v1/users/{user.id}/profile/image',
+        'credit': float(credit.credit or 0),
         'permissions': user_permissions,
     }
 
@@ -291,6 +294,7 @@ async def create_session_response(
 class SessionUserResponse(Token, UserProfileImageResponse):
     expires_at: int | None = None
     permissions: dict | None = None
+    credit: float = 0
 
 
 class SessionUserInfoResponse(SessionUserResponse, UserStatus):
@@ -342,6 +346,7 @@ async def get_session_user(
         )
 
     user_permissions = await get_permissions(user.id, await Config.get('user.permissions'), db=db)
+    credit = Credits.init_credit_by_user_id(user.id)
 
     response_data = {
         'token': token,
@@ -358,6 +363,7 @@ async def get_session_user(
         'status_emoji': user.status_emoji,
         'status_message': user.status_message,
         'status_expires_at': user.status_expires_at,
+        'credit': float(credit.credit or 0),
         'permissions': user_permissions,
     }
 
