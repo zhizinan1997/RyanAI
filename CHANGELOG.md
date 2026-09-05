@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3.3] - 2026-09-05
+
+### Added
+
+- 启动公告（Splash Notice）功能补全：新增后台配置字段（启用开关、标题、内容、媒体图片）与媒体文件上传/删除/读取接口；`/api/config` 携带登录态返回公告配置，公告仅在用户登录后展示。
+
+### Fixed
+
+- 修复用户设置【积分】余额恒为 0：v0.11.3 合并时登录与 `get_session_user` 响应丢失 `credit` 字段，现已在 `create_session_response`（signin/signup/LDAP/OAuth 共用）与会话接口恢复返回。
+- 恢复用户设置【积分】页的积分使用历史（积分日志：时间/积分/模型/描述，分页加载），并修复刷新时未重置分页、接口失败时覆盖全局用户信息的问题。
+
 ## [0.11.3.2] - 2026-09-01
 
 ### Fixed
