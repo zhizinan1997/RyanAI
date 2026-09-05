@@ -3,24 +3,26 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 import re
 import time
 import urllib
 import uuid
+from pathlib import Path
 from ssl import CERT_NONE, CERT_REQUIRED, PROTOCOL_TLS
 
 from aiohttp import BasicAuth, ClientSession
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse, Response
 from ldap3 import NONE, Connection, Server, Tls
 from ldap3.utils.conv import escape_filter_chars
 from ldap3.utils.dn import parse_dn
 from open_webui.config import (
     ENABLE_PASSWORD_AUTH,
     OAUTH_PROVIDERS,
+    UPLOAD_DIR,
 )
 from open_webui.constants import ERROR_MESSAGES
-from open_webui.events import EVENTS, publish_event
 from open_webui.env import (
     AIOHTTP_CLIENT_SESSION_SSL,
     ENABLE_INITIAL_ADMIN_SIGNUP,
@@ -37,6 +39,7 @@ from open_webui.env import (
     WEBUI_AUTH_TRUSTED_NAME_HEADER,
     WEBUI_AUTH_TRUSTED_ROLE_HEADER,
 )
+from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
 from open_webui.models.auths import (
     AddUserForm,
@@ -102,6 +105,48 @@ token_exchange_rate_limiter = (
 )
 
 
+SPLASH_NOTICE_MEDIA_DIR = UPLOAD_DIR / 'splash_notice'
+SPLASH_NOTICE_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+SPLASH_NOTICE_MEDIA_MAX_SIZE = 15 * 1024 * 1024
+SPLASH_NOTICE_MEDIA_CONTENT_TYPES = {
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+}
+SPLASH_NOTICE_MEDIA_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+
+
+def get_splash_notice_media_url(file_name: str | None) -> str:
+    if not file_name:
+        return ''
+    return f'/api/v1/auths/admin/config/splash-notice/media/{urllib.parse.quote(file_name)}'
+
+
+def get_splash_notice_media_file_path(file_name: str | None) -> Path | None:
+    if not file_name:
+        return None
+
+    candidate = (SPLASH_NOTICE_MEDIA_DIR / Path(file_name).name).resolve()
+    media_dir = SPLASH_NOTICE_MEDIA_DIR.resolve()
+
+    if media_dir not in candidate.parents or not candidate.is_file():
+        return None
+
+    return candidate
+
+
+def delete_splash_notice_media_file(file_name: str | None) -> None:
+    file_path = get_splash_notice_media_file_path(file_name)
+    if file_path is None:
+        return
+
+    try:
+        file_path.unlink(missing_ok=True)
+    except OSError as e:
+        log.warning('Failed to delete splash notice media %s: %s', file_name, e)
+
+
 ADMIN_CONFIG_KEYS = {
     'SHOW_ADMIN_DETAILS': 'auth.admin.show',
     'ADMIN_EMAIL': 'auth.admin.email',
@@ -131,6 +176,9 @@ ADMIN_CONFIG_KEYS = {
     'ENABLE_USER_STATUS': 'users.enable_status',
     'PENDING_USER_OVERLAY_TITLE': 'ui.pending_user_overlay_title',
     'PENDING_USER_OVERLAY_CONTENT': 'ui.pending_user_overlay_content',
+    'ENABLE_SPLASH_NOTICE': 'ui.splash_notice_enabled',
+    'SPLASH_NOTICE_TITLE': 'ui.splash_notice_title',
+    'SPLASH_NOTICE_CONTENT': 'ui.splash_notice_content',
     'RESPONSE_WATERMARK': 'ui.watermark',
 }
 
@@ -157,6 +205,12 @@ LDAP_SERVER_CONFIG_KEYS = {
 async def get_config_values(key_map: dict[str, str]) -> dict:
     values = await Config.get_many(*key_map.values())
     return {field: values[storage_key] for field, storage_key in key_map.items() if storage_key in values}
+
+
+async def get_admin_config_values() -> dict:
+    values = await get_config_values(ADMIN_CONFIG_KEYS)
+    values['SPLASH_NOTICE_MEDIA_URL'] = get_splash_notice_media_url(await Config.get('ui.splash_notice_media'))
+    return values
 
 
 def config_updates(data: dict, key_map: dict[str, str]) -> dict:
@@ -1202,7 +1256,7 @@ async def get_admin_details(
 
 @router.get('/admin/config')
 async def get_admin_config(request: Request, user=Depends(get_admin_user)):
-    return await get_config_values(ADMIN_CONFIG_KEYS)
+    return await get_admin_config_values()
 
 
 class AdminConfig(BaseModel):
@@ -1234,6 +1288,10 @@ class AdminConfig(BaseModel):
     ENABLE_USER_STATUS: bool
     PENDING_USER_OVERLAY_TITLE: str | None = None
     PENDING_USER_OVERLAY_CONTENT: str | None = None
+    ENABLE_SPLASH_NOTICE: bool = False
+    SPLASH_NOTICE_TITLE: str | None = None
+    SPLASH_NOTICE_CONTENT: str | None = None
+    SPLASH_NOTICE_MEDIA_URL: str | None = None
     RESPONSE_WATERMARK: str | None = None
 
 
@@ -1260,7 +1318,83 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         updates.pop('auth.jwt_expiry', None)
 
     await Config.upsert(updates)
-    return await get_config_values(ADMIN_CONFIG_KEYS)
+    return await get_admin_config_values()
+
+
+@router.post('/admin/config/splash-notice/media')
+async def upload_splash_notice_media(
+    request: Request,
+    media: UploadFile = File(...),
+    user=Depends(get_admin_user),
+):
+    if not media.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No file selected')
+
+    extension = os.path.splitext(media.filename)[1].lower()
+    content_type = media.content_type or ''
+
+    if content_type not in SPLASH_NOTICE_MEDIA_CONTENT_TYPES or extension not in SPLASH_NOTICE_MEDIA_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Unsupported image format. Please upload a PNG, JPG, GIF, or WebP file.',
+        )
+
+    contents = await media.read()
+    if not contents:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Uploaded file is empty')
+
+    if len(contents) > SPLASH_NOTICE_MEDIA_MAX_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Image is too large. Please keep it under 15 MB.',
+        )
+
+    file_name = f'{uuid.uuid4().hex}{extension}'
+    file_path = SPLASH_NOTICE_MEDIA_DIR / file_name
+    file_path.write_bytes(contents)
+
+    previous_file_name = await Config.get('ui.splash_notice_media')
+    try:
+        await Config.upsert({'ui.splash_notice_media': file_name})
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
+
+    delete_splash_notice_media_file(previous_file_name)
+
+    return {
+        'status': True,
+        'url': get_splash_notice_media_url(file_name),
+    }
+
+
+@router.delete('/admin/config/splash-notice/media')
+async def delete_splash_notice_media(
+    request: Request,
+    user=Depends(get_admin_user),
+):
+    previous_file_name = await Config.get('ui.splash_notice_media')
+    await Config.upsert({'ui.splash_notice_media': ''})
+    delete_splash_notice_media_file(previous_file_name)
+
+    return {'status': True}
+
+
+@router.get('/admin/config/splash-notice/media/{file_name}')
+async def get_splash_notice_media(
+    request: Request,
+    file_name: str,
+):
+    configured_file_name = await Config.get('ui.splash_notice_media')
+
+    if not configured_file_name or Path(file_name).name != Path(configured_file_name).name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    file_path = get_splash_notice_media_file_path(configured_file_name)
+    if file_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
+
+    return FileResponse(file_path)
 
 
 class LdapServerConfig(BaseModel):

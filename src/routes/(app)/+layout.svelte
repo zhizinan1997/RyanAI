@@ -61,6 +61,7 @@
 	let version;
 	let handledSettingsUrl = '';
 	let showSplashNotice = false;
+	let splashNoticeInitialized = false;
 	let authNavigationInProgress = false;
 
 	const clearChatInputStorage = () => {
@@ -265,8 +266,6 @@
 				await setModels().catch((e) => console.error('Failed to load models:', e));
 			}).catch((e) => console.error('Failed to load user settings:', e))
 		]);
-		showSplashNotice = $config?.ui?.splash_notice_enabled ?? false;
-
 		selectedTerminalId.set(localStorage.selectedTerminalId ?? null);
 
 		const loadToolServers = setToolServers().catch((e) => {
@@ -447,6 +446,15 @@
 
 	$: if (loaded && ($user === undefined || $user === null)) {
 		void gotoAuth();
+	}
+
+	$: if (
+		!splashNoticeInitialized &&
+		['user', 'admin'].includes($user?.role) &&
+		$config?.ui?.splash_notice_enabled !== undefined
+	) {
+		splashNoticeInitialized = true;
+		showSplashNotice = $config.ui.splash_notice_enabled;
 	}
 
 	const checkForVersionUpdates = async () => {

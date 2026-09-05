@@ -1471,14 +1471,15 @@ export const getUsage = async (token: string = '') => {
 	return res;
 };
 
-export const getBackendConfig = async () => {
+export const getBackendConfig = async (token: string = '') => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_BASE_URL}/api/config`, {
 		method: 'GET',
 		credentials: 'include',
 		headers: {
-			'Content-Type': 'application/json'
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
 		}
 	})
 		.then(async (res) => {
@@ -1505,7 +1506,10 @@ export const getBackendConfig = async () => {
 					method: 'GET',
 					credentials: 'include',
 					redirect: 'manual',
-					headers: { 'Content-Type': 'application/json' }
+					headers: {
+						'Content-Type': 'application/json',
+						...(token && { authorization: `Bearer ${token}` })
+					}
 				});
 				if (
 					probeRes.type === 'opaqueredirect' ||

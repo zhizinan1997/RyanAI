@@ -1268,7 +1268,7 @@
 					if (sessionUser) {
 						await user.set(sessionUser);
 						try {
-							await config.set(await getBackendConfig());
+							await config.set(await getBackendConfig(localStorage.token));
 						} catch (error) {
 							console.error('Error refreshing backend config:', error);
 						}
