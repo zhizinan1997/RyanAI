@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 DEFAULT_COOLDOWN_SECONDS = 600
 MAX_ERROR_LENGTH = 2000
 NON_ALERT_CATEGORIES = {'insufficient_credit'}
+GENERIC_CATEGORIES = {'server_failed', 'upstream_error', 'unknown_error', 'network_error'}
 RECIPIENT_MODE_ADMIN = 'admin'
 RECIPIENT_MODE_ADMIN_AND_USER = 'admin_and_user'
 DEFAULT_RECIPIENT_MODE = RECIPIENT_MODE_ADMIN
@@ -59,7 +60,32 @@ def _config_bool(value) -> bool:
     return value if isinstance(value, bool) else str(value or '').lower() == 'true'
 
 
+_EMBEDDED_STATUS_PATTERNS = (
+    re.compile(r'\bstatus\s*=\s*([45]\d{2})\b', re.IGNORECASE),
+    re.compile(r'\bHTTP\s+([45]\d{2})\b', re.IGNORECASE),
+)
+
+
+def _extract_embedded_status(error_text: str) -> int | None:
+    """Recover the real upstream status when a gateway wraps it into a generic code.
+
+    Providers such as chatgpt2api collapse upstream failures into HTTP 502 while
+    embedding the true status in the message (e.g. ``... failed: status=413``).
+    Prefer that embedded code so classification is not lost behind the 502.
+    """
+    text = error_text or ''
+    for pattern in _EMBEDDED_STATUS_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def _extract_status_code(error_text: str, status_code: int | None = None) -> int | None:
+    embedded = _extract_embedded_status(error_text)
+    if embedded is not None:
+        return embedded
+
     if status_code is not None:
         try:
             return int(status_code)
@@ -70,79 +96,119 @@ def _extract_status_code(error_text: str, status_code: int | None = None) -> int
     return int(match.group(1)) if match else None
 
 
-def classify_ai_error(error, status_code: int | None = None) -> tuple[str, int | None]:
-    error_text = str(error or '')
-    status_code = _extract_status_code(error_text, status_code)
-    marker = error_text.lower()
-
-    if any(
-        value in marker
-        for value in (
-            '积分不足',
-            '余额不足',
-            'insufficient credit',
-            'not enough credit',
-        )
-    ):
-        return 'insufficient_credit', status_code
-    if any(
-        value in marker
-        for value in (
+_ERROR_RULES: tuple[tuple[str, frozenset[int], tuple[str, ...]], ...] = (
+    ('insufficient_credit', frozenset(), ('积分不足', '余额不足', 'insufficient credit', 'not enough credit')),
+    (
+        'too_many_attachments',
+        frozenset(),
+        ('最多支持', '附件数量', '附件过多', 'too many attachments', 'attachment limit'),
+    ),
+    (
+        'image_too_large',
+        frozenset(),
+        ('patches after processing', 'exceeding the limit', 'resize the image', '图片过大', 'image too large'),
+    ),
+    (
+        'response_interrupted',
+        frozenset(),
+        (
             'unexpected eof',
             'stream ended: reason=eof',
             'response body closed',
             'not enough data to satisfy transfer length header',
             'transferencodingerror',
-            'stream disconnected before valid content',
+            'stream disconnected',
+            'stream closed before response.completed',
             'internal_error; received from peer',
             'stream error: stream id',
-        )
-    ):
-        return 'response_interrupted', status_code
-    if any(
-        value in marker
-        for value in (
+        ),
+    ),
+    (
+        'invalid_request',
+        frozenset(),
+        (
             'field messages is required',
             'messages is required',
             'missing messages',
             '缺少有效的对话内容',
             '请求中缺少有效的对话内容',
-        )
-    ):
-        return 'invalid_request', status_code
-    if status_code == 429 or any(value in marker for value in ('rate limit', 'too many requests', 'quota exceeded')):
-        return 'rate_limited', status_code
-    if status_code in (401, 403) or any(
-        value in marker for value in ('authentication failed', 'unauthorized', 'invalid api key', 'permission denied')
-    ):
-        return 'authentication_failed', status_code
-    if (status_code == 404 and any(value in marker for value in ('model', 'not found', 'does not exist'))) or (
-        'model not found' in marker
-    ):
-        return 'model_not_found', status_code
-    if any(
-        value in marker
-        for value in ('context length', 'maximum context', 'too many tokens', 'token limit', 'context window')
-    ):
-        return 'context_length_exceeded', status_code
-    if any(value in marker for value in ('content filter', 'content policy', 'safety policy', 'moderation')):
-        return 'content_filtered', status_code
-    if any(value in marker for value in ('timed out', 'timeout', 'deadline exceeded')):
-        return 'timeout', status_code
-    if any(
-        value in marker
-        for value in (
+        ),
+    ),
+    (
+        'upstream_overloaded',
+        frozenset(),
+        ('server_is_overloaded', 'overloaded', 'over capacity', '负载过高', '服务繁忙'),
+    ),
+    (
+        'payload_too_large',
+        frozenset({413}),
+        ('payload too large', 'request entity too large', 'content too large', '内容过大'),
+    ),
+    ('unprocessable_request', frozenset({422}), ('unprocessable',)),
+    ('rate_limited', frozenset({429}), ('rate limit', 'too many requests', 'quota exceeded')),
+    (
+        'authentication_failed',
+        frozenset({401, 403}),
+        ('authentication failed', 'unauthorized', 'invalid api key', 'permission denied'),
+    ),
+    (
+        'context_length_exceeded',
+        frozenset(),
+        ('context length', 'maximum context', 'too many tokens', 'token limit', 'context window'),
+    ),
+    ('content_filtered', frozenset(), ('content filter', 'content policy', 'safety policy', 'moderation')),
+    ('timeout', frozenset(), ('timed out', 'timeout', 'deadline exceeded')),
+    (
+        'network_error',
+        frozenset(),
+        (
             'connection error',
             'connection refused',
             'cannot connect',
             'network error',
             'dns',
             'server disconnected',
-        )
-    ):
-        return 'network_error', status_code
-    if any(value in marker for value in ('tool-call limit', 'tool call limit', 'tool failed', 'tool execution')):
-        return 'tool_failed', status_code
+        ),
+    ),
+    ('tool_failed', frozenset(), ('tool-call limit', 'tool call limit', 'tool failed', 'tool execution')),
+)
+
+
+def _is_model_not_found(marker: str, status_code: int | None) -> bool:
+    if 'model not found' in marker or 'model_not_found' in marker:
+        return True
+    return status_code == 404 and any(value in marker for value in ('model', 'not found', 'does not exist'))
+
+
+def _matches_error_rule(rule, marker: str, status_code: int | None) -> bool:
+    _, statuses, markers = rule
+    return (bool(statuses) and status_code in statuses) or any(value in marker for value in markers)
+
+
+def _resolve_error_category(
+    category: str | None,
+    detected_category: str | None,
+    detected_status: int | None,
+) -> tuple[str | None, int | None]:
+    # A coarse gateway category (e.g. server_failed from a wrapped 502) must not
+    # hide a more specific cause recovered from the upstream error text.
+    if not category or (category in GENERIC_CATEGORIES and detected_category not in GENERIC_CATEGORIES):
+        return detected_category or category, detected_status
+    return category, detected_status
+
+
+def classify_ai_error(error, status_code: int | None = None) -> tuple[str, int | None]:
+    error_text = str(error or '')
+    status_code = _extract_status_code(error_text, status_code)
+    marker = error_text.lower()
+
+    if _is_model_not_found(marker, status_code):
+        return 'model_not_found', status_code
+
+    for rule in _ERROR_RULES:
+        if _matches_error_rule(rule, marker, status_code):
+            return rule[0], status_code
+
     if status_code is not None and status_code >= 500:
         return 'server_failed', status_code
     return 'unknown_error', status_code
@@ -153,6 +219,20 @@ def get_user_facing_error(category: str, error_text: str = '') -> str:
         return error_text or '当前积分不足，暂时无法完成本次请求。请获取积分后再试。'
 
     messages = {
+        'payload_too_large': (
+            '本次发送的内容过大（图片、附件或对话上下文过多），模型服务拒绝了这次请求。'
+            '请减少附件数量、压缩图片，或新建对话后重试。'
+        ),
+        'image_too_large': (
+            '本次发送的图片尺寸过大，模型无法处理。请将图片压缩到约 2000 像素以内'
+            '（或减少图片数量）后重试。'
+        ),
+        'too_many_attachments': '一次对话发送的附件数量超出上限。请减少附件数量，分几次发送后重试。',
+        'unprocessable_request': (
+            '模型服务无法处理本次请求（通常与发送的图片或附件有关）。'
+            '请尝试更换图片或减少附件后重试；如果仍然失败，请新建对话。'
+        ),
+        'upstream_overloaded': '模型服务当前负载较高，暂时无法响应。请稍等片刻后重试，或切换其他模型。',
         'response_interrupted': (
             'AI 回答在传输过程中意外中断。请先重试一次；如果仍然失败，请切换模型或新建对话后再试。'
         ),
@@ -264,6 +344,11 @@ def _format_display_time(value: str) -> str:
 def _category_label(category: str) -> str:
     labels = {
         'insufficient_credit': '积分不足',
+        'payload_too_large': '内容过大',
+        'image_too_large': '图片过大',
+        'too_many_attachments': '附件过多',
+        'unprocessable_request': '请求无法处理',
+        'upstream_overloaded': '服务繁忙',
         'response_interrupted': '回复中断',
         'invalid_request': '请求无效',
         'rate_limited': '请求限流',
@@ -523,8 +608,7 @@ async def report_ai_response_failure(
     status_code = status_code or provider_failure.get('status')
     category = category or provider_failure.get('error_type')
     detected_category, detected_status = classify_ai_error(error_text, status_code)
-    category = category or detected_category
-    status_code = detected_status
+    category, status_code = _resolve_error_category(category, detected_category, detected_status)
     user_message = get_user_facing_error(category, error_text)
     incident_id = f'ERR-{dt.datetime.now(dt.UTC).strftime("%Y%m%d")}-{uuid4().hex[:8].upper()}'
 
@@ -542,6 +626,9 @@ async def report_ai_response_failure(
 
     payload = {
         'content': user_message,
+        # Backward-compatible alias: older frontends read `message`/`detail` when
+        # rendering message.error, so they can display the Chinese hint without a rebuild.
+        'message': user_message,
         'technical_detail': error_text,
         'category': category,
         'status_code': status_code,

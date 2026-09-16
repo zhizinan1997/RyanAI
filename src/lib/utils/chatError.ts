@@ -24,10 +24,30 @@ const categoryFromContent = (content: string): string => {
 		marker.includes('unexpected eof') ||
 		marker.includes('stream ended: reason=eof') ||
 		marker.includes('response body closed') ||
+		marker.includes('stream disconnected') ||
+		marker.includes('stream closed before response.completed') ||
 		marker.includes('internal_error; received from peer') ||
 		marker.includes('stream error: stream id')
 	) {
 		return 'response_interrupted';
+	}
+	if (
+		marker.includes('最多支持') ||
+		marker.includes('附件数量') ||
+		marker.includes('附件过多') ||
+		marker.includes('too many attachments') ||
+		marker.includes('attachment limit')
+	) {
+		return 'too_many_attachments';
+	}
+	if (
+		marker.includes('patches after processing') ||
+		marker.includes('exceeding the limit') ||
+		marker.includes('resize the image') ||
+		marker.includes('图片过大') ||
+		marker.includes('image too large')
+	) {
+		return 'image_too_large';
 	}
 	if (
 		marker.includes('field messages is required') ||
@@ -35,6 +55,25 @@ const categoryFromContent = (content: string): string => {
 		marker.includes('缺少有效的对话内容')
 	) {
 		return 'invalid_request';
+	}
+	if (
+		marker.includes('overloaded') ||
+		marker.includes('server_is_overloaded') ||
+		marker.includes('负载过高') ||
+		marker.includes('服务繁忙')
+	) {
+		return 'upstream_overloaded';
+	}
+	if (
+		/\b413\b/.test(marker) ||
+		marker.includes('payload too large') ||
+		marker.includes('request entity too large') ||
+		marker.includes('内容过大')
+	) {
+		return 'payload_too_large';
+	}
+	if (/\b422\b/.test(marker) || marker.includes('unprocessable')) {
+		return 'unprocessable_request';
 	}
 	if (
 		/\b429\b/.test(marker) ||
@@ -103,31 +142,41 @@ export const normalizeAIError = (value: unknown): AIErrorPayload => {
 
 export const getAIErrorDescription = (category?: string): string => {
 	switch (category) {
+		case 'payload_too_large':
+			return '本次发送的内容过大（图片、附件或对话上下文过多），模型服务拒绝了这次请求。请减少附件数量、压缩图片，或新建对话后重试。';
+		case 'image_too_large':
+			return '本次发送的图片尺寸过大，模型无法处理。请将图片压缩到约 2000 像素以内（或减少图片数量）后重试。';
+		case 'too_many_attachments':
+			return '一次对话发送的附件数量超出上限。请减少附件数量，分几次发送后重试。';
+		case 'unprocessable_request':
+			return '模型服务无法处理本次请求（通常与发送的图片或附件有关）。请尝试更换图片或减少附件后重试；如果仍然失败，请新建对话。';
+		case 'upstream_overloaded':
+			return '模型服务当前负载较高，暂时无法响应。请稍等片刻后重试，或切换其他模型。';
 		case 'response_interrupted':
-			return 'The AI response was interrupted while it was being delivered. Please retry once. If it still fails, switch models or start a new chat.';
+			return 'AI 回答在传输过程中意外中断。请先重试一次；如果仍然失败，请切换模型或新建对话后再试。';
 		case 'insufficient_credit':
-			return 'There is not enough credit to complete this request. Please get more credit and try again.';
+			return '当前积分不足，暂时无法完成本次请求。请获取积分后再试。';
 		case 'invalid_request':
-			return 'The request is missing valid conversation content. Please refresh the page and retry once. If it still fails, start a new chat.';
+			return '本次请求缺少有效的对话内容。请刷新页面后重试一次；如果仍然失败，请新建对话。';
 		case 'rate_limited':
-			return 'The model service is receiving too many requests and cannot answer right now. Please try again later.';
+			return '当前使用人数较多，请稍等片刻后重试一次。';
 		case 'authentication_failed':
-			return 'The model service authentication failed. An administrator needs to check the service credentials.';
+			return '模型服务配置异常，请联系管理员处理。';
 		case 'model_not_found':
-			return 'The selected model is unavailable or incorrectly configured. Please select another model or try again later.';
+			return '当前模型暂不可用，请切换其他模型后重试。';
 		case 'server_failed':
-			return 'The model service is temporarily unavailable. Please try again later.';
+			return '模型服务暂时异常。请先重试一次；如果仍然失败，请切换模型。';
 		case 'timeout':
-			return 'The model took too long to respond and the request timed out. Please try again.';
+			return 'AI 响应时间过长。请先重试一次；如果仍然失败，请切换模型。';
 		case 'network_error':
-			return 'The system could not connect to the model service. Please try again later.';
+			return '暂时无法连接模型服务。请稍后重试一次。';
 		case 'context_length_exceeded':
-			return 'This conversation exceeds the model context limit. Please shorten the conversation or start a new chat.';
+			return '当前对话内容过长，请精简内容或新建对话后重试。';
 		case 'content_filtered':
-			return 'The request was rejected by the model service safety policy. Please revise the request and try again.';
+			return '请求内容未通过模型的安全检查，请修改内容后重试。';
 		case 'tool_failed':
-			return 'A tool or external service required for this answer failed. Please try again.';
+			return '回答所需的工具执行失败。请重试一次；如果仍然失败，请关闭相关工具后再试。';
 		default:
-			return 'The AI response could not be completed because of a system error. Please try again later.';
+			return 'AI 未能完成本次回答。请先重试一次；如果仍然失败，请切换模型或新建对话。';
 	}
 };

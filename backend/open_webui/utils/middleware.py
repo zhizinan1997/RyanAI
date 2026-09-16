@@ -81,6 +81,7 @@ from open_webui.tasks import clear_response_stream, save_response_stream
 from open_webui.utils.access_control import has_connection_access, has_permission
 from open_webui.utils.access_control.files import get_owner_accessible_folder_files
 from open_webui.utils.access_control.folders import has_folder_access
+from open_webui.utils.ai_error_notifications import report_ai_response_failure
 from open_webui.utils.ask_user import stage_ask_user_tool_calls
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.chat_id import is_saved_chat_id
@@ -4693,6 +4694,24 @@ async def streaming_chat_response_handler(response, ctx):
                             },
                         )
 
+                async def build_stream_error_payload(error):
+                    error_text = (
+                        (error.get('message') or error.get('detail') or str(error))
+                        if isinstance(error, dict)
+                        else str(error)
+                    )
+                    try:
+                        return await report_ai_response_failure(
+                            request,
+                            error=error_text,
+                            user=user,
+                            metadata=metadata,
+                            model=model,
+                        )
+                    except Exception:
+                        log.exception('Failed to build AI error payload for streamed error')
+                        return {'content': error_text, 'technical_detail': error_text}
+
                 async def stream_body_handler(response, form_data):
                     nonlocal usage
                     nonlocal output
@@ -4839,18 +4858,21 @@ async def streaming_chat_response_handler(response, ctx):
                                 raw_obj = JSONCodec.loads(data)
                                 raw_error = raw_obj.get('error') if isinstance(raw_obj, dict) else None
                                 if raw_error:
+                                    error_payload = await build_stream_error_payload(raw_error)
                                     if save_to_chat:
                                         try:
                                             await Chats.upsert_message_to_chat_by_id_and_message_id(
                                                 metadata['chat_id'],
                                                 metadata['message_id'],
                                                 {
-                                                    'error': {'content': raw_error},
+                                                    'error': error_payload,
                                                 },
                                             )
                                         except Exception:
                                             pass
-                                    await event_emitter({'type': 'chat:completion', 'data': {'error': raw_error}})
+                                    await event_emitter(
+                                        {'type': 'chat:completion', 'data': {'error': error_payload}}
+                                    )
                             except Exception:
                                 pass
                             continue
@@ -4952,10 +4974,22 @@ async def streaming_chat_response_handler(response, ctx):
                                             response_metadata['usage'] = usage
 
                                         if response_metadata.get('error'):
+                                            error_payload = await build_stream_error_payload(
+                                                response_metadata['error']
+                                            )
+                                            if save_to_chat:
+                                                try:
+                                                    await Chats.upsert_message_to_chat_by_id_and_message_id(
+                                                        metadata['chat_id'],
+                                                        metadata['message_id'],
+                                                        {'error': error_payload},
+                                                    )
+                                                except Exception:
+                                                    pass
                                             await event_emitter(
                                                 {
                                                     'type': 'chat:completion',
-                                                    'data': {'error': response_metadata['error']},
+                                                    'data': {'error': error_payload},
                                                 }
                                             )
 
@@ -4990,13 +5024,14 @@ async def streaming_chat_response_handler(response, ctx):
                                         error = data.get('error', {})
                                         if error:
                                             log.error('Provider returned error (streaming): %s', error)
+                                            error_payload = await build_stream_error_payload(error)
                                             if save_to_chat:
                                                 try:
                                                     await Chats.upsert_message_to_chat_by_id_and_message_id(
                                                         metadata['chat_id'],
                                                         metadata['message_id'],
                                                         {
-                                                            'error': {'content': error},
+                                                            'error': error_payload,
                                                         },
                                                     )
                                                 except Exception:
@@ -5005,7 +5040,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                 {
                                                     'type': 'chat:completion',
                                                     'data': {
-                                                        'error': error,
+                                                        'error': error_payload,
                                                     },
                                                 }
                                             )

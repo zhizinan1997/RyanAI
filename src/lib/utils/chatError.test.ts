@@ -34,12 +34,31 @@ describe('chatError', () => {
 	});
 
 	it('maps categories to user-facing descriptions', () => {
-		expect(getAIErrorDescription('rate_limited')).toContain('too many requests');
-		expect(getAIErrorDescription('context_length_exceeded')).toContain('context limit');
-		expect(getAIErrorDescription('unknown_error')).toContain('system error');
-		expect(getAIErrorDescription('response_interrupted')).toContain('retry once');
-		expect(getAIErrorDescription('insufficient_credit')).toContain('enough credit');
-		expect(getAIErrorDescription('invalid_request')).toContain('missing valid conversation content');
+		expect(getAIErrorDescription('rate_limited')).toContain('请稍等片刻');
+		expect(getAIErrorDescription('context_length_exceeded')).toContain('对话内容过长');
+		expect(getAIErrorDescription('unknown_error')).toContain('请先重试一次');
+		expect(getAIErrorDescription('response_interrupted')).toContain('意外中断');
+		expect(getAIErrorDescription('insufficient_credit')).toContain('积分不足');
+		expect(getAIErrorDescription('invalid_request')).toContain('缺少有效的对话内容');
+		expect(getAIErrorDescription('payload_too_large')).toContain('内容过大');
+		expect(getAIErrorDescription('image_too_large')).toContain('图片尺寸过大');
+		expect(getAIErrorDescription('too_many_attachments')).toContain('附件数量');
+		expect(getAIErrorDescription('upstream_overloaded')).toContain('负载');
+	});
+
+	it('classifies wrapped upstream status codes from gateway messages', () => {
+		expect(normalizeAIError('... failed: status=413, body=')).toMatchObject({
+			category: 'payload_too_large'
+		});
+		expect(normalizeAIError('... failed: status=422, body=')).toMatchObject({
+			category: 'unprocessable_request'
+		});
+		expect(
+			normalizeAIError('The image requires 33075 patches after processing, exceeding the limit of 30000')
+		).toMatchObject({ category: 'image_too_large' });
+		expect(normalizeAIError('单次对话最多支持 8 个附件')).toMatchObject({
+			category: 'too_many_attachments'
+		});
 	});
 
 	it('classifies EOF and credit errors before generic status handling', () => {

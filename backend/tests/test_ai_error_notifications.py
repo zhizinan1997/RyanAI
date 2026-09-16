@@ -19,6 +19,39 @@ class AIErrorClassificationTests(IsolatedAsyncioTestCase):
             ('stream error: stream ID 1; INTERNAL_ERROR; received from peer', None, 'response_interrupted', None),
             ('您的绘图积分不足', 403, 'insufficient_credit', 403),
             ('field messages is required', 500, 'invalid_request', 500),
+            (
+                '/backend-api/conversation failed: status=413, body=',
+                502,
+                'payload_too_large',
+                413,
+            ),
+            (
+                '/backend-api/conversation failed: status=422, body=',
+                502,
+                'unprocessable_request',
+                422,
+            ),
+            (
+                'The image you provided requires 33075 patches after processing, '
+                'exceeding the limit of 30000. Please resize the image and try again.',
+                400,
+                'image_too_large',
+                400,
+            ),
+            ('单次对话最多支持 8 个附件', 400, 'too_many_attachments', 400),
+            (
+                'Our servers are currently overloaded. Please try again later.',
+                None,
+                'upstream_overloaded',
+                None,
+            ),
+            (
+                'stream error: stream disconnected before completion: '
+                'stream closed before response.completed',
+                None,
+                'response_interrupted',
+                None,
+            ),
         ]
         for error, status, expected_category, expected_status in cases:
             with self.subTest(error=error):
@@ -94,6 +127,30 @@ class AIErrorReportingTests(IsolatedAsyncioTestCase):
         self.assertEqual(payload['category'], 'response_interrupted')
         self.assertIn('请先重试一次', payload['content'])
         self.assertEqual(payload['technical_detail'], 'unexpected EOF')
+
+    async def test_wrapped_502_keeps_real_upstream_status_and_chinese_hint(self):
+        request = self.request()
+        request.state.model_provider_failures = {
+            'gpt-5.6': {
+                'error_type': 'server_failed',
+                'status': 502,
+                'provider': 'openai-compatible',
+                'base_url': 'https://newapi2.example/v1',
+            }
+        }
+        with patch.object(notifications.Config, 'get', AsyncMock(return_value=False)):
+            payload = await notifications.report_ai_response_failure(
+                request,
+                error='/backend-api/conversation failed: status=413, body=',
+                status_code=502,
+                metadata={'chat_id': 'chat-413', 'message_id': 'message-413'},
+                model={'id': 'gpt-5.6'},
+            )
+
+        self.assertEqual(payload['category'], 'payload_too_large')
+        self.assertEqual(payload['status_code'], 413)
+        self.assertIn('内容过大', payload['content'])
+        self.assertIn('413', payload['technical_detail'])
 
     async def test_submits_redacted_email_and_suppresses_duplicate(self):
         values = {
