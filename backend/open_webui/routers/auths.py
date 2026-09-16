@@ -153,6 +153,19 @@ ADMIN_CONFIG_KEYS = {
     'ADMIN_EMAIL': 'auth.admin.email',
     'WEBUI_URL': 'webui.url',
     'ENABLE_SIGNUP': 'ui.enable_signup',
+    'ENABLE_SIGNUP_VERIFY': 'ui.signup_verify.enabled',
+    'SIGNUP_EMAIL_DOMAIN_WHITELIST': 'ui.signup.email_domain_whitelist',
+    'ENABLE_CF_TURNSTILE': 'auth.cf_turnstile.enabled',
+    'CF_TURNSTILE_SITE_KEY': 'auth.cf_turnstile.site_key',
+    'CF_TURNSTILE_SECRET_KEY': 'auth.cf_turnstile.secret_key',
+    'SMTP_HOST': 'ui.smtp.host',
+    'SMTP_PORT': 'ui.smtp.port',
+    'SMTP_USERNAME': 'ui.smtp.username',
+    'SMTP_PASSWORD': 'ui.smtp.password',
+    'SMTP_SENT_FROM': 'ui.smtp.sent_from',
+    'ENABLE_AI_ERROR_EMAIL_NOTIFICATION': 'notifications.ai_error_email.enabled',
+    'AI_ERROR_EMAIL_COOLDOWN_SECONDS': 'notifications.ai_error_email.cooldown_seconds',
+    'AI_ERROR_EMAIL_RECIPIENT_MODE': 'notifications.ai_error_email.recipient_mode',
     'ENABLE_API_KEYS': 'auth.enable_api_keys',
     'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS': 'auth.api_key.endpoint_restrictions',
     'API_KEYS_ALLOWED_ENDPOINTS': 'auth.api_key.allowed_endpoints',
@@ -1270,6 +1283,19 @@ class AdminConfig(BaseModel):
     ADMIN_EMAIL: str | None = None
     WEBUI_URL: str
     ENABLE_SIGNUP: bool
+    ENABLE_SIGNUP_VERIFY: bool = False
+    SIGNUP_EMAIL_DOMAIN_WHITELIST: str = ''
+    ENABLE_CF_TURNSTILE: bool = False
+    CF_TURNSTILE_SITE_KEY: str = ''
+    CF_TURNSTILE_SECRET_KEY: str = ''
+    SMTP_HOST: str = ''
+    SMTP_PORT: str = '465'
+    SMTP_USERNAME: str = ''
+    SMTP_PASSWORD: str = ''
+    SMTP_SENT_FROM: str = ''
+    ENABLE_AI_ERROR_EMAIL_NOTIFICATION: bool = False
+    AI_ERROR_EMAIL_COOLDOWN_SECONDS: int = 600
+    AI_ERROR_EMAIL_RECIPIENT_MODE: str = 'admin'
     ENABLE_API_KEYS: bool
     ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: bool
     API_KEYS_ALLOWED_ENDPOINTS: str
@@ -1303,6 +1329,14 @@ class AdminConfig(BaseModel):
 
 @router.post('/admin/config')
 async def update_admin_config(request: Request, form_data: AdminConfig, user=Depends(get_admin_user)):
+    if form_data.ENABLE_CF_TURNSTILE and (
+        not form_data.CF_TURNSTILE_SITE_KEY.strip() or not form_data.CF_TURNSTILE_SECRET_KEY.strip()
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='Cloudflare Turnstile Site Key and Secret Key are required when verification is enabled.',
+        )
+
     updates = config_updates(form_data.model_dump(), ADMIN_CONFIG_KEYS)
     updates['ui.default_interface_settings'] = form_data.DEFAULT_INTERFACE_SETTINGS or {}
     updates['folders.max_file_count'] = int(form_data.FOLDER_MAX_FILE_COUNT) if form_data.FOLDER_MAX_FILE_COUNT else ''
@@ -1310,6 +1344,14 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     updates['automations.min_interval'] = (
         int(form_data.AUTOMATION_MIN_INTERVAL) if form_data.AUTOMATION_MIN_INTERVAL else ''
     )
+    updates['notifications.ai_error_email.cooldown_seconds'] = max(1, int(form_data.AI_ERROR_EMAIL_COOLDOWN_SECONDS))
+    recipient_mode = str(form_data.AI_ERROR_EMAIL_RECIPIENT_MODE or 'admin').strip().lower().replace('-', '_')
+    if recipient_mode in {'admin_only', 'admin'}:
+        updates['notifications.ai_error_email.recipient_mode'] = 'admin'
+    elif recipient_mode in {'admin_and_user', 'admin_user', 'both', 'all'}:
+        updates['notifications.ai_error_email.recipient_mode'] = 'admin_and_user'
+    else:
+        updates['notifications.ai_error_email.recipient_mode'] = 'admin'
 
     if form_data.DEFAULT_USER_ROLE not in ['pending', 'user', 'admin']:
         updates.pop('ui.default_user_role', None)
