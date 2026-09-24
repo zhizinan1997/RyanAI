@@ -13,7 +13,7 @@
 	import CodeBlock from '$lib/components/chat/Messages/CodeBlock.svelte';
 	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	const CONTENT_PREVIEW_LIMIT = 10000;
 	let expandedContent = false;

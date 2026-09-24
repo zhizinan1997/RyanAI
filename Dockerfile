@@ -23,6 +23,9 @@ ARG GID=0
 ######## WebUI frontend ########
 FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
 ARG BUILD_HASH
+ARG USE_SLIM
+ARG UID
+ARG GID
 
 # Raise the Node.js heap for production builds to avoid OOM in CI/container builds.
 ENV NODE_OPTIONS="--max-old-space-size=6144"
@@ -47,7 +50,14 @@ RUN npm ci --force
 
 COPY . .
 ENV APP_BUILD_HASH=${BUILD_HASH}
-RUN npm run build
+RUN npm run build && \
+    if [ "$USE_SLIM" = "true" ]; then find build -type f -name '*.map' -delete; fi
+
+# Prepare backend ownership before the final copy so static assets occupy one layer.
+# Group 0 write access lets arbitrary OpenShift UIDs update these assets at startup.
+RUN chown -R $UID:$GID /app/backend && \
+    chgrp -R 0 /app/backend/open_webui/static && \
+    chmod -R g=u /app/backend/open_webui/static
 
 ######## WebUI backend ########
 FROM python:3.11-slim-bookworm AS base
@@ -130,18 +140,22 @@ RUN echo -n 00000000-0000-0000-0000-000000000000 > $HOME/.cache/chroma/telemetry
 # Make sure the user has access to the app and root directory
 RUN chown -R $UID:$GID /app $HOME
 
+# Slim cannot bundle a local model server or GPU runtime.
+RUN if [ "$USE_SLIM" = "true" ] && { [ "$USE_CUDA" = "true" ] || [ "$USE_OLLAMA" = "true" ]; }; then \
+    echo "USE_SLIM cannot be combined with USE_CUDA or USE_OLLAMA" >&2; exit 1; fi
+
 # Install common system dependencies
 RUN sed -i 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g; s|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources
 RUN apt-get -o Acquire::Retries=5 update && \
     apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    git build-essential pandoc gcc netcat-openbsd curl jq ca-certificates \
-    libmariadb-dev \
-    python3-dev \
-    ffmpeg libsm6 libxext6 zstd \
-    && rm -rf /var/lib/apt/lists/*
+    curl jq ca-certificates \
+    && if [ "$USE_SLIM" != "true" ]; then \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+    git build-essential pandoc gcc netcat-openbsd libmariadb-dev python3-dev ffmpeg libsm6 libxext6 zstd; \
+    fi && rm -rf /var/lib/apt/lists/*
 
 # install python dependencies
-COPY --chown=$UID:$GID ./backend/requirements.txt ./requirements.txt
+COPY --chown=$UID:$GID ./backend/requirements*.txt ./
 
 # Set UV_LINK_MODE to copy to prevent 0-byte file corruption in QEMU arm64 cross-builds
 ENV UV_LINK_MODE=copy \
@@ -151,19 +165,19 @@ ENV UV_LINK_MODE=copy \
 # Keep non-CUDA images on CPU wheels; default PyPI can pull multi-GB CUDA runtime deps on amd64.
 RUN set -e; \
     pip3 install --no-cache-dir --index-url https://pypi.org/simple uv; \
-    if [ "$USE_CUDA" = "true" ]; then \
+    if [ "$USE_SLIM" = "true" ]; then \
+    uv pip install --system -r requirements-slim.txt --no-cache-dir; \
+    elif [ "$USE_CUDA" = "true" ]; then \
     # Do not preload Hugging Face models; RyanAI deployments use external embedding APIs.
     # fix: pin torch<=2.9.1 - torch 2.10.0 aarch64 wheels cause SIGILL on ARM devices (RPi 4 Cortex-A72) #21349
     pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/$USE_CUDA_DOCKER_VER --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    python -c "import nltk; nltk.download('punkt_tab', download_dir='/usr/local/share/nltk_data')"; \
     else \
     pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
     if [ "$USE_SLIM" != "true" ]; then \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    python -c "import nltk; nltk.download('punkt_tab', download_dir='/usr/local/share/nltk_data')"; \
     fi; \
     fi; \
     mkdir -p /app/backend/data; chown -R $UID:$GID /app/backend/data/; \
@@ -193,19 +207,8 @@ COPY --chown=$UID:$GID --from=build /app/CHANGELOG.md /app/CHANGELOG.md
 COPY --chown=$UID:$GID --from=build /app/CHANGELOG_EXTRA.md /app/CHANGELOG_EXTRA.md
 COPY --chown=$UID:$GID --from=build /app/package.json /app/package.json
 
-# copy backend files
-COPY --chown=$UID:$GID ./backend .
-
-# The backend rewrites its bundled static assets (favicons, splash, manifest,
-# loader.js, ...) under open_webui/static at startup. Make that directory
-# writable by an arbitrary UID -- which under OpenShift's restricted SCC is
-# always a member of GID 0 -- so those writes don't fail with EACCES and crash
-# the boot log with "[Errno 13] Permission denied". `chmod -R g=u` mirrors the
-# owner bits onto the group (the Red Hat arbitrary-UID idiom). This is applied
-# unconditionally because it targets a directory the app writes on every start;
-# the broader, opt-in USE_PERMISSION_HARDENING below covers the rest of /app.
-RUN chgrp -R 0 /app/backend/open_webui/static && \
-    chmod -R g=u /app/backend/open_webui/static
+# copy backend files with the ownership and static permissions prepared above
+COPY --from=build /app/backend .
 
 EXPOSE 8080
 

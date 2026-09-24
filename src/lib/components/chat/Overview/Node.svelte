@@ -10,6 +10,7 @@
 	import Heart from '$lib/components/icons/Heart.svelte';
 	import { getOutputText } from '../Messages/structuredOutput';
 	import { getAIErrorDescription, normalizeAIError } from '$lib/utils/chatError';
+	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
 
 	const i18n: Writable<i18nType> = getContext('i18n');
 
@@ -22,6 +23,10 @@
 	$: errorSummary = data?.message?.error
 		? $i18n.t(getAIErrorDescription(normalizeAIError(data.message.error).category))
 		: '';
+
+	$: modelName = data?.model
+		? resolveLocalizedModelName(data.model, $i18n.language)
+		: (data?.message?.model ?? 'Assistant');
 </script>
 
 <div
@@ -62,7 +67,7 @@
 				<div class="ml-2 flex-1 min-w-0">
 					<div class=" flex justify-between items-center">
 						<div class="text-xs text-black dark:text-white font-normal line-clamp-1">
-							{data?.model?.name ?? data?.message?.model ?? 'Assistant'}
+							{modelName}
 						</div>
 
 						<button

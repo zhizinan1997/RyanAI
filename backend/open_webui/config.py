@@ -18,6 +18,7 @@ from authlib.integrations.starlette_client import OAuth
 from pydantic import BaseModel
 
 from open_webui.env import (
+    USE_SLIM,
     DATA_DIR,
     DATABASE_URL,
     ENABLE_DB_MIGRATIONS,
@@ -35,6 +36,7 @@ from open_webui.env import (
     log,
 )
 from open_webui.models.config import Config
+from open_webui.utils.json_codec import JSONCodec
 
 
 async def seed_registered_defaults():
@@ -260,6 +262,7 @@ apply_custom_branding()
 ####################################
 
 ENABLE_DIRECT_CONNECTIONS = os.getenv('ENABLE_DIRECT_CONNECTIONS', 'False').lower() == 'true'
+ENABLE_DIRECT_INTEGRATIONS = os.getenv('ENABLE_DIRECT_INTEGRATIONS', 'False').lower() == 'true'
 
 ####################################
 # OLLAMA_BASE_URL
@@ -531,12 +534,12 @@ CODE_INTERPRETER_PYODIDE_PROMPT = """
 # Vector Database
 ####################################
 
-VECTOR_DB = os.getenv('VECTOR_DB', 'chroma')
+VECTOR_DB = os.getenv('VECTOR_DB', 'pgvector' if USE_SLIM else 'chroma')
 
 # Chroma
 CHROMA_DATA_PATH = f'{DATA_DIR}/vector_db'
 
-if VECTOR_DB == 'chroma':
+if VECTOR_DB == 'chroma' and not USE_SLIM:
     import chromadb
 
     CHROMA_TENANT = os.getenv('CHROMA_TENANT', chromadb.DEFAULT_TENANT)
@@ -677,7 +680,7 @@ SSL_ASSERT_FINGERPRINT = os.getenv('SSL_ASSERT_FINGERPRINT', None)
 ELASTICSEARCH_INDEX_PREFIX = os.getenv('ELASTICSEARCH_INDEX_PREFIX', 'open_webui_collections')
 # Pgvector
 PGVECTOR_DB_URL = os.getenv('PGVECTOR_DB_URL', DATABASE_URL)
-if VECTOR_DB == 'pgvector' and not PGVECTOR_DB_URL.startswith('postgres'):
+if not USE_SLIM and VECTOR_DB == 'pgvector' and not PGVECTOR_DB_URL.startswith('postgres'):
     raise ValueError(
         'Pgvector requires setting PGVECTOR_DB_URL or using Postgres with vector extension as the primary database.'
     )
@@ -772,6 +775,10 @@ else:
     except Exception:
         PGVECTOR_IVFFLAT_LISTS = 100
 
+PGVECTOR_ITERATIVE_SCAN = os.getenv('PGVECTOR_ITERATIVE_SCAN', 'relaxed_order').strip().lower()
+if PGVECTOR_ITERATIVE_SCAN not in ('off', 'relaxed_order', 'strict_order'):
+    PGVECTOR_ITERATIVE_SCAN = 'relaxed_order'
+
 # openGauss
 OPENGAUSS_DB_URL = os.getenv('OPENGAUSS_DB_URL', DATABASE_URL)
 
@@ -838,7 +845,7 @@ ORACLE_DB_POOL_MAX = int(os.getenv('ORACLE_DB_POOL_MAX', 10))
 ORACLE_DB_POOL_INCREMENT = int(os.getenv('ORACLE_DB_POOL_INCREMENT', 1))
 
 
-if VECTOR_DB == 'oracle23ai':
+if not USE_SLIM and VECTOR_DB == 'oracle23ai':
     if not ORACLE_DB_USER or not ORACLE_DB_PASSWORD or not ORACLE_DB_DSN:
         raise ValueError('Oracle23ai requires setting ORACLE_DB_USER, ORACLE_DB_PASSWORD, and ORACLE_DB_DSN.')
     if ORACLE_DB_USE_WALLET and (not ORACLE_WALLET_DIR or not ORACLE_WALLET_PASSWORD):
@@ -1156,12 +1163,26 @@ ENABLE_LOCAL_WEB_FETCH = (
 ENABLE_RAG_LOCAL_WEB_FETCH = ENABLE_LOCAL_WEB_FETCH
 
 
+# Operators extend this through WEB_FETCH_FILTER_LIST.
 DEFAULT_WEB_FETCH_FILTER_LIST = [
     '!169.254.169.254',
     '!fd00:ec2::254',
     '!metadata.google.internal',
     '!metadata.azure.com',
     '!100.100.100.200',
+    '!168.63.129.16',  # Azure platform channel, reachable from every Azure VM
+    '!192.88.99.0/24',  # 6to4 relay anycast, deprecated by RFC 7526
+    '!224.0.0.0/4',  # IPv4 multicast
+    '!::ffff:0:0:0/96',  # IPv4-translated (SIIT, RFC 2765), never routed
+    '!64:ff9b:1::/48',  # NAT64 local-use prefix, RFC 8215, not a public destination
+    '!100:0:0:1::/64',  # dummy prefix, RFC 9780
+    '!2001:1::1',  # PCP anycast, RFC 7723, answered by the local network's own edge device
+    '!2001:1::2',  # TURN anycast, RFC 8155, likewise
+    '!2001:20::/28',  # ORCHIDv2, RFC 7343, never routed
+    '!2001:30::/28',  # DRIP, RFC 9374, never routed
+    '!5f00::/16',  # SRv6 SIDs, RFC 9602, internal to one segment routing domain
+    '!fec0::/10',  # IPv6 site-local, deprecated by RFC 3875
+    '!ff00::/8',  # IPv6 multicast
 ]
 
 web_fetch_filter_list = os.getenv('WEB_FETCH_FILTER_LIST', '')
@@ -1300,6 +1321,9 @@ AZURE_AI_SEARCH_ENDPOINT = os.getenv('AZURE_AI_SEARCH_ENDPOINT', '')
 AZURE_AI_SEARCH_INDEX_NAME = os.getenv('AZURE_AI_SEARCH_INDEX_NAME', '')
 
 EXA_API_KEY = os.getenv('EXA_API_KEY', '')
+EXA_MAX_CONTENT_LENGTH = int(os.environ['EXA_MAX_CONTENT_LENGTH']) if os.getenv('EXA_MAX_CONTENT_LENGTH') else None
+if EXA_MAX_CONTENT_LENGTH is not None and EXA_MAX_CONTENT_LENGTH <= 0:
+    raise ValueError('EXA_MAX_CONTENT_LENGTH must be a positive integer or unset')
 
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY', '')
 
@@ -1322,6 +1346,12 @@ SOUGOU_API_SK = os.getenv('SOUGOU_API_SK', '')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '')
 
 TAVILY_EXTRACT_DEPTH = os.getenv('TAVILY_EXTRACT_DEPTH', 'basic')
+
+STAAN_API_KEY = os.getenv('STAAN_API_KEY', '')
+
+STAAN_MARKET = os.getenv('STAAN_MARKET', 'en-us')
+
+STAAN_MAX_SNIPPETS = int(os.getenv('STAAN_MAX_SNIPPETS', '0'))
 
 PLAYWRIGHT_WS_URL = os.getenv('PLAYWRIGHT_WS_URL', '')
 
@@ -1716,8 +1746,9 @@ DEFAULT_MODELS = os.getenv('DEFAULT_MODELS', None)
 
 DEFAULT_PINNED_MODELS = os.getenv('DEFAULT_PINNED_MODELS', None)
 
+# None uses the frontend's localized defaults; an empty list disables suggestions.
 try:
-    default_prompt_suggestions = json.loads(os.getenv('DEFAULT_PROMPT_SUGGESTIONS', '[]'))
+    default_prompt_suggestions = JSONCodec.loads(os.getenv('DEFAULT_PROMPT_SUGGESTIONS', '[]'))
 except Exception as e:
     log.exception(f'Error loading DEFAULT_PROMPT_SUGGESTIONS: {e}')
     default_prompt_suggestions = []
@@ -1754,6 +1785,8 @@ if default_prompt_suggestions == []:
 
 DEFAULT_PROMPT_SUGGESTIONS = default_prompt_suggestions
 
+DEFAULT_PROMPT_SUGGESTIONS_I18N = {}
+
 try:
     model_order_list = json.loads(os.getenv('MODEL_ORDER_LIST', '[]'))
 except Exception as e:
@@ -1777,6 +1810,14 @@ except Exception as e:
     default_model_params = {}
 
 DEFAULT_MODEL_PARAMS = default_model_params
+
+try:
+    default_interface_settings = JSONCodec.loads(os.getenv('DEFAULT_INTERFACE_SETTINGS', '{}'))
+except Exception as e:
+    log.exception(f'Error loading DEFAULT_INTERFACE_SETTINGS: {e}')
+    default_interface_settings = {}
+
+DEFAULT_INTERFACE_SETTINGS = default_interface_settings if isinstance(default_interface_settings, dict) else {}
 
 DEFAULT_USER_ROLE = os.getenv('DEFAULT_USER_ROLE', 'pending')
 
@@ -2270,6 +2311,7 @@ else:
 
 
 class BannerModel(BaseModel):
+    i18n: dict[str, dict[str, str]] | None = None
     id: str
     type: str
     title: str | None = None
@@ -2932,6 +2974,7 @@ LDAP_ATTRIBUTE_FOR_GROUPS = os.getenv('LDAP_ATTRIBUTE_FOR_GROUPS', 'memberOf')
 
 DEFAULT_CONFIG = {
     'direct.enable': ENABLE_DIRECT_CONNECTIONS,
+    'direct.integrations.enable': ENABLE_DIRECT_INTEGRATIONS,
     'ollama.enable': ENABLE_OLLAMA_API,
     'ollama.base_urls': OLLAMA_BASE_URLS,
     'ollama.api_configs': OLLAMA_API_CONFIGS,
@@ -3096,6 +3139,7 @@ DEFAULT_CONFIG = {
     'web.search.azure_ai_search_endpoint': AZURE_AI_SEARCH_ENDPOINT,
     'web.search.azure_ai_search_index_name': AZURE_AI_SEARCH_INDEX_NAME,
     'web.search.exa_api_key': EXA_API_KEY,
+    'web.search.exa_max_content_length': EXA_MAX_CONTENT_LENGTH,
     'web.search.perplexity_api_key': PERPLEXITY_API_KEY,
     'web.search.perplexity_model': PERPLEXITY_MODEL,
     'web.search.perplexity_search_context_usage': PERPLEXITY_SEARCH_CONTEXT_USAGE,
@@ -3107,6 +3151,9 @@ DEFAULT_CONFIG = {
     'web.search.sougou_api_sk': SOUGOU_API_SK,
     'web.search.tavily_api_key': TAVILY_API_KEY,
     'web.search.tavily_extract_depth': TAVILY_EXTRACT_DEPTH,
+    'web.search.staan_api_key': STAAN_API_KEY,
+    'web.search.staan_market': STAAN_MARKET,
+    'web.search.staan_max_snippets': STAAN_MAX_SNIPPETS,
     'web.loader.playwright_ws_url': PLAYWRIGHT_WS_URL,
     'web.loader.playwright_timeout': PLAYWRIGHT_TIMEOUT,
     'web.loader.firecrawl_api_key': FIRECRAWL_API_KEY,
@@ -3205,7 +3252,10 @@ DEFAULT_CONFIG = {
     'ui.default_locale': DEFAULT_LOCALE,
     'ui.default_models': DEFAULT_MODELS,
     'ui.default_pinned_models': DEFAULT_PINNED_MODELS,
+    'ui.default_interface_settings': DEFAULT_INTERFACE_SETTINGS,
+    'ui.i18n': {},
     'ui.prompt_suggestions': DEFAULT_PROMPT_SUGGESTIONS,
+    'ui.prompt_suggestions_i18n': DEFAULT_PROMPT_SUGGESTIONS_I18N,
     'ui.model_order_list': MODEL_ORDER_LIST,
     'models.default_metadata': DEFAULT_MODEL_METADATA,
     'models.default_params': DEFAULT_MODEL_PARAMS,
