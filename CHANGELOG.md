@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4.1] - 2026-09-24
+
+### Changed
+
+- 合并官方 [0.11.4](https://github.com/open-webui/open-webui/releases/tag/v0.11.4) 改动。
+
+### Fixed
+
+- 修复合并 v0.11.4 后的回归：任务分发与设置搜索。自定义设置页（微信 / QQ 绑定、个人积分、后台积分、启动公告）缺少搜索索引所需的 `titleKey` / `searchPrefixes`，导致设置弹窗（始终挂载）在 `buildSettingsSearchIndex` 处崩溃；现已补齐并保留中文关键词搜索。
+- 修复合并后后端启动失败：模型价格列 `price` 丢失 `JSON` / `JSONB` 导入导致 `NameError`；抽奖每日重置丢失 `ZoneInfo` 导入；函数编辑器丢失 `toast` 导入；文件导航 `i18n` 类型标注丢失。
+- 修复既有缺陷：主聊天错误处理路径缺少 `json` 导入；机器人网关 `_bot_compaction_policy` 缺少 `estimate_messages_tokens` 导入（上下文压缩默认开启，正常消息即触发）。
+
 ## [0.11.3.3] - 2026-09-05
 
 ### Added
