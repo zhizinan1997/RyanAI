@@ -59,7 +59,7 @@
 	import PortPreview from './FileNav/PortPreview.svelte';
 	import TerminalDock from './TerminalDock.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	export let overlay = false;
 	export let chatId: string | null = null;

@@ -6,6 +6,7 @@ export type SettingsTab = {
 	titleKey: string;
 	title?: string;
 	searchPrefixes: string[];
+	keywords?: string[];
 };
 export type SettingsAccessContext = { user: any; config: any };
 export type SettingsSearchIndex = { id: string; entries: string[][] }[];
@@ -48,7 +49,8 @@ export function buildSettingsSearchIndex(
 	return tabs.map((tab) => {
 		const location = [
 			...variants(tab.titleKey),
-			...variants(tab.id.startsWith('admin:') ? 'Admin' : 'Personal')
+			...variants(tab.id.startsWith('admin:') ? 'Admin' : 'Personal'),
+			...(tab.keywords ?? []).map(normalizeSettingsSearch).filter(Boolean)
 		];
 		const entries = keys
 			.filter(

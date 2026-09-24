@@ -229,7 +229,9 @@
 		},
 		{
 			id: 'bot_bindings',
+			titleKey: 'WeChat / QQ',
 			title: 'WeChat / QQ',
+			searchPrefixes: [],
 			keywords: ['bot', 'bind', 'binding', 'gateway', 'wechat', 'qq', '微信', '机器人', '绑定']
 		},
 
@@ -259,7 +261,9 @@
 		},
 		{
 			id: 'credit',
+			titleKey: 'Credit',
 			title: 'Credit',
+			searchPrefixes: [],
 			keywords: ['credit', 'balance', 'billing', 'recharge', 'payment']
 		},
 		{
@@ -381,12 +385,16 @@
 		},
 		{
 			id: 'admin:credit',
+			titleKey: 'Credit',
 			title: 'Credit',
+			searchPrefixes: [],
 			keywords: ['credit', 'billing', 'payment', 'pricing', 'cost']
 		},
 		{
 			id: 'admin:splash-notice',
+			titleKey: 'Splash Notice',
 			title: 'Splash Notice',
+			searchPrefixes: [],
 			keywords: ['splash', 'notice', 'announcement', 'welcome']
 		}
 	];
