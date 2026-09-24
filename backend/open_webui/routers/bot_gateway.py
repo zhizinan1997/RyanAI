@@ -71,6 +71,7 @@ from open_webui.utils.bot_gateway_coordination import (
     ensure_shard_targets,
     validate_event_fence,
 )
+from open_webui.utils.context_compaction import estimate_messages_tokens
 from open_webui.utils.misc import get_message_list, get_output_text
 from open_webui.utils.models import get_all_models, get_filtered_models
 from open_webui.storage.provider import Storage
