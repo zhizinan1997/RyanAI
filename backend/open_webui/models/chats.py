@@ -1331,7 +1331,24 @@ class ChatTable:
 
             if message_id in history.get('messages', {}):
                 message_files = history['messages'][message_id].get('files', [])
-                message_files = message_files + files
+
+                # Some upstreams repeat the same image across several stream
+                # deltas, so a blind append stores the same file many times and
+                # the UI renders duplicated pictures. Keep the first occurrence
+                # of each file (keyed by url/id) and drop the repeats.
+                def file_key(file):
+                    return file.get('url') or file.get('id') if isinstance(file, dict) else None
+
+                seen_keys = {key for key in map(file_key, message_files) if key}
+
+                for file in files:
+                    key = file_key(file)
+                    if key and key in seen_keys:
+                        continue
+                    if key:
+                        seen_keys.add(key)
+                    message_files.append(file)
+
                 history['messages'][message_id]['files'] = message_files
 
             # Written here rather than through update_chat_by_id: with session sharing off that opens a second

@@ -943,6 +943,26 @@ async def disconnect(sid, reason=None):
         # print(f"Unknown session ID {sid} disconnected")
 
 
+def merge_message_files(files: list, existing_files: list) -> list:
+    """Append ``existing_files`` to ``files``, skipping ones already present.
+
+    A ``files`` event carries the accumulated file list, so blindly extending
+    it with what is already stored on the message duplicates entries and grows
+    the list exponentially. Keep the first occurrence of every file, keyed by
+    its url/id.
+    """
+    seen_keys = {f.get('url') or f.get('id') for f in files if isinstance(f, dict)}
+    seen_keys.discard(None)
+    for file in existing_files:
+        key = (file.get('url') or file.get('id')) if isinstance(file, dict) else None
+        if key and key in seen_keys:
+            continue
+        if key:
+            seen_keys.add(key)
+        files.append(file)
+    return files
+
+
 async def _make_channel_emitter(request_info):
     """Event emitter that routes pipeline output to a channel message.
 
@@ -1042,7 +1062,7 @@ async def _make_channel_emitter(request_info):
                     await Channels.set_file_message_id_in_channel_by_id(channel_id, file['id'], message_id)
 
             if isinstance(existing_files, list):
-                files.extend(existing_files)
+                merge_message_files(files, existing_files)
 
             await _emit_channel_update(msg.content, data={'files': files})
 
@@ -1144,7 +1164,7 @@ async def get_event_emitter(request_info, update_db=True):
                 files = event_data.get('data', {}).get('files', [])
                 existing_files = await Chats.get_message_metadata(chat_id, message_id, 'files')
                 if isinstance(existing_files, list):
-                    files.extend(existing_files)
+                    merge_message_files(files, existing_files)
 
                 await Chats.upsert_message_to_chat_by_id_and_message_id(
                     chat_id,
