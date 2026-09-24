@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4.2] - 2026-09-24
+
+### Fixed
+
+- 修复 slim 镜像无法启动：`requirements-slim.txt` 缺少 `jsonpath-ng`，而积分功能（`utils/credit`）在启动路径上依赖它，导致镜像启动即 `ModuleNotFoundError`。已补入 `jsonpath-ng==1.7.0`。
+
 ## [0.11.4.1] - 2026-09-24
 
 ### Changed
