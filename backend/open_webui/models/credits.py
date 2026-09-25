@@ -138,7 +138,11 @@ class CreditsTable:
             return None
 
     def init_credit_by_user_id(self, user_id: str) -> CreditModel:
-        credit_model = self.get_credit_by_user_id(user_id=user_id) or self.insert_new_credit(user_id=user_id)
+        credit_model = (
+            self.get_credit_by_user_id(user_id=user_id)
+            or self.insert_new_credit(user_id=user_id)
+            or self.get_credit_by_user_id(user_id=user_id)
+        )
         if credit_model is not None:
             return credit_model
         raise HTTPException(status_code=500, detail='credit initialize failed')
@@ -176,22 +180,34 @@ class CreditsTable:
         return self.get_credit_by_user_id(user_id=form_data.user_id)
 
     def add_credit_by_user_id(self, form_data: AddCreditForm) -> Optional[CreditModel]:
-        credit_model = self.init_credit_by_user_id(user_id=form_data.user_id)
-        log = CreditLogModel(
-            user_id=form_data.user_id,
-            credit=credit_model.credit + form_data.amount,
-            detail=form_data.detail.model_dump(),
-        )
+        self.init_credit_by_user_id(user_id=form_data.user_id)
         with get_db() as db:
-            db.add(CreditLog(**log.model_dump()))
-            db.query(Credit).filter(Credit.user_id == form_data.user_id).update(
+            credit_query = db.query(Credit).filter(Credit.user_id == form_data.user_id)
+            if form_data.amount < 0:
+                credit_query = credit_query.filter(Credit.credit >= -form_data.amount)
+            updated = credit_query.update(
                 {
                     'credit': Credit.credit + form_data.amount,
                     'updated_at': int(time.time()),
                 },
                 synchronize_session=False,
             )
-            db.commit()
+            if updated == 1:
+                balance = db.query(Credit.credit).filter(Credit.user_id == form_data.user_id).scalar()
+                log = CreditLogModel(
+                    user_id=form_data.user_id,
+                    credit=balance,
+                    detail=form_data.detail.model_dump(),
+                )
+                db.add(CreditLog(**log.model_dump()))
+                db.commit()
+        if updated != 1:
+            from open_webui.models.config import Config
+
+            raise HTTPException(
+                status_code=403,
+                detail=Config.get_sync('credit.no_credit_msg', '余额不足，请联系管理员充值'),
+            )
         return self.get_credit_by_user_id(form_data.user_id)
 
     def reset_all_credits(self, value: Decimal) -> int:

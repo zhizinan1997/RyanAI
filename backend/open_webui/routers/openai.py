@@ -1761,6 +1761,8 @@ async def generate_chat_completion(
             ) as credit_deduct:
                 credit_deduct.run(response)
                 return credit_deduct.add_usage_to_resp(response)
+    except HTTPException:
+        raise
     except Exception as e:
         log.exception(e)
 
@@ -1883,6 +1885,8 @@ async def embeddings(request: Request, form_data: dict, user):
                     response_data = credit_deduct.add_usage_to_resp(response_data)
 
             return response_data
+    except HTTPException:
+        raise
     except Exception as e:
         log.exception(e)
         raise HTTPException(
