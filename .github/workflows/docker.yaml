@@ -6,6 +6,12 @@ on:
       release_tag:
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to build (e.g. v0.11.4.2)"
+        required: true
+        type: string
 
 concurrency:
   group: docker-${{ inputs.release_tag }}
@@ -88,11 +94,11 @@ jobs:
           context: .
           file: ${{ runner.temp }}/Dockerfile
           push: true
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-slim-linux-amd64-main
-          cache-to: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-slim-linux-amd64-main,mode=max
+          cache-from: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-slim-multi-main
+          cache-to: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-slim-multi-main,mode=max
           sbom: true
           build-args: |
             BUILD_HASH=${{ steps.build.outputs.sha }}
