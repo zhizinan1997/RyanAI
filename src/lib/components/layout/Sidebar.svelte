@@ -63,6 +63,7 @@
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import UserMenu from './Sidebar/UserMenu.svelte';
+	import BotBindingGuide from './Sidebar/BotBindingGuide.svelte';
 	import ChatItem from './Sidebar/ChatItem.svelte';
 	import Spinner from '../common/Spinner.svelte';
 	import Loader from '../common/Loader.svelte';
@@ -1114,6 +1115,9 @@
 
 	<!-- {$i18n.t('New Folder')} -->
 	<!-- {$i18n.t('Pinned')} -->
+
+	<!-- rendered once, portalled to <body>: must stay clickable while the sidebar is collapsed (inert) -->
+	<BotBindingGuide />
 
 	{#if visible || !$mobile}
 		<div
