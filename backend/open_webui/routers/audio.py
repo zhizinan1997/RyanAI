@@ -733,12 +733,11 @@ async def _transcribe_openai(request, file_path, filename, languages, file_dir, 
                 for key, value in payload.items():
                     form_data.add_field(key, str(value))
 
-                async def audio_chunks():
-                    async with aiofiles.open(file_path, 'rb') as audio_file:
-                        while chunk := await audio_file.read(AIOHTTP_FILE_STREAM_CHUNK_SIZE):
-                            yield chunk
-
-                form_data.add_field('file', audio_chunks(), filename=filename)
+                # Send the file as bytes rather than an async generator: a generator makes aiohttp use
+                # chunked transfer-encoding, which some OpenAI-compatible STT gateways (e.g. SiliconFlow)
+                # reject with 400/500. Uploaded audio is size-limited, so buffering it is fine.
+                async with aiofiles.open(file_path, 'rb') as audio_file:
+                    form_data.add_field('file', await audio_file.read(), filename=filename)
 
                 r = await session.post(
                     url=f'{api_base_url}/audio/transcriptions',
