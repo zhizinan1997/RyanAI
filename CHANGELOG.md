@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4.3] - 2026-10-06
+
+### Fixed
+
+- 修复 OpenAI 兼容语音转文字（STT）对部分网关失败：`_transcribe_openai` 用异步生成器上传音频，aiohttp 因此使用分块传输（无 `Content-Length`），硅基流动等网关会返回 400/500。改为整块读入后上传。
+
 ## [0.11.4.2] - 2026-09-24
 
 ### Fixed
