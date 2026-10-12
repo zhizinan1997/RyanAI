@@ -88,7 +88,7 @@ class SplashNoticeConfigTests(IsolatedAsyncioTestCase):
         self.assertTrue(updates['ui.splash_notice_enabled'])
         self.assertEqual(updates['ui.splash_notice_title'], 'Maintenance')
         self.assertEqual(updates['ui.splash_notice_content'], 'Back at **10:00**.')
-        self.assertEqual(result, {'status': True})
+        self.assertEqual(result, {'status': True, 'sessions_revoked': False})
 
 
 class SplashNoticeMediaTests(IsolatedAsyncioTestCase):
