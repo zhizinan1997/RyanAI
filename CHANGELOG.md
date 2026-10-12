@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0.1] - 2026-10-12
+
+### Changed
+
+- 合并官方 [0.12.0](https://github.com/open-webui/open-webui/releases/tag/v0.12.0) 改动。
+- 新增数据库迁移 `c5a1d7e92f30`，合并本仓库与官方 v0.12.0 的迁移分支；升级前请先备份数据库。
+- 模型编辑器沿用官方新版布局，保留「每次调用积分」「最低积分」与模型 Logo URL 字段；仅修改价格不会产生新的模型版本。
+
+### Fixed
+
+- 恢复合并 v0.11.4 时丢失的 `ENABLE_TOOL_PERMISSIONS` 配置项。
+- 登录响应与会话信息在官方 MFA 重构后继续返回 `credit` 字段。
+
 ## [0.11.4.3] - 2026-10-06
 
 ### Fixed
