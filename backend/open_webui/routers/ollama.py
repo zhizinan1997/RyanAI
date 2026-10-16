@@ -1092,6 +1092,7 @@ async def generate_completion(
     if not await Config.get('ollama.enable'):
         raise HTTPException(status_code=503, detail=ERROR_MESSAGES.OLLAMA_API_DISABLED)
 
+    request.state.model_id = form_data.model
     await check_model_access(user, await Models.get_model_by_id(form_data.model), BYPASS_MODEL_ACCESS_CONTROL)
     await validate_ollama_backend_idx(request, form_data.model, url_idx, user)
     credit_model_id = form_data.model
@@ -1226,6 +1227,8 @@ async def generate_chat_completion(
     payload.pop('metadata', None)
 
     model_id = payload['model']
+    if not hasattr(request.state, 'model_id'):
+        request.state.model_id = model_id
     model_info = await Models.get_model_by_id(model_id)
 
     if model_info is not None:
@@ -1341,6 +1344,7 @@ async def generate_openai_completion(
     payload = form_data.model_dump(exclude_none=True, exclude=['metadata'])
 
     model_id = form_data.model
+    request.state.model_id = model_id
     model_info = await Models.get_model_by_id(model_id)
     if model_info is not None:
         if model_info.base_model_id:
@@ -1466,6 +1470,7 @@ async def generate_openai_chat_completion(
     payload = form_data.model_dump(exclude_none=True, exclude=['metadata'])
 
     model_id = form_data.model
+    request.state.model_id = model_id
     model_info = await Models.get_model_by_id(model_id)
     if model_info is not None:
         if model_info.base_model_id:
@@ -1536,6 +1541,7 @@ async def generate_anthropic_messages(
 
     payload = {**form_data}
     model_id = payload.get('model', '')
+    request.state.model_id = model_id
 
     model_info = await Models.get_model_by_id(model_id)
     if model_info:
@@ -1594,6 +1600,7 @@ async def generate_responses(
 
     payload = form_data.model_dump()
     model_id = form_data.model
+    request.state.model_id = model_id
 
     model_info = await Models.get_model_by_id(model_id)
     if model_info:
