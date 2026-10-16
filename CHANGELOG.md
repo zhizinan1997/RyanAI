@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2.1] - 2026-10-16
+
+### Changed
+
+- 合并官方 [0.12.1](https://github.com/open-webui/open-webui/releases/tag/v0.12.1) 与 [0.12.2](https://github.com/open-webui/open-webui/releases/tag/v0.12.2) 改动，包括频道外部应用（Apps）、修订对比、语音头像与 Azure OpenAI 实时通话、安全与稳定性修复等。
+- 新增数据库迁移 `82b57ad2d0d4`，合并本仓库与官方 v0.12.2 的迁移分支（含官方新增的 apps 表 `c92da83b017f` 与补全登录记录 `0bd252b206fb`）；升级前请先备份数据库。
+- 前端依赖随官方升级（mermaid、@codemirror/merge），并保留本仓库独有的 echarts、flatpickr、paneforge；`package-lock.json` 已重新生成。
+- 界面语言仍只保留 en-US、zh-CN、sl-SI，中文翻译按条目合并，保留本仓库已有译文。
+
+### Fixed
+
+- 管理员「模型」设置保存时沿用官方的合并写法，并保留保存失败时的错误提示。
+- 模型编辑器保留「每次调用积分」「最低积分」与模型 Logo URL 字段，同时带上官方新增的「对比修订」。
+
 ## [0.12.2] - 2026-10-14
 
 ### Added
