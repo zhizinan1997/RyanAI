@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3.1] - 2026-10-18
+
+### Changed
+
+- 合并官方 [0.12.3](https://github.com/open-webui/open-webui/releases/tag/v0.12.3) 改动，包括端到端加密聊天、全局搜索、Redis 下更轻量的流式回复、对比修订选项与撤销、朗读在语音引擎较慢时不再只读第一句等。
+- 本次官方没有新增数据库迁移，数据库版本仍为 `82b57ad2d0d4`，升级前仍建议先备份。
+- 保留本仓库的精简语言包与回复下方的「消耗详情」弹窗，并采用官方新版的信息按钮样式；前端新增的 `crypto:verify` 构建校验已通过。
+
 ## [0.12.3] - 2026-10-16
 
 ### Added
