@@ -1,6 +1,6 @@
 {
 	"name": "ryanai",
-	"version": "0.12.3.1",
+	"version": "0.12.4.1",
 	"private": true,
 	"scripts": {
 		"crypto:verify": "node scripts/encryption/artifact.mjs",

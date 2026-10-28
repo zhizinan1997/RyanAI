@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4.1] - 2026-10-28
+
+### Changed
+
+- 合并官方 [0.12.4](https://github.com/open-webui/open-webui/releases/tag/v0.12.4)（386 个提交），该版本包含官方尚未公开细节的**安全修复**，建议尽快升级；主要功能包括上下文压缩在对话中可见并覆盖临时会话与短会话、侧边栏 Shift 多选批量归档/删除、Analytics 按 Token 排名与周期对比、文件浏览器网格视图与悬停预览、知识库上传状态更准确、MCP 支持 2026-07-28 无状态协议、LDAP 默认邮箱域名、审计日志记录每次回复的 Token。
+- 本次官方没有新增数据库迁移，数据库版本仍为 `82b57ad2d0d4`，升级前仍建议先备份。
+- Docker 运行时基础镜像由 Python 3.11 / Debian 12 升级为 Python 3.12 / Debian 13；容器内用 pip 安装的自定义函数、工具与依赖需要兼容 Python 3.12，`USE_SLIM=true` 的精简镜像不受影响。
+- 「Direct Integrations」默认关闭，关闭时用户与管理员已保存的工具服务器、Open Terminal 连接不再参与对话（此前只是隐藏了设置页）；仍在使用直连工具的部署需要在 管理设置 > 连接 中打开该开关。
+- 模型、提示词、工具、技能、知识库、笔记、频道与日历的共享范围只能在各自的「访问权限」中修改，保存时不再顺带改动共享设置；「管理文件」只列出自己的文件（管理员亦然）。
+- 模型控制项（如 Thinking 级别）对所有有模型访问权限的用户开放，「允许对话控制」「允许对话参数」现在只控制面板是否显示；MCP 的 `MCP_INITIALIZE_TIMEOUT`（默认 10 秒）现在也限制列工具与读取资源，MCP 连接只跟随同地址重定向，较慢的 MCP 服务器需要调大该值。
+- 技能默认仍随每条消息发送完整指令；如需按需加载可开启 `ENABLE_SKILL_LAZY_LOADING`，管理员还可用 `SKILL_CONTENT_MAX_CHARS`、`SKILL_PREVIEW_MAX_CHARS` 与 `UI_VISIBILITY` 调整技能读取长度与界面可见控件。
+- 保留本仓库的精简语言包（en-US、zh-CN、sl-SI）、回复下方的「消耗详情」弹窗、微信/QQ 绑定与积分页签、bot-gateway 的强制压缩策略与本地化错误提示；zh-CN 补齐 0.12.4 新增词条（沿用上游的空占位方式，随翻译更新）。
+- 前端 `crypto:verify` 校验、`vite build`、i18n 占位符校验与后端模块导入检查均已通过。
+
 ## [0.12.4] - 2026-10-25
 
 ### Added
