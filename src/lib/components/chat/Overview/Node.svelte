@@ -24,6 +24,10 @@
 		? $i18n.t(getAIErrorDescription(normalizeAIError(data.message.error).category))
 		: '';
 
+	$: isCompacted =
+		data?.message?.contextSummary ||
+		data?.message?.output?.some((item) => item?.type === 'open_webui:context_compaction');
+	$: previewClass = `text-xs mt-0.5 ${isCompacted ? 'line-clamp-1' : 'line-clamp-2'}`;
 	$: modelName = data?.model
 		? resolveLocalizedModelName(data.model, $i18n.language)
 		: (data?.message?.model ?? 'Assistant');
@@ -51,9 +55,13 @@
 					</div>
 
 					{#if data?.message?.error}
-						<div class="text-red-500 line-clamp-2 text-xs mt-0.5">{errorSummary}</div>
+						<div class="text-red-500 {previewClass}">
+							{errorSummary}
+						</div>
 					{:else}
-						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{messageContent}</div>
+						<div class="text-gray-500 {previewClass}">
+							{messageContent}
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -89,16 +97,25 @@
 					</div>
 
 					{#if data?.message?.error}
-						<div class="text-red-500 line-clamp-2 text-xs mt-0.5">
+						<div class="text-red-500 {previewClass}">
 							{errorSummary}
 						</div>
 					{:else}
-						<div class="text-gray-500 line-clamp-2 text-xs mt-0.5">{messageContent}</div>
+						<div class="text-gray-500 {previewClass}">
+							{messageContent}
+						</div>
 					{/if}
 				</div>
 			</div>
 		{/if}
 	</Tooltip>
+	{#if isCompacted}
+		<div
+			class="ms-7 mt-0.5 w-fit max-w-[calc(100%-1.75rem)] truncate rounded bg-gray-100 px-1.5 text-[10px] leading-4 text-gray-500 dark:bg-gray-900 dark:text-gray-400"
+		>
+			{$i18n.t('Context compacted')}
+		</div>
+	{/if}
 	<Handle
 		type="target"
 		position={data?.direction === 'horizontal' ? Position.Left : Position.Top}

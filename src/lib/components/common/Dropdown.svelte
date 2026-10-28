@@ -40,6 +40,7 @@
 	export let visualViewportAware = false;
 
 	let triggerEl: HTMLElement | null = null;
+	let triggerControl: HTMLElement | null = null;
 	let contentEl: HTMLElement | null = null;
 	let previouslyFocused: HTMLElement | null = null;
 	let shouldFocusContent = false;
@@ -75,8 +76,13 @@
 	}
 
 	/** Svelte action: captures the first child element as the trigger reference */
-	function trigger(node: HTMLElement) {
+	function trigger(node: HTMLElement, expanded: boolean) {
 		triggerEl = (node.firstElementChild as HTMLElement | null) || node;
+		triggerControl = node.querySelector<HTMLElement>(
+			'button, a[href], [tabindex]:not([tabindex="-1"])'
+		);
+		triggerControl?.setAttribute('aria-haspopup', 'true');
+		triggerControl?.setAttribute('aria-expanded', String(expanded));
 		function handleClick(e: MouseEvent) {
 			e.preventDefault();
 			toggleOpen();
@@ -84,12 +90,16 @@
 		function handleKeydown(e: KeyboardEvent) {
 			if (e.key === 'Enter' || e.key === ' ') {
 				e.preventDefault();
-				toggleOpen();
+				if (show) closeDropdown();
+				else openDropdown(true);
 			}
 		}
 		node.addEventListener('click', handleClick);
 		node.addEventListener('keydown', handleKeydown);
 		return {
+			update(expanded: boolean) {
+				triggerControl?.setAttribute('aria-expanded', String(expanded));
+			},
 			destroy() {
 				node.removeEventListener('click', handleClick);
 				node.removeEventListener('keydown', handleKeydown);
@@ -334,7 +344,16 @@
 
 		if (shouldFocusContent) {
 			shouldFocusContent = false;
-			contentEl?.focus();
+			const firstControl = contentEl?.querySelector<HTMLElement>(
+				'button:not([disabled]), a[href], input'
+			);
+			(
+				(firstControl?.matches('input')
+					? firstControl
+					: contentEl?.querySelector<HTMLElement>('[role^="menuitem"]:not([disabled])')) ??
+				firstControl ??
+				contentEl
+			)?.focus();
 		}
 	}
 
@@ -389,8 +408,11 @@
 		if (triggerEl?.contains(event.target)) return;
 		if (contentEl?.contains(event.target)) return;
 		// Submenus and listboxes can be portaled outside contentEl.
-		if (event.target instanceof Element && event.target.closest('[role="menu"], [role="listbox"]'))
-			return;
+		const portaled =
+			event.target instanceof Element
+				? event.target.closest('[role="menu"], [role="listbox"]')
+				: null;
+		if (portaled && !portaled.contains(triggerEl)) return;
 		event.preventDefault();
 		event.stopPropagation();
 		closeDropdown(false);
@@ -399,6 +421,27 @@
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape' && show) {
 			closeDropdown();
+		}
+
+		if (
+			['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) &&
+			event.target instanceof HTMLElement &&
+			event.target.matches('[role^="menuitem"]') &&
+			contentEl?.contains(event.target)
+		) {
+			const items = [
+				...contentEl.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])')
+			].filter((item) => item.getClientRects().length > 0);
+			const index = items.indexOf(event.target);
+			const nextIndex =
+				event.key === 'Home'
+					? 0
+					: event.key === 'End'
+						? items.length - 1
+						: (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+
+			event.preventDefault();
+			items[nextIndex]?.focus();
 		}
 	}
 
@@ -433,11 +476,11 @@
 />
 
 <span
-	use:trigger
+	use:trigger={show}
 	style="display: contents; cursor: pointer;"
-	role="button"
-	aria-haspopup="true"
-	aria-expanded={show}
+	role={triggerControl ? undefined : 'button'}
+	aria-haspopup={triggerControl ? undefined : 'true'}
+	aria-expanded={triggerControl ? undefined : show}
 >
 	<slot />
 </span>
@@ -458,6 +501,7 @@
 			if (closeOnSelect && !e.defaultPrevented) closeDropdown();
 		}}
 		on:pointerdown={(e) => e.stopPropagation()}
+		on:keydown={handleKeydown}
 	>
 		<slot name="content" />
 	</div>

@@ -193,6 +193,7 @@ ADMIN_CONFIG_KEYS = {
     'ENABLE_CALENDAR': 'calendar.enable',
     'ENABLE_MEMORIES': 'memories.enable',
     'ENABLE_MEMORY_SYSTEM_CONTEXT': 'memories.system_context.enable',
+    'ENABLE_SKILL_LAZY_LOADING': 'skills.lazy_loading.enable',
     'SKILL_CONTENT_MAX_CHARS': 'skills.content_max_chars',
     'SKILL_PREVIEW_MAX_CHARS': 'skills.preview_max_chars',
     'ENABLE_NOTES': 'notes.enable',
@@ -211,6 +212,7 @@ LDAP_SERVER_CONFIG_KEYS = {
     'host': 'ldap.server.host',
     'port': 'ldap.server.port',
     'attribute_for_mail': 'ldap.server.attribute_for_mail',
+    'default_email_domain': 'ldap.server.default_email_domain',
     'attribute_for_username': 'ldap.server.attribute_for_username',
     'app_dn': 'ldap.server.app_dn',
     'app_dn_password': 'ldap.server.app_password',
@@ -505,6 +507,7 @@ async def ldap_auth(
     LDAP_SERVER_HOST = await Config.get('ldap.server.host')
     LDAP_SERVER_PORT = await Config.get('ldap.server.port')
     LDAP_ATTRIBUTE_FOR_MAIL = await Config.get('ldap.server.attribute_for_mail')
+    LDAP_DEFAULT_EMAIL_DOMAIN = await Config.get('ldap.server.default_email_domain')
     LDAP_ATTRIBUTE_FOR_USERNAME = await Config.get('ldap.server.attribute_for_username')
     LDAP_SEARCH_BASE = await Config.get('ldap.server.users_dn')
     LDAP_SEARCH_FILTERS = await Config.get('ldap.server.search_filter')
@@ -570,6 +573,10 @@ async def ldap_auth(
         entry = connection_app.entries[0]
         entry_username = entry[f'{LDAP_ATTRIBUTE_FOR_USERNAME}'].value
         email = entry[f'{LDAP_ATTRIBUTE_FOR_MAIL}'].value  # retrieve the Attribute value
+        if not email and LDAP_DEFAULT_EMAIL_DOMAIN:
+            default_email = f'{form_data.user}@{LDAP_DEFAULT_EMAIL_DOMAIN}'
+            if validate_email_format(default_email):
+                email = default_email
 
         username_list = []  # list of usernames from LDAP attribute
         if isinstance(entry_username, list):
@@ -1270,6 +1277,7 @@ class AdminConfig(MfaConfigForm):
     ENABLE_CALENDAR: bool
     ENABLE_MEMORIES: bool
     ENABLE_MEMORY_SYSTEM_CONTEXT: bool
+    ENABLE_SKILL_LAZY_LOADING: bool = False
     SKILL_CONTENT_MAX_CHARS: int | None = Field(default=None, gt=0, strict=True)
     SKILL_PREVIEW_MAX_CHARS: int | None = Field(default=None, gt=0, strict=True)
     ENABLE_NOTES: bool
@@ -1332,6 +1340,8 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
         updates.pop('apps.enable', None)
     if 'I18N' not in form_data.model_fields_set:
         updates.pop('ui.i18n', None)
+    if 'ENABLE_SKILL_LAZY_LOADING' not in form_data.model_fields_set:
+        updates.pop('skills.lazy_loading.enable', None)
     if 'SKILL_CONTENT_MAX_CHARS' not in form_data.model_fields_set:
         updates.pop('skills.content_max_chars', None)
     if 'SKILL_PREVIEW_MAX_CHARS' not in form_data.model_fields_set:
@@ -1448,6 +1458,7 @@ class LdapServerConfig(BaseModel):
     host: str
     port: int | None = None
     attribute_for_mail: str = 'mail'
+    default_email_domain: str = ''
     attribute_for_username: str = 'uid'
     app_dn: str
     app_dn_password: str

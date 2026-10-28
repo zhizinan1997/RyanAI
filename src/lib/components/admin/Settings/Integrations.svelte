@@ -662,6 +662,10 @@
 
 		if (res) {
 			toast.success($i18n.t('Terminal servers saved'));
+			await config.set(await getBackendConfig());
+
+			// Refresh the terminalServers store so changes are reflected immediately
+			// Preserve user direct terminals, refresh system terminals from backend
 			const existingDirectTerminals = (($terminalServers ?? []) as TerminalConnection[]).filter(
 				(terminal) => !terminal.id
 			);
@@ -1560,6 +1564,7 @@
 
 							<Tooltip content={$i18n.t('settings.admin.integrations.addConnection.label')}>
 								<button
+									aria-label={$i18n.t('settings.admin.integrations.addConnection.label')}
 									class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-black/5 hover:text-gray-900 dark:text-gray-600 dark:hover:bg-white/5 dark:hover:text-white"
 									on:click={() => {
 										showConnectionModal = true;
@@ -1607,6 +1612,7 @@
 
 							<Tooltip content={$i18n.t('settings.admin.integrations.addConnection.label')}>
 								<button
+									aria-label={$i18n.t('settings.admin.integrations.addConnection.label')}
 									class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-black/5 hover:text-gray-900 dark:text-gray-600 dark:hover:bg-white/5 dark:hover:text-white"
 									on:click={() => {
 										editTerminalIdx = null;
@@ -1621,7 +1627,7 @@
 
 						<div class="flex flex-col gap-1.5">
 							{#each terminalConnections as connection, idx}
-								<div class="flex w-full gap-2 items-center">
+								<div class="group/setting-row flex w-full gap-2 items-center">
 									<Tooltip className="w-full relative" content={''} placement="top-start">
 										<div class="flex w-full">
 											<div
@@ -1636,11 +1642,12 @@
 													<Cloud className="size-4" strokeWidth="1.5" />
 												</Tooltip>
 
-												<div
-													class="outline-hidden w-full bg-transparent text-xs text-gray-700 dark:text-gray-300"
+												<label
+													for={`terminal-${idx}-control`}
+													class="outline-hidden w-full bg-transparent text-xs text-gray-600 dark:text-gray-400 transition-colors duration-150 group-hover/setting-row:text-gray-900 group-focus-within/setting-row:text-gray-900 dark:group-hover/setting-row:text-white dark:group-focus-within/setting-row:text-white group-has-[button[id$=-control]:enabled]/setting-row:cursor-pointer group-has-[button[id$=-control]:disabled]/setting-row:cursor-not-allowed"
 												>
 													{connection.name || connection.url || $i18n.t('New Terminal')}
-												</div>
+												</label>
 											</div>
 										</div>
 									</Tooltip>
@@ -1665,6 +1672,7 @@
 												: $i18n.t('Disabled')}
 										>
 											<Switch
+												id={`terminal-${idx}-control`}
 												state={connection?.enabled !== false}
 												on:change={() => {
 													terminalConnections = terminalConnections.map((c, i) =>
