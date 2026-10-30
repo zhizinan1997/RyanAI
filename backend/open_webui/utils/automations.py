@@ -435,7 +435,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
                 EVENTS.AUTOMATION_RUN_FAILED,
                 actor=user,
                 subject_id=automation.id,
-                data={'name': automation.name, 'error': error},
+                data={'name': automation.name, 'error': error, 'message': f'{automation.name}: {error}'},
             )
             return
 
@@ -521,7 +521,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
                 EVENTS.AUTOMATION_RUN_FAILED,
                 actor=user,
                 subject_id=automation.id,
-                data={'name': automation.name, 'error': error},
+                data={'name': automation.name, 'error': error, 'message': f'{automation.name}: {error}'},
             )
             return
 
@@ -610,7 +610,13 @@ async def execute_automation(app, automation: AutomationModel) -> None:
             app,
             EVENTS.AUTOMATION_RUN_FAILED,
             subject_id=automation.id,
-            data={'name': automation.name, 'error': error, **({'chat_id': chat.id} if chat else {})},
+            data={
+                'name': automation.name,
+                'error': error,
+                'user_id': automation.user_id,
+                'message': f'{automation.name}: {error}',
+                **({'chat_id': chat.id} if chat else {}),
+            },
         )
         if isinstance(e, asyncio.CancelledError):
             raise
