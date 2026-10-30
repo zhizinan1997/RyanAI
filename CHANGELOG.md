@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.5.1] - 2026-10-30
+
+### Changed
+
+- 合并官方 [0.12.5](https://github.com/open-webui/open-webui/releases/tag/v0.12.5)（99 个提交），该版本包含官方尚未公开细节的**安全修复**，建议尽快升级；主要功能包括管理后台 Analytics 会话浏览器、笔记多页与子页面及协作者在线状态、聊天标题菜单直接重命名、管理员轮换/删除用户 API Key、嵌入查询/内容前缀可在后台设置、可选 Mistral OCR 模型与额外参数、自动化运行失败通知、大文档分批嵌入，知识库命令与对话搜索明显提速。
+- 本次官方没有新增数据库迁移，数据库版本仍为 `82b57ad2d0d4`，升级前仍建议先备份。
+- 对话中切换模型会保留你手动开关过的工具、技能与功能；用 @ 提及模型发送后对话会切换到该模型；多模型对话重新生成时使用当前选中的模型。
+- 流式回复的 Token 用量不再因供应商每个分块重复上报而被累加放大，回复与 Analytics 中的用量以供应商最终数值为准。
+- 知识库文件增删改、重命名与共享的 API 不再返回完整文件列表，只返回受影响的文件；现有笔记的附件会移到第一页末尾。
+- 新增 `AIOHTTP_CLIENT_TIMEOUT_TERMINAL`（默认 60 秒）、`RAG_EMBEDDING_BUFFER_SIZE`（默认 1000）与 `MISTRAL_OCR_PARAMS` 环境变量。
+- 保留本仓库的精简语言包（en-US、zh-CN、sl-SI）、`DISABLE_LOCAL_EMBEDDING_MODELS` 的强制外部嵌入逻辑（与新增的嵌入前缀设置并存）、用户管理接口的 `UserModelResponse` 返回结构；zh-CN 补齐 0.12.5 新增的 144 个词条（沿用上游的空占位方式，随翻译更新）。
+- 前端 `crypto:verify` 校验、`vite build`、前端与后端单元测试、i18n 占位符校验与后端模块导入检查均已通过。
+
 ## [0.12.5] - 2026-10-29
 
 ### Added
