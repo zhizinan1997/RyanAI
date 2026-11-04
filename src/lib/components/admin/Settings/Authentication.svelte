@@ -242,8 +242,10 @@
 						<AdminSettingField
 							label={$i18n.t('settings.admin.authentication.allowedEndpoints.label')}
 							description={$i18n.t('settings.admin.authentication.allowedEndpoints.description')}
+							forId="api-keys-allowed-endpoints"
 						>
 							<input
+								id="api-keys-allowed-endpoints"
 								class={inputClass}
 								type="text"
 								placeholder={`e.g.) /api/v1/messages, /api/v1/channels`}
@@ -263,8 +265,10 @@
 				<AdminSettingField
 					label={$i18n.t('settings.admin.authentication.jwtExpiration.label')}
 					description={$i18n.t('settings.admin.authentication.jwtExpiration.description')}
+					forId="jwt-expiration"
 				>
 					<input
+						id="jwt-expiration"
 						class={inputClass}
 						type="text"
 						placeholder={`e.g.) "30m","1h", "10d". `}
@@ -489,8 +493,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.adminContactEmail.label')}
 						description={$i18n.t('settings.admin.authentication.adminContactEmail.description')}
+						forId="admin-contact-email"
 					>
 						<input
+							id="admin-contact-email"
 							class={inputClass}
 							type="email"
 							placeholder={$i18n.t('Leave empty to use first admin user')}
@@ -543,8 +549,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.label.label')}
 						description={$i18n.t('settings.admin.authentication.label.description')}
+						forId="ldap-label"
 					>
 						<input
+							id="ldap-label"
 							class={inputClass}
 							required
 							placeholder={$i18n.t('Enter server label')}
@@ -557,8 +565,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.host.label')}
 						description={$i18n.t('settings.admin.authentication.host.description')}
+						forId="ldap-host"
 					>
 						<input
+							id="ldap-host"
 							class={inputClass}
 							required
 							placeholder={$i18n.t('Enter server host')}
@@ -569,6 +579,7 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.port.label')}
 						description={$i18n.t('settings.admin.authentication.port.description')}
+						forId="ldap-port"
 					>
 						<Tooltip
 							placement="top-start"
@@ -576,6 +587,7 @@
 							className="w-full"
 						>
 							<input
+								id="ldap-port"
 								class={inputClass}
 								type="number"
 								placeholder={$i18n.t('Enter server port')}
@@ -589,12 +601,14 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.applicationDn.label')}
 						description={$i18n.t('settings.admin.authentication.applicationDn.description')}
+						forId="ldap-application-dn"
 					>
 						<Tooltip
 							content={$i18n.t('The Application Account DN you bind with for search')}
 							placement="top-start"
 						>
 							<input
+								id="ldap-application-dn"
 								class={inputClass}
 								placeholder={$i18n.t('Enter Application DN')}
 								bind:value={LDAP_SERVER.app_dn}
@@ -619,6 +633,7 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.attributeForMail.label')}
 						description={$i18n.t('settings.admin.authentication.attributeForMail.description')}
+						forId="ldap-attribute-for-mail"
 					>
 						<Tooltip
 							content={$i18n.t(
@@ -627,6 +642,7 @@
 							placement="top-start"
 						>
 							<input
+								id="ldap-attribute-for-mail"
 								class={inputClass}
 								required
 								placeholder={$i18n.t('Example: mail')}
@@ -638,6 +654,7 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.attributeForUsername.label')}
 						description={$i18n.t('settings.admin.authentication.attributeForUsername.description')}
+						forId="ldap-attribute-for-username"
 					>
 						<Tooltip
 							content={$i18n.t(
@@ -646,6 +663,7 @@
 							placement="top-start"
 						>
 							<input
+								id="ldap-attribute-for-username"
 								class={inputClass}
 								required
 								placeholder={$i18n.t('Example: sAMAccountName or uid or userPrincipalName')}
@@ -658,8 +676,10 @@
 				<AdminSettingField
 					label={$i18n.t('settings.admin.authentication.defaultEmailDomain.label')}
 					description={$i18n.t('settings.admin.authentication.defaultEmailDomain.description')}
+					forId="ldap-default-email-domain"
 				>
 					<input
+						id="ldap-default-email-domain"
 						class={inputClass}
 						placeholder="example.com"
 						bind:value={LDAP_SERVER.default_email_domain}
@@ -669,9 +689,11 @@
 				<AdminSettingField
 					label={$i18n.t('settings.admin.authentication.searchBase.label')}
 					description={$i18n.t('settings.admin.authentication.searchBase.description')}
+					forId="ldap-search-base"
 				>
 					<Tooltip content={$i18n.t('The base to search for users')} placement="top-start">
 						<input
+							id="ldap-search-base"
 							class={inputClass}
 							required
 							placeholder={$i18n.t('Example: ou=users,dc=foo,dc=example')}
@@ -683,8 +705,10 @@
 				<AdminSettingField
 					label={$i18n.t('settings.admin.authentication.searchFilters.label')}
 					description={$i18n.t('settings.admin.authentication.searchFilters.description')}
+					forId="ldap-search-filters"
 				>
 					<input
+						id="ldap-search-filters"
 						class={inputClass}
 						placeholder={$i18n.t('Example: (&(objectClass=inetOrgPerson)(uid=%s))')}
 						bind:value={LDAP_SERVER.search_filters}
@@ -710,8 +734,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.certificatePath.label')}
 						description={$i18n.t('settings.admin.authentication.certificatePath.description')}
+						forId="ldap-certificate-path"
 					>
 						<input
+							id="ldap-certificate-path"
 							class={inputClass}
 							placeholder={$i18n.t('Enter certificate path')}
 							bind:value={LDAP_SERVER.certificate_path}
@@ -729,9 +755,11 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.ciphers.label')}
 						description={$i18n.t('settings.admin.authentication.ciphers.description')}
+						forId="ldap-ciphers"
 					>
 						<Tooltip content={$i18n.t('Default to ALL')} placement="top-start">
 							<input
+								id="ldap-ciphers"
 								class={inputClass}
 								placeholder={$i18n.t('Example: ALL')}
 								bind:value={LDAP_SERVER.ciphers}
@@ -763,9 +791,11 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.authentication.groupAttribute.label')}
 						description={$i18n.t('settings.admin.authentication.groupAttribute.description')}
+						forId="ldap-group-attribute"
 					>
 						<Tooltip content={$i18n.t('Default to memberOf')} placement="top-start">
 							<input
+								id="ldap-group-attribute"
 								class={inputClass}
 								placeholder="memberOf"
 								bind:value={LDAP_SERVER.attribute_for_groups}
@@ -804,12 +834,19 @@
 					</AdminSettingRow>
 
 					{#if oauthConfig.ENABLE_OAUTH}
+						<p class="text-xs text-gray-500 dark:text-gray-400">
+							{$i18n.t(
+								'Restart all Open WebUI instances to apply changes to the provider connection settings.'
+							)}
+						</p>
 						<div class="grid grid-cols-1 gap-x-3 gap-y-2.5 sm:grid-cols-2">
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.providerName.label')}
 								description={$i18n.t('settings.admin.authentication.providerName.description')}
+								forId="oauth-provider-name"
 							>
 								<input
+									id="oauth-provider-name"
 									class={inputClass}
 									placeholder="SSO"
 									bind:value={oauthConfig.OAUTH_PROVIDER_NAME}
@@ -819,8 +856,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.providerUrl.label')}
 								description={$i18n.t('settings.admin.authentication.providerUrl.description')}
+								forId="oauth-provider-url"
 							>
 								<input
+									id="oauth-provider-url"
 									class={inputClass}
 									placeholder="https://accounts.google.com/.well-known/openid-configuration"
 									bind:value={oauthConfig.OPENID_PROVIDER_URL}
@@ -832,8 +871,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.clientId.label')}
 								description={$i18n.t('settings.admin.authentication.clientId.description')}
+								forId="oauth-client-id"
 							>
 								<input
+									id="oauth-client-id"
 									class={inputClass}
 									placeholder={$i18n.t('Enter Client ID')}
 									bind:value={oauthConfig.OAUTH_CLIENT_ID}
@@ -857,8 +898,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.redirectUri.label')}
 								description={$i18n.t('settings.admin.authentication.redirectUri.description')}
+								forId="oauth-redirect-uri"
 							>
 								<input
+									id="oauth-redirect-uri"
 									class={inputClass}
 									placeholder={$i18n.t('Enter Redirect URI')}
 									bind:value={oauthConfig.OPENID_REDIRECT_URI}
@@ -868,8 +911,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.scopes.label')}
 								description={$i18n.t('settings.admin.authentication.scopes.description')}
+								forId="oauth-scopes"
 							>
 								<input
+									id="oauth-scopes"
 									class={inputClass}
 									placeholder="openid email profile"
 									bind:value={oauthConfig.OAUTH_SCOPES}
@@ -881,8 +926,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.emailClaim.label')}
 								description={$i18n.t('settings.admin.authentication.emailClaim.description')}
+								forId="oauth-email-claim"
 							>
 								<input
+									id="oauth-email-claim"
 									class={inputClass}
 									placeholder="email"
 									bind:value={oauthConfig.OAUTH_EMAIL_CLAIM}
@@ -892,8 +939,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.usernameClaim.label')}
 								description={$i18n.t('settings.admin.authentication.usernameClaim.description')}
+								forId="oauth-username-claim"
 							>
 								<input
+									id="oauth-username-claim"
 									class={inputClass}
 									placeholder="name"
 									bind:value={oauthConfig.OAUTH_USERNAME_CLAIM}
@@ -905,8 +954,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.pictureClaim.label')}
 								description={$i18n.t('settings.admin.authentication.pictureClaim.description')}
+								forId="oauth-picture-claim"
 							>
 								<input
+									id="oauth-picture-claim"
 									class={inputClass}
 									placeholder="picture"
 									bind:value={oauthConfig.OAUTH_PICTURE_CLAIM}
@@ -916,8 +967,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.subClaim.label')}
 								description={$i18n.t('settings.admin.authentication.subClaim.description')}
+								forId="oauth-sub-claim"
 							>
 								<input
+									id="oauth-sub-claim"
 									class={inputClass}
 									placeholder="sub"
 									bind:value={oauthConfig.OAUTH_SUB_CLAIM}
@@ -957,8 +1010,10 @@
 						<AdminSettingField
 							label={$i18n.t('settings.admin.authentication.allowedDomains.label')}
 							description={$i18n.t('settings.admin.authentication.allowedDomains.description')}
+							forId="oauth-allowed-domains"
 						>
 							<input
+								id="oauth-allowed-domains"
 								class={inputClass}
 								placeholder={$i18n.t('* (all domains)')}
 								bind:value={oauthConfig.OAUTH_ALLOWED_DOMAINS}
@@ -984,8 +1039,10 @@
 								<AdminSettingField
 									label={$i18n.t('settings.admin.authentication.rolesClaim.label')}
 									description={$i18n.t('settings.admin.authentication.rolesClaim.description')}
+									forId="oauth-roles-claim"
 								>
 									<input
+										id="oauth-roles-claim"
 										class={inputClass}
 										placeholder="roles"
 										bind:value={oauthConfig.OAUTH_ROLES_CLAIM}
@@ -995,8 +1052,10 @@
 								<AdminSettingField
 									label={$i18n.t('settings.admin.authentication.adminRoles.label')}
 									description={$i18n.t('settings.admin.authentication.adminRoles.description')}
+									forId="oauth-admin-roles"
 								>
 									<input
+										id="oauth-admin-roles"
 										class={inputClass}
 										placeholder="admin"
 										bind:value={oauthConfig.OAUTH_ADMIN_ROLES}
@@ -1007,8 +1066,10 @@
 							<AdminSettingField
 								label={$i18n.t('settings.admin.authentication.allowedRoles.label')}
 								description={$i18n.t('settings.admin.authentication.allowedRoles.description')}
+								forId="oauth-allowed-roles"
 							>
 								<input
+									id="oauth-allowed-roles"
 									class={inputClass}
 									placeholder="*"
 									bind:value={oauthConfig.OAUTH_ALLOWED_ROLES}
@@ -1050,8 +1111,10 @@
 								<AdminSettingField
 									label={$i18n.t('settings.admin.authentication.groupClaim.label')}
 									description={$i18n.t('settings.admin.authentication.groupClaim.description')}
+									forId="oauth-group-claim"
 								>
 									<input
+										id="oauth-group-claim"
 										class={inputClass}
 										placeholder="groups"
 										bind:value={oauthConfig.OAUTH_GROUP_CLAIM}
@@ -1061,8 +1124,10 @@
 								<AdminSettingField
 									label={$i18n.t('settings.admin.authentication.blockedGroups.label')}
 									description={$i18n.t('settings.admin.authentication.blockedGroups.description')}
+									forId="oauth-blocked-groups"
 								>
 									<input
+										id="oauth-blocked-groups"
 										class={inputClass}
 										placeholder={$i18n.t('Comma-separated group names')}
 										bind:value={oauthConfig.OAUTH_BLOCKED_GROUPS}

@@ -71,6 +71,7 @@
 	import RegenerateMenu from './ResponseMessage/RegenerateMenu.svelte';
 	import StatusHistory from './ResponseMessage/StatusHistory.svelte';
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
+	import MCPApp from '$lib/components/chat/Messages/MCPApp.svelte';
 	import OutputEditView from './OutputEditView.svelte';
 	import { getOutputText, replaceOutputMessageText, type OutputItem } from './structuredOutput';
 	import type { AIErrorPayload } from '$lib/utils/chatError';
@@ -862,13 +863,17 @@
 							>
 								{#each message.embeds as embed, idx}
 									<div class="my-2 w-full" id={`${message.id}-embeds-${idx}`}>
-										<FullHeightIframe
-											src={embed}
-											allowScripts={true}
-											allowForms={$settings?.iframeSandboxAllowForms ?? true}
-											allowSameOrigin={$settings?.iframeSandboxAllowSameOrigin ?? false}
-											allowPopups={true}
-										/>
+										{#if typeof embed === 'object' && embed?.type === 'mcp_app'}
+											{#key embed}<MCPApp app={embed} />{/key}
+										{:else if typeof embed === 'string'}
+											<FullHeightIframe
+												src={embed}
+												allowScripts={true}
+												allowForms={$settings?.iframeSandboxAllowForms ?? true}
+												allowSameOrigin={$settings?.iframeSandboxAllowSameOrigin ?? false}
+												allowPopups={true}
+											/>
+										{/if}
 									</div>
 								{/each}
 							</div>
@@ -892,6 +897,7 @@
 								{:else}
 									<!-- Legacy textarea for messages without output -->
 									<textarea
+										aria-label={$i18n.t('Message')}
 										id="message-edit-{message.id}"
 										bind:this={editTextAreaElement}
 										class=" bg-transparent outline-hidden focus-visible:outline-none! w-full resize-none text-[0.9375rem]"
@@ -1132,6 +1138,7 @@
 											class="text-sm flex justify-center font-normal self-center dark:text-gray-500 min-w-fit"
 										>
 											<input
+												aria-label={$i18n.t('Message number')}
 												id="message-index-input-{message.id}"
 												type="number"
 												value={siblings.indexOf(message.id) + 1}

@@ -20,6 +20,10 @@ export default defineConfig({
 					dest: 'licenses/encryption'
 				},
 				{
+					src: ['node_modules/@novnc/novnc/docs/LICENSE*', 'node_modules/@novnc/novnc/AUTHORS'],
+					dest: 'licenses/novnc'
+				},
+				{
 					src: 'node_modules/onnxruntime-web/dist/*.jsep.*',
 
 					dest: 'wasm'
@@ -33,6 +37,7 @@ export default defineConfig({
 		APP_BUILD_CHANNEL: JSON.stringify(buildInfo.channel)
 	},
 	build: {
+		target: 'es2022',
 		sourcemap: false,
 		chunkSizeWarningLimit: 20000,
 		cssCodeSplit: false,
@@ -45,6 +50,9 @@ export default defineConfig({
 			},
 			external: []
 		}
+	},
+	optimizeDeps: {
+		esbuildOptions: { target: 'es2022' }
 	},
 	server: {
 		proxy: {

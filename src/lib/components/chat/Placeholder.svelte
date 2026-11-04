@@ -47,6 +47,9 @@
 	export let atSelectedModel: Model | undefined;
 	export let selectedModels: [''];
 	export let onModelSelect: (models: string[]) => void = () => {};
+	export let chatFiles: any[] = [];
+	export let params: Record<string, any> = {};
+	export let onParamChange: (key: string, value: unknown) => void = () => {};
 
 	export let history;
 	export let chatId = '';
@@ -121,7 +124,7 @@
 </script>
 
 <div
-	class="placeholder-root relative isolate m-auto w-full max-w-[58rem] px-2 @2xl:px-20 translate-y-6 py-24 text-center"
+	class="placeholder-root relative isolate m-auto w-full max-w-[58rem] px-2 md:@2xl:px-20 translate-y-6 py-24 text-center"
 >
 	{#if !$selectedFolder}
 	<div class="zero-state-glow" aria-hidden="true"></div>
@@ -270,6 +273,9 @@
 						{history}
 						bind:selectedModels
 						{onModelSelect}
+						bind:chatFiles
+						bind:params
+						{onParamChange}
 						bind:files
 						bind:prompt
 						bind:autoScroll

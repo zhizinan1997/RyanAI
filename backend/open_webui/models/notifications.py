@@ -1,244 +1,162 @@
-import time
-import uuid
-from typing import Optional
+"""Persistent, per-recipient inbox activity. Writers never commit the caller's transaction."""
 
-from open_webui.internal.db import Base, get_async_db_context
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import BigInteger, Boolean, Column, Text, desc, func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+import logging
+import time
+from uuid import uuid4
+
+from open_webui.internal.db import Base
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import JSON, BigInteger, CheckConstraint, Column, Index, Text, UniqueConstraint, delete, update
+
+log = logging.getLogger(__name__)
 
 
 class Notification(Base):
     __tablename__ = 'notification'
-
-    id = Column(Text, primary_key=True, unique=True)
-    type = Column(Text, nullable=False)
-    title = Column(Text, nullable=True)
-    content = Column(Text, nullable=False)
-    active = Column(Boolean, nullable=False, default=True)
-    dismissible = Column(Boolean, nullable=False, default=True)
+    id = Column(Text, primary_key=True)
+    user_id = Column(Text, nullable=False)
+    event_type = Column(Text, nullable=False)
+    event_key = Column(Text, nullable=False)
+    actor_type = Column(Text, nullable=False)
+    actor_id = Column(Text, nullable=True)
+    resource_type = Column(Text, nullable=True)
+    resource_id = Column(Text, nullable=True)
+    object_type = Column(Text, nullable=True)
+    object_id = Column(Text, nullable=True)
+    data = Column(JSON, nullable=False)
+    seen_at = Column(BigInteger, nullable=True)
+    read_at = Column(BigInteger, nullable=True)
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
-    published_at = Column(BigInteger, nullable=True)
+    __table_args__ = (
+        UniqueConstraint('user_id', 'event_key', name='uq_notification_occurrence'),
+        CheckConstraint('(resource_type IS NULL) = (resource_id IS NULL)', name='ck_notification_resource'),
+        CheckConstraint('(object_type IS NULL) = (object_id IS NULL)', name='ck_notification_object'),
+        CheckConstraint("actor_type IN ('user', 'system')", name='ck_notification_actor'),
+        Index('ix_notification_user_created', 'user_id', 'created_at', 'id'),
+        Index(
+            'ix_notification_unseen',
+            'user_id',
+            'created_at',
+            'id',
+            sqlite_where=seen_at.is_(None),
+            postgresql_where=seen_at.is_(None),
+        ),
+        Index('ix_notification_resource', 'resource_type', 'resource_id'),
+        Index('ix_notification_object', 'object_type', 'object_id'),
+    )
 
 
-class NotificationModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    type: str
-    title: Optional[str] = None
-    content: str
-    active: bool = True
-    dismissible: bool = True
-    created_at: int
-    updated_at: int
-    published_at: Optional[int] = None
+class NotificationData(BaseModel):
+    model_config = ConfigDict(extra='forbid')
 
 
-class NotificationForm(BaseModel):
-    type: str = 'info'
-    title: Optional[str] = None
-    content: str
-    active: bool = True
-    dismissible: bool = True
-    published_at: Optional[int] = None
+class ReminderData(NotificationData):
+    start_at: int
 
 
-class NotificationUpdateForm(BaseModel):
-    type: Optional[str] = None
-    title: Optional[str] = None
-    content: Optional[str] = None
-    active: Optional[bool] = None
-    dismissible: Optional[bool] = None
-    published_at: Optional[int] = None
+class SystemData(NotificationData):
+    message: str = Field(min_length=1, max_length=2000)
 
 
-class NotificationListResponse(BaseModel):
-    items: list[NotificationModel]
-    total: int
-    page: int
-    limit: int
+DATA_TYPES = {
+    'comment.created': NotificationData,
+    'comment.replied': NotificationData,
+    'comment.mentioned': NotificationData,
+    'channel.mentioned': NotificationData,
+    'channel.replied': NotificationData,
+    'calendar.alert': ReminderData,
+    'automation.run_failed': NotificationData,
+    'system.announcement': SystemData,
+}
 
 
-class NotificationTable:
-    async def ensure_seeded_from_banners(
-        self, banners: list, db: Optional[AsyncSession] = None
-    ) -> None:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(func.count()).select_from(Notification))
-            if result.scalar() > 0:
-                return
+async def emit_changes(user_ids):
+    from open_webui.socket.main import sio
 
-            now = int(time.time())
-            notifications = []
-            for banner in banners or []:
-                data = banner.model_dump() if hasattr(banner, 'model_dump') else dict(banner)
-                content = data.get('content') or ''
-                if content == '':
-                    continue
+    for user_id in user_ids:
+        try:
+            await sio.emit('notifications:changed', {}, room=f'user:{user_id}')
+        except Exception:
+            log.exception('Could not broadcast inbox change for %s', user_id)
 
-                created_at = data.get('timestamp') or now
-                notifications.append(
-                    Notification(
-                        id=data.get('id') or str(uuid.uuid4()),
-                        type=data.get('type') or 'info',
-                        title=data.get('title') or '',
-                        content=content,
-                        active=True,
-                        dismissible=data.get('dismissible', True),
-                        created_at=created_at,
-                        updated_at=created_at,
-                        published_at=created_at,
-                    )
+
+async def insert_notifications(
+    *,
+    recipients,
+    event_key,
+    actor_id=None,
+    resource_type=None,
+    resource_id=None,
+    object_type=None,
+    object_id=None,
+    data=None,
+    db,
+):
+    """recipients maps user IDs to event types; the producer chooses the strongest reason."""
+    from open_webui.models.config import Config
+    from open_webui.utils.inbox import validate_source, eligible_recipients
+
+    if not recipients or not await Config.get('notifications.enable'):
+        return set()
+    if not event_key or len(event_key) > 512:
+        raise ValueError('Invalid notification occurrence')
+    payloads = {kind: DATA_TYPES[kind].model_validate(data or {}).model_dump() for kind in set(recipients.values())}
+    for event_type in payloads:
+        await validate_source(event_type, resource_type, resource_id, object_type, object_id, db=db)
+    recipients = await eligible_recipients(recipients, resource_type, resource_id, actor_id, db=db)
+    if not recipients:
+        return set()
+    dialect = db.get_bind().dialect.name
+    if dialect == 'postgresql':
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect == 'sqlite':
+        from sqlalchemy.dialects.sqlite import insert
+    else:
+        raise ValueError('Inbox requires SQLite or PostgreSQL')
+    try:
+        now = time.time_ns()
+        result = await db.execute(
+            insert(Notification)
+            .on_conflict_do_nothing(index_elements=['user_id', 'event_key'])
+            .returning(Notification.user_id),
+            [
+                dict(
+                    id=str(uuid4()),
+                    user_id=user_id,
+                    event_type=event_type,
+                    event_key=event_key,
+                    actor_type='user' if actor_id else 'system',
+                    actor_id=actor_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    object_type=object_type,
+                    object_id=object_id,
+                    data=payloads[event_type],
+                    created_at=now,
+                    updated_at=now,
                 )
-
-            if notifications:
-                db.add_all(notifications)
-                await db.commit()
-
-    async def get_notifications(
-        self,
-        page: int = 1,
-        limit: int = 5,
-        include_inactive: bool = True,
-        db: Optional[AsyncSession] = None,
-    ) -> NotificationListResponse:
-        async with get_async_db_context(db) as db:
-            page = max(page, 1)
-            limit = min(max(limit, 1), 100)
-
-            base_stmt = select(Notification)
-            count_stmt = select(func.count()).select_from(Notification)
-            if not include_inactive:
-                base_stmt = base_stmt.where(Notification.active == True)
-                count_stmt = count_stmt.where(Notification.active == True)
-
-            total = (await db.execute(count_stmt)).scalar() or 0
-            stmt = (
-                base_stmt.order_by(
-                    desc(Notification.active),
-                    desc(func.coalesce(Notification.published_at, Notification.updated_at)),
-                    desc(Notification.updated_at),
-                )
-                .offset((page - 1) * limit)
-                .limit(limit)
-            )
-            result = await db.execute(stmt)
-            items = [NotificationModel.model_validate(item) for item in result.scalars().all()]
-            return NotificationListResponse(items=items, total=total, page=page, limit=limit)
-
-    async def get_active_notifications(self, db: Optional[AsyncSession] = None) -> list[NotificationModel]:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(
-                select(Notification)
-                .where(Notification.active == True)
-                .order_by(desc(func.coalesce(Notification.published_at, Notification.updated_at)))
-            )
-            return [NotificationModel.model_validate(item) for item in result.scalars().all()]
-
-    async def insert_new_notification(
-        self, form_data: NotificationForm, db: Optional[AsyncSession] = None
-    ) -> NotificationModel:
-        async with get_async_db_context(db) as db:
-            now = int(time.time())
-            notification = Notification(
-                id=str(uuid.uuid4()),
-                type=form_data.type or 'info',
-                title=form_data.title or '',
-                content=form_data.content,
-                active=form_data.active,
-                dismissible=form_data.dismissible,
-                created_at=now,
-                updated_at=now,
-                published_at=form_data.published_at or (now if form_data.active else None),
-            )
-            db.add(notification)
-            await db.commit()
-            await db.refresh(notification)
-            return NotificationModel.model_validate(notification)
-
-    async def update_notification_by_id(
-        self, id: str, form_data: NotificationUpdateForm, db: Optional[AsyncSession] = None
-    ) -> Optional[NotificationModel]:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Notification).where(Notification.id == id))
-            notification = result.scalar_one_or_none()
-            if notification is None:
-                return None
-
-            update_data = form_data.model_dump(exclude_unset=True)
-            was_active = notification.active
-            for key, value in update_data.items():
-                setattr(notification, key, value)
-
-            now = int(time.time())
-            notification.updated_at = now
-            if update_data.get('active') is True and not was_active and notification.published_at is None:
-                notification.published_at = now
-
-            await db.commit()
-            await db.refresh(notification)
-            return NotificationModel.model_validate(notification)
-
-    async def delete_notification_by_id(self, id: str, db: Optional[AsyncSession] = None) -> bool:
-        async with get_async_db_context(db) as db:
-            result = await db.execute(select(Notification).where(Notification.id == id))
-            notification = result.scalar_one_or_none()
-            if notification is None:
-                return False
-
-            await db.delete(notification)
-            await db.commit()
-            return True
-
-    async def set_notifications_from_banners(self, banners: list, db: Optional[AsyncSession] = None) -> list[NotificationModel]:
-        async with get_async_db_context(db) as db:
-            now = int(time.time())
-            incoming_ids = set()
-
-            for banner in banners:
-                data = banner.model_dump() if hasattr(banner, 'model_dump') else dict(banner)
-                id = data.get('id') or str(uuid.uuid4())
-                incoming_ids.add(id)
-                result = await db.execute(select(Notification).where(Notification.id == id))
-                notification = result.scalar_one_or_none()
-                timestamp = data.get('timestamp') or now
-                if notification:
-                    notification.type = data.get('type') or 'info'
-                    notification.title = data.get('title') or ''
-                    notification.content = data.get('content') or ''
-                    notification.dismissible = data.get('dismissible', True)
-                    notification.active = True
-                    notification.updated_at = now
-                    if notification.published_at is None:
-                        notification.published_at = timestamp
-                else:
-                    db.add(
-                        Notification(
-                            id=id,
-                            type=data.get('type') or 'info',
-                            title=data.get('title') or '',
-                            content=data.get('content') or '',
-                            active=True,
-                            dismissible=data.get('dismissible', True),
-                            created_at=timestamp,
-                            updated_at=now,
-                            published_at=timestamp,
-                        )
-                    )
-
-            if incoming_ids:
-                await db.execute(
-                    update(Notification).where(Notification.active == True, ~Notification.id.in_(incoming_ids)).values(
-                        active=False, updated_at=now
-                    )
-                )
-            else:
-                await db.execute(update(Notification).where(Notification.active == True).values(active=False, updated_at=now))
-
-            await db.commit()
-            return await self.get_active_notifications(db=db)
+                for user_id, event_type in recipients.items()
+            ],
+        )
+        return set(result.scalars().all())
+    except Exception:
+        log.exception('Inbox insertion failed for occurrence %s', event_key)
+        raise
 
 
-Notifications = NotificationTable()
+async def delete_notifications(*, resource_type=None, resource_ids=None, object_type=None, object_ids=None, db):
+    condition = (
+        (Notification.resource_type == resource_type) & Notification.resource_id.in_(resource_ids)
+        if resource_type
+        else (Notification.object_type == object_type) & Notification.object_id.in_(object_ids)
+    )
+    recipients = (
+        (await db.execute(delete(Notification).where(condition).returning(Notification.user_id))).scalars().all()
+    )
+    return set(recipients)
+
+
+async def delete_user_notifications(user_id, db):
+    await db.execute(delete(Notification).where(Notification.user_id == user_id))
+    await db.execute(update(Notification).where(Notification.actor_id == user_id).values(actor_id=None))
