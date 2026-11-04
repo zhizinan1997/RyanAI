@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0.1] - 2026-11-04
+
+### Changed
+
+- 合并官方 [0.13.0](https://github.com/open-webui/open-webui/releases/tag/v0.13.0)（194 个提交），该版本包含官方尚未公开细节的**安全修复**，建议尽快升级；主要功能包括聊天顶部的标签页工作区（文件、多终端、产物、预览、通话与评论，支持 Desktop 桌面与 Browser 浏览器标签、Git 侧边面板、全宽布局）、`/side` 与 `/btw` 侧边对话、评论与通知收件箱（`ENABLE_COMMENTS`）、聊天中的 MCP Apps、工作区工具开关、模型可委派多模型子智能体、知识库文件数量与大小上限、笔记块拖拽移动、3D 模型预览。
+- ⚠️ **数据库迁移**：官方新增 3 个迁移（资源评论、工具启用开关、通知收件箱），数据库版本由 `82b57ad2d0d4` 升至 `e42c8f710a36`，升级前务必先备份数据库。
+- 官方的通知收件箱使用了 `notification` 表名，与本仓库的站内公告表重名。新增迁移 `b5e8f2a9c1d4` 会先把原公告表连同数据改名为 `site_notification`（同时重命名索引与 PostgreSQL 主键约束），再由官方迁移创建收件箱表；对应的后端模型移到 `models/site_notifications.py`，管理后台的公告接口与前端不变。回滚时会改回原表名。
+- 官方把聊天的 Controls 面板拆分到模型菜单，Overview 改为聊天菜单里的全屏窗口；单次回复的工具调用上限提高到 1024 轮，子智能体的并发与迭代数默认不再限制（可用 `CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS=256` 与 `SUBAGENTS_*` 环境变量恢复旧限制）。
+- 官方重命名了 OpenAI 兼容响应与 Ollama 转换的辅助函数；本仓库的积分扣费逻辑（Ollama 流式与非流式、函数/管道流式、provider 失败记录）已随之改用新名称，行为不变。
+- 保留本仓库的精简语言包（en-US、zh-CN、sl-SI）、品牌图标与 README、「消耗详情」弹窗、站内公告与用量入口（现位于聊天操作区）、模型价格与 Logo 设置、微信/QQ 绑定与积分页签、bot-gateway 的强制压缩策略与本地化错误提示、前端构建配置；zh-CN 补齐 0.13.0 新增的 183 个词条（沿用上游的空占位方式，随翻译更新）。
+- 前端 `crypto:verify` 校验、`vite build`、前后端单元测试、i18n 占位符校验、新旧数据库迁移与回滚测试及后端模块导入检查均已通过。
+
 ## [0.13.0] - 2026-11-02
 
 ### Added
