@@ -19,7 +19,7 @@ jobs:
       release_tag: ${{ steps.release.outputs.tag || '' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v5.1.0
         with:
           fetch-depth: 0
 
@@ -93,7 +93,7 @@ jobs:
 
       - name: Archive source
         if: steps.release.outputs.created == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: release-archive
           path: |
