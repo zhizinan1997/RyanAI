@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3.1] - 2026-11-09
+
+### Changed
+
+- 合并官方 [0.13.1](https://github.com/open-webui/open-webui/releases/tag/v0.13.1)、[0.13.2](https://github.com/open-webui/open-webui/releases/tag/v0.13.2) 与 [0.13.3](https://github.com/open-webui/open-webui/releases/tag/v0.13.3)（共 317 个提交）。0.13.1 包含官方的**安全修复**，建议尽快升级；主要变化包括编码智能体（Claude Code、Codex、Pi）作为模型使用、标签页分屏与按聊天保存标签布局、文件视图的表格与 Markdown 编辑、Git 克隆与状态标记、文件夹默认终端与工作目录、工具调用成本大幅降低、自动工具权限、工具调用标签、聊天与频道加载提速，以及 0.13.2/0.13.3 修复的纯 HTTP 访问、Side Chat 权限与 Files 标签问题。
+- ⚠️ **数据库迁移**：官方新增 3 个迁移（认证会话 `8bc7e5a902d1`、聊天视图状态 `6a23bd107e54`、频道查询索引 `9f6c2a8d1b43`），数据库版本由 `e42c8f710a36` 升至 `9f6c2a8d1b43`，升级前务必先备份数据库。
+- **Docker 不再构建 slim 镜像**：发布流程改为构建完整镜像，标签为版本号（如 `v0.13.3.1`）与 `latest`，不再产出 `:slim` 与 `-slim` 后缀标签；`Dockerfile` 的 `USE_SLIM` 默认改为 `false`，`docker-compose.yaml` 与 `docker-run.sh` 不再传入该参数。
+- ⚠️ **向量库默认值随之变化**：slim 镜像的 `VECTOR_DB` 默认为 `pgvector`，完整镜像默认为 `chroma`。此前依赖 slim 默认值使用 pgvector 的部署，升级前请显式设置 `VECTOR_DB=pgvector`，并把 `WEBUI_DOCKER_TAG` 改为 `latest` 或具体版本号。
+- 官方把聊天操作区拆分为临时聊天开关、标签栏操作区与聊天操作区；本仓库的通知中心与用量入口同步放入新的操作区与标签栏。聊天占位页保留本仓库的背景光效，并采用官方调整后的响应式断点。
+- 官方现在首次加载就带登录态请求后端配置，并移除了登录后的二次刷新；本仓库原有的二次刷新随之去掉，行为不变。
+- 保留本仓库的精简语言包（en-US、zh-CN、sl-SI）、README、发布与 Docker 工作流、品牌与积分相关改动；zh-CN 沿用现有译文，官方新增词条以空占位加入，随翻译更新。
+- 前端 `crypto:verify` 校验、`vite build`、前端单元测试（27 项）、i18n 占位符校验、后端测试（105 项）、数据库迁移单一 head 检查及后端模块导入检查均已通过。
+
 ## [0.13.3] - 2026-11-08
 
 ### Added
