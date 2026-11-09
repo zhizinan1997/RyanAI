@@ -13,8 +13,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        USE_SLIM: "true"
     image: ghcr.io/zhizinan1997/ryanai:${WEBUI_DOCKER_TAG-main}
     container_name: open-webui
     volumes:

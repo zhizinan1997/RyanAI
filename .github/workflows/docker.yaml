@@ -1,4 +1,4 @@
-name: Create and publish slim Docker image
+name: Create and publish Docker image
 
 on:
   workflow_call:
@@ -21,7 +21,7 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-slim:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -83,8 +83,8 @@ jobs:
         with:
           images: ${{ steps.image.outputs.full_image_name }}
           tags: |
-            type=raw,value=${{ steps.release.outputs.tag }}-slim
-            type=raw,value=slim
+            type=raw,value=${{ steps.release.outputs.tag }}
+            type=raw,value=latest
           flavor: |
             latest=false
 
@@ -97,9 +97,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-slim-multi-main
-          cache-to: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-slim-multi-main,mode=max
+          cache-from: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-multi-main
+          cache-to: type=registry,ref=${{ steps.image.outputs.full_image_name }}:cache-multi-main,mode=max
           sbom: true
           build-args: |
             BUILD_HASH=${{ steps.build.outputs.sha }}
-            USE_SLIM=true

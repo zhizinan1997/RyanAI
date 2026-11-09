@@ -48,6 +48,7 @@ from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import (
     convert_logit_bias_input_to_json,
     get_provider_function,
+    merge_tool_call_batches,
     stream_chunks_handler,
 )
 from open_webui.utils.model_ids import strip_provider_model_prefix
@@ -1228,7 +1229,7 @@ def convert_to_responses_payload(payload: dict) -> dict:
         # Check for stored output items (from previous Responses API turn)
         stored_output = msg.get('output')
         if stored_output and isinstance(stored_output, list):
-            input_items.extend(_normalize_stored_item(item) for item in stored_output)
+            input_items.extend(_normalize_stored_item(item) for item in merge_tool_call_batches(stored_output))
             continue
 
         if role == 'system':
@@ -1583,8 +1584,14 @@ async def generate_chat_completion(
     if not is_responses and 'messages' in payload:
         for message in payload['messages']:
             if message.get('role') == 'tool' and isinstance(message.get('content'), list):
-                message['content'] = ''.join(
-                    part.get('text', '') for part in message['content'] if part.get('type') in ('input_text', 'text')
+                parts = message['content']
+                text = ''.join(part.get('text', '') for part in parts if part.get('type') in ('input_text', 'text'))
+                cache_control = next(
+                    (part['cache_control'] for part in reversed(parts) if part.get('cache_control')), None
+                )
+                # Prompt-cache markers only work on a content block, so keep the text as one
+                message['content'] = (
+                    [{'type': 'text', 'text': text, 'cache_control': cache_control}] if cache_control and text else text
                 )
 
     is_streaming_request = bool(payload.get('stream', False))

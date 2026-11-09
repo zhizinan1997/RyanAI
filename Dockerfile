@@ -3,7 +3,7 @@
 # use build args in the docker build command with --build-arg="BUILDARG=true"
 ARG USE_CUDA=false
 ARG USE_OLLAMA=false
-ARG USE_SLIM=true
+ARG USE_SLIM=false
 ARG USE_PERMISSION_HARDENING=false
 # Tested with cu117 for CUDA 11 and cu121 for CUDA 12 (default)
 ARG USE_CUDA_VER=cu128
@@ -48,7 +48,8 @@ RUN npm config set registry https://registry.npmmirror.com && \
     npm config set fetch-retry-maxtimeout 120000 && \
     npm config set audit false && \
     npm config set fund false
-RUN npm ci --force
+# the frontend build never uses onnxruntime-node's CUDA binaries
+RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --force
 
 COPY . .
 ENV APP_BUILD_HASH=${BUILD_HASH}
@@ -197,6 +198,7 @@ RUN if [ "$USE_OLLAMA" = "true" ]; then \
     date +%s > /tmp/ollama_build_hash && \
     echo "Cache broken at timestamp: `cat /tmp/ollama_build_hash`" && \
     curl -fsSL https://ollama.com/install.sh | sh && \
+    command -v ollama && \
     rm -rf /var/lib/apt/lists/*; \
     fi
 

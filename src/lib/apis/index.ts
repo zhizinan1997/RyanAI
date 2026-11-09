@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { config } from '$lib/stores';
+import { config, selectedTerminalId, selectedFolder, chatId } from '$lib/stores';
 import { WEBUI_BASE_URL } from '$lib/constants';
 import { convertOpenApiToToolPayload, resolveSchema } from '$lib/utils';
 import { normalizeTags } from '$lib/utils/tags';
@@ -50,9 +50,28 @@ export const getModels = async (
 	token: string = '',
 	connections: object | null = null,
 	base: boolean = false,
-	refresh: boolean = false
+	refresh: boolean = false,
+	context?: { terminalId: string | null; chatId?: string | null; cwd?: string | null }
 ) => {
 	const searchParams = new URLSearchParams();
+	if (context === undefined) {
+		const terminalId = get(selectedTerminalId);
+		const currentChatId = get(chatId);
+		const folder = get(selectedFolder);
+		context = {
+			terminalId,
+			chatId: currentChatId,
+			cwd:
+				!currentChatId && folder?.data?.terminal_id === terminalId
+					? folder?.data?.working_directory
+					: null
+		};
+	}
+	if (!base && context.terminalId) {
+		searchParams.set('terminal_id', context.terminalId);
+		if (context.chatId) searchParams.set('chat_id', context.chatId);
+		if (context.cwd) searchParams.set('cwd', context.cwd);
+	}
 	if (refresh) {
 		searchParams.append('refresh', 'true');
 	}
@@ -1124,7 +1143,7 @@ export const generateAutoCompletion = async (
 		throw error;
 	}
 
-	const response = res?.choices[0]?.message?.content ?? '';
+	const response = res?.choices?.[0]?.message?.content ?? '';
 
 	try {
 		const jsonStartIndex = response.indexOf('{');

@@ -124,7 +124,7 @@
 </script>
 
 <div
-	class="placeholder-root relative isolate m-auto w-full max-w-[58rem] px-2 md:@2xl:px-20 translate-y-6 py-24 text-center"
+	class="placeholder-root relative isolate m-auto w-full max-w-[58rem] px-2 md:@3xl:px-20 translate-y-6 py-24 text-center"
 >
 	{#if !$selectedFolder}
 	<div class="zero-state-glow" aria-hidden="true"></div>
@@ -266,7 +266,7 @@
 				{#if !($selectedFolder && folderReadOnly)}
 					<MessageInput
 						{chatId}
-						{terminalContext}
+						bind:terminalContext
 						{callActive}
 						{callEnabled}
 						bind:this={messageInput}

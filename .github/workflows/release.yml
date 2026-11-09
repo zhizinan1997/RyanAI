@@ -100,7 +100,7 @@ jobs:
             .
             !.git
 
-  build-slim-image:
+  build-image:
     needs: publish
     if: needs.publish.outputs.release_created == 'true'
     uses: ./.github/workflows/docker.yaml
