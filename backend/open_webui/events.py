@@ -44,681 +44,681 @@ class EventDefinitions(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     COMMENT_CREATED: EventDefinition = EventDefinition(
-        name='comment.created', description='A resource comment or reply was created.', message='Comment created'
+        name='comment.created', description='已创建一条资源评论或回复。', message='评论已创建'
     )
     COMMENT_UPDATED: EventDefinition = EventDefinition(
-        name='comment.updated', description='A resource comment was edited.', message='Comment updated'
+        name='comment.updated', description='已编辑一条资源评论。', message='评论已更新'
     )
 
     SYSTEM_STARTUP_STARTED: EventDefinition = EventDefinition(
-        name='system.startup.started', description='Application startup began.', message='Startup started'
+        name='system.startup.started', description='应用已开始启动。', message='启动已开始'
     )
     SYSTEM_STARTUP_COMPLETED: EventDefinition = EventDefinition(
-        name='system.startup.completed', description='Application startup completed.', message='Startup completed'
+        name='system.startup.completed', description='应用启动已完成。', message='启动已完成'
     )
     SYSTEM_SHUTDOWN_STARTED: EventDefinition = EventDefinition(
-        name='system.shutdown.started', description='Application shutdown began.', message='Shutdown started'
+        name='system.shutdown.started', description='应用已开始关闭。', message='关闭已开始'
     )
     SYSTEM_SHUTDOWN_COMPLETED: EventDefinition = EventDefinition(
-        name='system.shutdown.completed', description='Application shutdown completed.', message='Shutdown completed'
+        name='system.shutdown.completed', description='应用关闭已完成。', message='关闭已完成'
     )
     CONFIG_IMPORTED: EventDefinition = EventDefinition(
-        name='config.imported', description='Configuration was imported.', message='Config imported'
+        name='config.imported', description='已导入配置。', message='配置已导入'
     )
     CONFIG_UPDATED: EventDefinition = EventDefinition(
-        name='config.updated', description='Configuration was updated.', message='Config updated'
+        name='config.updated', description='已更新配置。', message='配置已更新'
     )
     CONFIG_WEBHOOK_UPDATED: EventDefinition = EventDefinition(
         name='config.webhook.updated',
-        description='Event webhook configuration was updated.',
-        message='Webhook configuration updated',
+        description='已更新事件 Webhook 配置。',
+        message='Webhook 配置已更新',
     )
     CONFIG_CONNECTIONS_UPDATED: EventDefinition = EventDefinition(
         name='config.connections.updated',
-        description='Connection configuration was updated.',
-        message='Config Connections updated',
+        description='已更新连接配置。',
+        message='连接配置已更新',
     )
     CONFIG_TOOL_SERVERS_UPDATED: EventDefinition = EventDefinition(
         name='config.tool_servers.updated',
-        description='Tool server configuration was updated.',
-        message='Config Tool Servers updated',
+        description='已更新工具服务器配置。',
+        message='工具服务器配置已更新',
     )
     CONFIG_TERMINAL_SERVERS_UPDATED: EventDefinition = EventDefinition(
         name='config.terminal_servers.updated',
-        description='Terminal server configuration was updated.',
-        message='Config Terminal Servers updated',
+        description='已更新终端服务器配置。',
+        message='终端服务器配置已更新',
     )
     CONFIG_CODE_EXECUTION_UPDATED: EventDefinition = EventDefinition(
         name='config.code_execution.updated',
-        description='Code execution configuration was updated.',
-        message='Config Code Execution updated',
+        description='已更新代码执行配置。',
+        message='代码执行配置已更新',
     )
     CONFIG_MODELS_UPDATED: EventDefinition = EventDefinition(
-        name='config.models.updated', description='Model configuration was updated.', message='Config Models updated'
+        name='config.models.updated', description='已更新模型配置。', message='模型配置已更新'
     )
     CONFIG_BANNERS_UPDATED: EventDefinition = EventDefinition(
-        name='config.banners.updated', description='Banner configuration was updated.', message='Config Banners updated'
+        name='config.banners.updated', description='已更新横幅配置。', message='横幅配置已更新'
     )
     CONFIG_NOTIFICATIONS_UPDATED: EventDefinition = EventDefinition(
         name='config.notifications.updated',
-        description='Notification configuration was updated.',
-        message='Config Notifications updated',
+        description='已更新通知配置。',
+        message='通知配置已更新',
     )
     CONFIG_SUGGESTIONS_UPDATED: EventDefinition = EventDefinition(
         name='config.suggestions.updated',
-        description='Suggestion configuration was updated.',
-        message='Config Suggestions updated',
+        description='已更新建议配置。',
+        message='建议配置已更新',
     )
     AUTH_SIGNUP: EventDefinition = EventDefinition(
-        name='auth.signup', description='A user account was created through signup.', message='User signed up'
+        name='auth.signup', description='已通过注册创建用户账户。', message='用户已注册'
     )
     AUTH_MFA_ENROLLED: EventDefinition = EventDefinition(
-        name='auth.mfa.enrolled', description='MFA enrolled.', message='MFA enrolled'
+        name='auth.mfa.enrolled', description='已登记 MFA。', message='MFA 已登记'
     )
     AUTH_MFA_REPLACED: EventDefinition = EventDefinition(
-        name='auth.mfa.replaced', description='MFA replaced.', message='MFA replaced'
+        name='auth.mfa.replaced', description='已更换 MFA。', message='MFA 已更换'
     )
     AUTH_MFA_FAILED: EventDefinition = EventDefinition(
-        name='auth.mfa.failed', description='MFA failed.', message='MFA failed'
+        name='auth.mfa.failed', description='MFA 验证失败。', message='MFA 验证失败'
     )
     AUTH_MFA_THROTTLED: EventDefinition = EventDefinition(
-        name='auth.mfa.throttled', description='MFA throttled.', message='MFA throttled'
+        name='auth.mfa.throttled', description='MFA 请求被限流。', message='MFA 请求被限流'
     )
     AUTH_MFA_RECOVERY_USED: EventDefinition = EventDefinition(
-        name='auth.mfa.recovery_used', description='MFA recovery used.', message='MFA recovery used'
+        name='auth.mfa.recovery_used', description='已使用 MFA 恢复码。', message='已使用 MFA 恢复码'
     )
     AUTH_MFA_RECOVERY_CODES_REGENERATED: EventDefinition = EventDefinition(
         name='auth.mfa.recovery_codes_regenerated',
-        description='MFA recovery codes regenerated.',
-        message='MFA recovery codes regenerated',
+        description='已重新生成 MFA 恢复码。',
+        message='MFA 恢复码已重新生成',
     )
     AUTH_MFA_RESET_REQUESTED: EventDefinition = EventDefinition(
-        name='auth.mfa.reset_requested', description='MFA reset requested.', message='MFA reset requested'
+        name='auth.mfa.reset_requested', description='已请求重置 MFA。', message='已请求重置 MFA'
     )
     AUTH_MFA_RESET_COMPLETED: EventDefinition = EventDefinition(
-        name='auth.mfa.reset_completed', description='MFA reset completed.', message='MFA reset completed'
+        name='auth.mfa.reset_completed', description='MFA 重置已完成。', message='MFA 重置已完成'
     )
     AUTH_MFA_POLICY_CHANGED: EventDefinition = EventDefinition(
-        name='auth.mfa.policy_changed', description='MFA policy changed.', message='MFA policy changed'
+        name='auth.mfa.policy_changed', description='MFA 策略已变更。', message='MFA 策略已变更'
     )
     AUTH_LOGIN: EventDefinition = EventDefinition(
-        name='auth.login', description='A user successfully logged in.', message='User logged in'
+        name='auth.login', description='用户已成功登录。', message='用户已登录'
     )
     AUTH_SESSIONS_REVOKED: EventDefinition = EventDefinition(
-        name='auth.sessions_revoked', description='All user sessions were revoked.', message='User sessions revoked'
+        name='auth.sessions_revoked', description='已撤销该用户的所有会话。', message='用户会话已撤销'
     )
     AUTH_LOGOUT: EventDefinition = EventDefinition(
-        name='auth.logout', description='A user logged out.', message='User logged out'
+        name='auth.logout', description='用户已退出登录。', message='用户已退出登录'
     )
     AUTH_PASSWORD_CHANGED: EventDefinition = EventDefinition(
-        name='auth.password_changed', description='A user password was changed.', message='Password changed'
+        name='auth.password_changed', description='已修改用户密码。', message='密码已修改'
     )
     AUTH_API_KEY_CREATED: EventDefinition = EventDefinition(
-        name='auth.api_key.created', description='A user API key was created.', message='API key created'
+        name='auth.api_key.created', description='已创建用户 API 密钥。', message='API 密钥已创建'
     )
     AUTH_API_KEY_DELETED: EventDefinition = EventDefinition(
-        name='auth.api_key.deleted', description='A user API key was deleted.', message='API key deleted'
+        name='auth.api_key.deleted', description='已删除用户 API 密钥。', message='API 密钥已删除'
     )
     AUTH_OAUTH_SESSION_DELETED: EventDefinition = EventDefinition(
-        name='auth.oauth_session.deleted', description='An OAuth session was deleted.', message='OAuth session deleted'
+        name='auth.oauth_session.deleted', description='已删除 OAuth 会话。', message='OAuth 会话已删除'
     )
     USER_CREATED: EventDefinition = EventDefinition(
-        name='user.created', description='A user account was created.', message='User created'
+        name='user.created', description='已创建用户账户。', message='用户已创建'
     )
     USER_UPDATED: EventDefinition = EventDefinition(
-        name='user.updated', description='A user account was updated.', message='User updated'
+        name='user.updated', description='已更新用户账户。', message='用户已更新'
     )
     USER_DELETED: EventDefinition = EventDefinition(
-        name='user.deleted', description='A user account was deleted.', message='User deleted'
+        name='user.deleted', description='已删除用户账户。', message='用户已删除'
     )
     USER_ROLE_UPDATED: EventDefinition = EventDefinition(
-        name='user.role_updated', description='A user role was updated.', message='User role updated'
+        name='user.role_updated', description='已更新用户角色。', message='用户角色已更新'
     )
     USER_STATUS_UPDATED: EventDefinition = EventDefinition(
-        name='user.status_updated', description='A user status was updated.', message='User status updated'
+        name='user.status_updated', description='已更新用户状态。', message='用户状态已更新'
     )
     USER_SETTINGS_UPDATED: EventDefinition = EventDefinition(
-        name='user.settings_updated', description='A user settings object was updated.', message='User settings updated'
+        name='user.settings_updated', description='已更新用户设置对象。', message='用户设置已更新'
     )
     USER_PROFILE_UPDATED: EventDefinition = EventDefinition(
-        name='user.profile_updated', description='A user profile was updated.', message='User profile updated'
+        name='user.profile_updated', description='已更新用户资料。', message='用户资料已更新'
     )
     USER_PERMISSIONS_UPDATED: EventDefinition = EventDefinition(
         name='user.permissions_updated',
-        description='A user permissions object was updated.',
-        message='User permissions updated',
+        description='已更新用户权限对象。',
+        message='用户权限已更新',
     )
     GROUP_CREATED: EventDefinition = EventDefinition(
-        name='group.created', description='A group was created.', message='Group created'
+        name='group.created', description='已创建组。', message='组已创建'
     )
     GROUP_UPDATED: EventDefinition = EventDefinition(
-        name='group.updated', description='A group was updated.', message='Group updated'
+        name='group.updated', description='已更新组。', message='组已更新'
     )
     GROUP_DELETED: EventDefinition = EventDefinition(
-        name='group.deleted', description='A group was deleted.', message='Group deleted'
+        name='group.deleted', description='已删除组。', message='组已删除'
     )
     GROUP_MEMBER_ADDED: EventDefinition = EventDefinition(
-        name='group.member_added', description='A user was added to a group.', message='Group member added'
+        name='group.member_added', description='已将用户添加到组。', message='组成员已添加'
     )
     GROUP_MEMBER_REMOVED: EventDefinition = EventDefinition(
-        name='group.member_removed', description='A user was removed from a group.', message='Group member removed'
+        name='group.member_removed', description='已将用户从组中移除。', message='组成员已移除'
     )
     CHAT_CREATED: EventDefinition = EventDefinition(
-        name='chat.created', description='A chat was created.', message='Chat created'
+        name='chat.created', description='已创建对话。', message='对话已创建'
     )
     CHAT_FINISHED: EventDefinition = EventDefinition(
-        name='chat.finished', description='A chat response finished.', message='Chat finished'
+        name='chat.finished', description='对话响应已完成。', message='对话已完成'
     )
     CHAT_FAILED: EventDefinition = EventDefinition(
-        name='chat.failed', description='A chat response failed.', message='Chat failed'
+        name='chat.failed', description='对话响应失败。', message='对话失败'
     )
     CHAT_IMPORTED: EventDefinition = EventDefinition(
-        name='chat.imported', description='A chat was imported.', message='Chat imported'
+        name='chat.imported', description='已导入一个对话。', message='对话已导入'
     )
     CHAT_UPDATED: EventDefinition = EventDefinition(
-        name='chat.updated', description='A chat was updated.', message='Chat updated'
+        name='chat.updated', description='已更新一个对话。', message='对话已更新'
     )
     CHAT_DELETED: EventDefinition = EventDefinition(
-        name='chat.deleted', description='A chat was deleted.', message='Chat deleted'
+        name='chat.deleted', description='已删除一个对话。', message='对话已删除'
     )
     CHAT_DELETED_ALL: EventDefinition = EventDefinition(
-        name='chat.deleted_all', description='All chats for a scope were deleted.', message='Chat deleted all'
+        name='chat.deleted_all', description='已删除某个范围内的全部对话。', message='全部对话已删除'
     )
     CHAT_COMPACTED: EventDefinition = EventDefinition(
-        name='chat.compacted', description='A chat was compacted.', message='Chat compacted'
+        name='chat.compacted', description='已压缩一个对话。', message='对话已压缩'
     )
     CHAT_PINNED: EventDefinition = EventDefinition(
-        name='chat.pinned', description='A chat was pinned.', message='Chat pinned'
+        name='chat.pinned', description='已置顶一个对话。', message='对话已置顶'
     )
     CHAT_UNPINNED: EventDefinition = EventDefinition(
-        name='chat.unpinned', description='A chat was unpinned.', message='Chat unpinned'
+        name='chat.unpinned', description='已取消置顶一个对话。', message='对话已取消置顶'
     )
     CHAT_CLONED: EventDefinition = EventDefinition(
-        name='chat.cloned', description='A chat was cloned.', message='Chat cloned'
+        name='chat.cloned', description='已克隆一个对话。', message='对话已克隆'
     )
     CHAT_ARCHIVED: EventDefinition = EventDefinition(
-        name='chat.archived', description='A chat was archived.', message='Chat archived'
+        name='chat.archived', description='已归档一个对话。', message='对话已归档'
     )
     CHAT_UNARCHIVED: EventDefinition = EventDefinition(
-        name='chat.unarchived', description='A chat was unarchived.', message='Chat unarchived'
+        name='chat.unarchived', description='已取消归档一个对话。', message='对话已取消归档'
     )
     CHAT_SHARED: EventDefinition = EventDefinition(
-        name='chat.shared', description='A chat was shared.', message='Chat shared'
+        name='chat.shared', description='已分享一个对话。', message='对话已分享'
     )
     CHAT_UNSHARED: EventDefinition = EventDefinition(
-        name='chat.unshared', description='A chat was unshared.', message='Chat unshared'
+        name='chat.unshared', description='已取消分享一个对话。', message='对话已取消分享'
     )
     CHAT_FOLDER_UPDATED: EventDefinition = EventDefinition(
-        name='chat.folder_updated', description='A chat folder assignment was updated.', message='Chat folder updated'
+        name='chat.folder_updated', description='已更新对话的目录分配。', message='对话目录已更新'
     )
     CHAT_TAG_ADDED: EventDefinition = EventDefinition(
-        name='chat.tag_added', description='A tag was added to a chat.', message='Chat tag added'
+        name='chat.tag_added', description='已为对话添加标签。', message='对话标签已添加'
     )
     CHAT_TAG_REMOVED: EventDefinition = EventDefinition(
-        name='chat.tag_removed', description='A tag was removed from a chat.', message='Chat tag removed'
+        name='chat.tag_removed', description='已从对话移除标签。', message='对话标签已移除'
     )
     MESSAGE_CREATED: EventDefinition = EventDefinition(
-        name='message.created', description='A message was created.', message='Message created'
+        name='message.created', description='已创建一条消息。', message='消息已创建'
     )
     MESSAGE_UPDATED: EventDefinition = EventDefinition(
-        name='message.updated', description='A message was updated.', message='Message updated'
+        name='message.updated', description='已更新一条消息。', message='消息已更新'
     )
     MESSAGE_DELETED: EventDefinition = EventDefinition(
-        name='message.deleted', description='A message was deleted.', message='Message deleted'
+        name='message.deleted', description='已删除一条消息。', message='消息已删除'
     )
     MESSAGE_EVENT_RECEIVED: EventDefinition = EventDefinition(
         name='message.event_received',
-        description='A message-level event was received.',
-        message='Message event received',
+        description='已接收到消息级事件。',
+        message='消息事件已接收',
     )
     MESSAGE_REACTION_ADDED: EventDefinition = EventDefinition(
         name='message.reaction_added',
-        description='A reaction was added to a message.',
-        message='Message reaction added',
+        description='已为一条消息添加表情回应。',
+        message='消息回应已添加',
     )
     MESSAGE_REACTION_REMOVED: EventDefinition = EventDefinition(
         name='message.reaction_removed',
-        description='A reaction was removed from a message.',
-        message='Message reaction removed',
+        description='已从一条消息移除表情回应。',
+        message='消息回应已移除',
     )
     MESSAGE_PINNED: EventDefinition = EventDefinition(
-        name='message.pinned', description='A message was pinned.', message='Message pinned'
+        name='message.pinned', description='已置顶一条消息。', message='消息已置顶'
     )
     MESSAGE_UNPINNED: EventDefinition = EventDefinition(
-        name='message.unpinned', description='A message was unpinned.', message='Message unpinned'
+        name='message.unpinned', description='已取消置顶一条消息。', message='消息已取消置顶'
     )
     CHANNEL_CREATED: EventDefinition = EventDefinition(
-        name='channel.created', description='A channel was created.', message='Channel created'
+        name='channel.created', description='已创建一个频道。', message='频道已创建'
     )
     CHANNEL_UPDATED: EventDefinition = EventDefinition(
-        name='channel.updated', description='A channel was updated.', message='Channel updated'
+        name='channel.updated', description='已更新一个频道。', message='频道已更新'
     )
     CHANNEL_DELETED: EventDefinition = EventDefinition(
-        name='channel.deleted', description='A channel was deleted.', message='Channel deleted'
+        name='channel.deleted', description='已删除一个频道。', message='频道已删除'
     )
     CHANNEL_MEMBER_ADDED: EventDefinition = EventDefinition(
-        name='channel.member_added', description='A member was added to a channel.', message='Channel member added'
+        name='channel.member_added', description='已向频道添加成员。', message='频道成员已添加'
     )
     CHANNEL_MEMBER_REMOVED: EventDefinition = EventDefinition(
         name='channel.member_removed',
-        description='A member was removed from a channel.',
-        message='Channel member removed',
+        description='已从频道移除成员。',
+        message='频道成员已移除',
     )
     CHANNEL_MEMBER_ACTIVE_UPDATED: EventDefinition = EventDefinition(
         name='channel.member_active_updated',
-        description='A channel member active state was updated.',
-        message='Channel member active updated',
+        description='已更新频道成员的活跃状态。',
+        message='频道成员活跃状态已更新',
     )
     CHANNEL_MESSAGE: EventDefinition = EventDefinition(
         name='channel.message',
-        description='A channel message was posted.',
-        message='Channel message',
+        description='已发布一条频道消息。',
+        message='频道消息',
     )
     CHANNEL_WEBHOOK_CREATED: EventDefinition = EventDefinition(
         name='channel.webhook.created',
-        description='A channel incoming webhook was created.',
-        message='Channel Webhook created',
+        description='已创建一个频道传入 Webhook。',
+        message='频道 Webhook 已创建',
     )
     CHANNEL_WEBHOOK_UPDATED: EventDefinition = EventDefinition(
         name='channel.webhook.updated',
-        description='A channel incoming webhook was updated.',
-        message='Channel Webhook updated',
+        description='已更新一个频道传入 Webhook。',
+        message='频道 Webhook 已更新',
     )
     CHANNEL_WEBHOOK_DELETED: EventDefinition = EventDefinition(
         name='channel.webhook.deleted',
-        description='A channel incoming webhook was deleted.',
-        message='Channel Webhook deleted',
+        description='已删除一个频道传入 Webhook。',
+        message='频道 Webhook 已删除',
     )
     FILE_UPLOADED: EventDefinition = EventDefinition(
-        name='file.uploaded', description='A file was uploaded.', message='File uploaded'
+        name='file.uploaded', description='已上传一个文件。', message='文件已上传'
     )
     FILE_CONTENT_UPDATED: EventDefinition = EventDefinition(
-        name='file.content_updated', description='File content was updated.', message='File content updated'
+        name='file.content_updated', description='已更新文件内容。', message='文件内容已更新'
     )
     FILE_RENAMED: EventDefinition = EventDefinition(
-        name='file.renamed', description='A file was renamed.', message='File renamed'
+        name='file.renamed', description='已重命名一个文件。', message='文件已重命名'
     )
     FILE_DELETED: EventDefinition = EventDefinition(
-        name='file.deleted', description='A file was deleted.', message='File deleted'
+        name='file.deleted', description='已删除一个文件。', message='文件已删除'
     )
     FILE_DELETED_ALL: EventDefinition = EventDefinition(
-        name='file.deleted_all', description='All files for a scope were deleted.', message='File deleted all'
+        name='file.deleted_all', description='已删除某个范围内的全部文件。', message='全部文件已删除'
     )
     FOLDER_CREATED: EventDefinition = EventDefinition(
-        name='folder.created', description='A folder was created.', message='Folder created'
+        name='folder.created', description='已创建一个目录。', message='目录已创建'
     )
     FOLDER_UPDATED: EventDefinition = EventDefinition(
-        name='folder.updated', description='A folder was updated.', message='Folder updated'
+        name='folder.updated', description='已更新一个目录。', message='目录已更新'
     )
     FOLDER_PARENT_UPDATED: EventDefinition = EventDefinition(
-        name='folder.parent_updated', description='A folder parent was updated.', message='Folder parent updated'
+        name='folder.parent_updated', description='已更新目录的父级。', message='目录父级已更新'
     )
     FOLDER_ACCESS_UPDATED: EventDefinition = EventDefinition(
-        name='folder.access_updated', description='Folder access was updated.', message='Folder access updated'
+        name='folder.access_updated', description='已更新目录的访问权限。', message='目录访问权限已更新'
     )
     FOLDER_DELETED: EventDefinition = EventDefinition(
-        name='folder.deleted', description='A folder was deleted.', message='Folder deleted'
+        name='folder.deleted', description='已删除一个目录。', message='目录已删除'
     )
     NOTE_CREATED: EventDefinition = EventDefinition(
-        name='note.created', description='A note was created.', message='Note created'
+        name='note.created', description='已创建一条笔记。', message='笔记已创建'
     )
     NOTE_UPDATED: EventDefinition = EventDefinition(
-        name='note.updated', description='A note was updated.', message='Note updated'
+        name='note.updated', description='已更新一条笔记。', message='笔记已更新'
     )
     NOTE_ACCESS_UPDATED: EventDefinition = EventDefinition(
-        name='note.access_updated', description='Note access was updated.', message='Note access updated'
+        name='note.access_updated', description='已更新笔记的访问权限。', message='笔记访问权限已更新'
     )
     NOTE_PINNED: EventDefinition = EventDefinition(
-        name='note.pinned', description='A note was pinned.', message='Note pinned'
+        name='note.pinned', description='已置顶一条笔记。', message='笔记已置顶'
     )
     NOTE_UNPINNED: EventDefinition = EventDefinition(
-        name='note.unpinned', description='A note was unpinned.', message='Note unpinned'
+        name='note.unpinned', description='已取消置顶一条笔记。', message='笔记已取消置顶'
     )
     NOTE_DELETED: EventDefinition = EventDefinition(
-        name='note.deleted', description='A note was deleted.', message='Note deleted'
+        name='note.deleted', description='已删除一条笔记。', message='笔记已删除'
     )
     MEMORY_CREATED: EventDefinition = EventDefinition(
-        name='memory.created', description='A memory was created.', message='Memory created'
+        name='memory.created', description='已创建一条记忆。', message='记忆已创建'
     )
     MEMORY_UPDATED: EventDefinition = EventDefinition(
-        name='memory.updated', description='A memory was updated.', message='Memory updated'
+        name='memory.updated', description='记忆已更新。', message='记忆已更新'
     )
     MEMORY_DELETED: EventDefinition = EventDefinition(
-        name='memory.deleted', description='A memory was deleted.', message='Memory deleted'
+        name='memory.deleted', description='记忆已删除。', message='记忆已删除'
     )
     MEMORY_RESET: EventDefinition = EventDefinition(
-        name='memory.reset', description='A memory was reset.', message='Memory reset'
+        name='memory.reset', description='记忆已重置。', message='记忆已重置'
     )
     KNOWLEDGE_CREATED: EventDefinition = EventDefinition(
-        name='knowledge.created', description='A knowledge was created.', message='Knowledge created'
+        name='knowledge.created', description='知识库已创建。', message='知识库已创建'
     )
     KNOWLEDGE_UPDATED: EventDefinition = EventDefinition(
-        name='knowledge.updated', description='A knowledge was updated.', message='Knowledge updated'
+        name='knowledge.updated', description='知识库已更新。', message='知识库已更新'
     )
     KNOWLEDGE_DELETED: EventDefinition = EventDefinition(
-        name='knowledge.deleted', description='A knowledge was deleted.', message='Knowledge deleted'
+        name='knowledge.deleted', description='知识库已删除。', message='知识库已删除'
     )
     KNOWLEDGE_RESET: EventDefinition = EventDefinition(
-        name='knowledge.reset', description='A knowledge was reset.', message='Knowledge reset'
+        name='knowledge.reset', description='知识库已重置。', message='知识库已重置'
     )
     KNOWLEDGE_REINDEXED: EventDefinition = EventDefinition(
-        name='knowledge.reindexed', description='A knowledge was reindexed.', message='Knowledge reindexed'
+        name='knowledge.reindexed', description='知识库已重建索引。', message='知识库已重建索引'
     )
     KNOWLEDGE_ACCESS_UPDATED: EventDefinition = EventDefinition(
-        name='knowledge.access_updated', description='Knowledge access was updated.', message='Knowledge access updated'
+        name='knowledge.access_updated', description='知识库访问权限已更新。', message='知识库访问权限已更新'
     )
     KNOWLEDGE_FILE_ADDED: EventDefinition = EventDefinition(
-        name='knowledge.file.added', description='A file was added to a knowledge base.', message='Knowledge File added'
+        name='knowledge.file.added', description='文件已添加到知识库。', message='知识库文件已添加'
     )
     KNOWLEDGE_FILE_UPDATED: EventDefinition = EventDefinition(
-        name='knowledge.file.updated', description='A knowledge file was updated.', message='Knowledge File updated'
+        name='knowledge.file.updated', description='知识库文件已更新。', message='知识库文件已更新'
     )
     KNOWLEDGE_FILE_REMOVED: EventDefinition = EventDefinition(
         name='knowledge.file.removed',
-        description='A file was removed from a knowledge base.',
-        message='Knowledge File removed',
+        description='文件已从知识库移除。',
+        message='知识库文件已移除',
     )
     KNOWLEDGE_FILE_MOVED: EventDefinition = EventDefinition(
-        name='knowledge.file.moved', description='A knowledge file was moved.', message='Knowledge File moved'
+        name='knowledge.file.moved', description='知识库文件已移动。', message='知识库文件已移动'
     )
     KNOWLEDGE_DIRECTORY_CREATED: EventDefinition = EventDefinition(
         name='knowledge.directory.created',
-        description='A knowledge directory was created.',
-        message='Knowledge Directory created',
+        description='知识库目录已创建。',
+        message='知识库目录已创建',
     )
     KNOWLEDGE_DIRECTORY_UPDATED: EventDefinition = EventDefinition(
         name='knowledge.directory.updated',
-        description='A knowledge directory was updated.',
-        message='Knowledge Directory updated',
+        description='知识库目录已更新。',
+        message='知识库目录已更新',
     )
     KNOWLEDGE_DIRECTORY_DELETED: EventDefinition = EventDefinition(
         name='knowledge.directory.deleted',
-        description='A knowledge directory was deleted.',
-        message='Knowledge Directory deleted',
+        description='知识库目录已删除。',
+        message='知识库目录已删除',
     )
     KNOWLEDGE_EXTERNAL_CONNECTION_CREATED: EventDefinition = EventDefinition(
         name='knowledge.external_connection.created',
-        description='A knowledge external connection was created.',
-        message='Knowledge External Connection created',
+        description='知识库外部连接已创建。',
+        message='知识库外部连接已创建',
     )
     KNOWLEDGE_EXTERNAL_CONNECTION_UPDATED: EventDefinition = EventDefinition(
         name='knowledge.external_connection.updated',
-        description='A knowledge external connection was updated.',
-        message='Knowledge External Connection updated',
+        description='知识库外部连接已更新。',
+        message='知识库外部连接已更新',
     )
     KNOWLEDGE_EXTERNAL_CONNECTION_DELETED: EventDefinition = EventDefinition(
         name='knowledge.external_connection.deleted',
-        description='A knowledge external connection was deleted.',
-        message='Knowledge External Connection deleted',
+        description='知识库外部连接已删除。',
+        message='知识库外部连接已删除',
     )
     RETRIEVAL_CONTENT_PROCESSED: EventDefinition = EventDefinition(
         name='retrieval.content.processed',
-        description='Retrieval content was processed.',
-        message='Retrieval Content processed',
+        description='检索内容已处理。',
+        message='检索内容已处理',
     )
     RETRIEVAL_CONTENT_PROCESS_FAILED: EventDefinition = EventDefinition(
         name='retrieval.content.process_failed',
-        description='Retrieval content processing failed.',
-        message='Retrieval Content process failed',
+        description='检索内容处理失败。',
+        message='检索内容处理失败',
     )
     RETRIEVAL_COLLECTION_DELETED: EventDefinition = EventDefinition(
         name='retrieval.collection.deleted',
-        description='A retrieval collection was deleted.',
-        message='Retrieval Collection deleted',
+        description='检索合集已删除。',
+        message='检索合集已删除',
     )
     RETRIEVAL_VECTOR_DB_RESET: EventDefinition = EventDefinition(
         name='retrieval.vector_db.reset',
-        description='The retrieval vector database was reset.',
-        message='Retrieval Vector Db reset',
+        description='检索向量数据库已重置。',
+        message='检索向量数据库已重置',
     )
     RETRIEVAL_UPLOADS_RESET: EventDefinition = EventDefinition(
-        name='retrieval.uploads.reset', description='Retrieval uploads were reset.', message='Retrieval Uploads reset'
+        name='retrieval.uploads.reset', description='检索上传已重置。', message='检索上传已重置'
     )
     MODEL_CREATED: EventDefinition = EventDefinition(
-        name='model.created', description='A model was created.', message='Model created'
+        name='model.created', description='模型已创建。', message='模型已创建'
     )
     MODEL_IMPORTED: EventDefinition = EventDefinition(
-        name='model.imported', description='A model was imported.', message='Model imported'
+        name='model.imported', description='模型已导入。', message='模型已导入'
     )
     MODEL_SYNCED: EventDefinition = EventDefinition(
-        name='model.synced', description='A model was synced.', message='Model synced'
+        name='model.synced', description='模型已同步。', message='模型已同步'
     )
     MODEL_UPDATED: EventDefinition = EventDefinition(
-        name='model.updated', description='A model was updated.', message='Model updated'
+        name='model.updated', description='模型已更新。', message='模型已更新'
     )
     MODEL_DELETED: EventDefinition = EventDefinition(
-        name='model.deleted', description='A model was deleted.', message='Model deleted'
+        name='model.deleted', description='模型已删除。', message='模型已删除'
     )
     MODEL_ENABLED: EventDefinition = EventDefinition(
-        name='model.enabled', description='A model was enabled.', message='Model enabled'
+        name='model.enabled', description='模型已启用。', message='模型已启用'
     )
     MODEL_DISABLED: EventDefinition = EventDefinition(
-        name='model.disabled', description='A model was disabled.', message='Model disabled'
+        name='model.disabled', description='模型已停用。', message='模型已停用'
     )
     MODEL_AVAILABLE: EventDefinition = EventDefinition(
         name='model.available',
-        description='A model appeared in the fetched model list.',
-        message='Model available',
+        description='模型出现在已获取的模型列表中。',
+        message='模型可用',
     )
     MODEL_UNAVAILABLE: EventDefinition = EventDefinition(
         name='model.unavailable',
-        description='A model disappeared from the fetched model list.',
-        message='Model unavailable',
+        description='模型已从已获取的模型列表中消失。',
+        message='模型不可用',
     )
     MODEL_ACCESS_UPDATED: EventDefinition = EventDefinition(
-        name='model.access_updated', description='Model access was updated.', message='Model access updated'
+        name='model.access_updated', description='模型访问权限已更新。', message='模型访问权限已更新'
     )
     MODEL_PROVIDER_CONFIG_UPDATED: EventDefinition = EventDefinition(
         name='model.provider_config.updated',
-        description='Model provider configuration was updated.',
-        message='Model Provider Config updated',
+        description='模型提供商配置已更新。',
+        message='模型提供商配置已更新',
     )
     MODEL_PROVIDER_REQUEST_FAILED: EventDefinition = EventDefinition(
         name='model.provider_request.failed',
-        description='A model provider request failed.',
-        message='Model provider request failed',
+        description='模型提供商请求失败。',
+        message='模型提供商请求失败',
     )
     MODEL_PROVIDER_MODEL_CREATED: EventDefinition = EventDefinition(
         name='model.provider_model.created',
-        description='A provider model was created.',
-        message='Provider model created',
+        description='提供商模型已创建。',
+        message='提供商模型已创建',
     )
     MODEL_PROVIDER_MODEL_DELETED: EventDefinition = EventDefinition(
         name='model.provider_model.deleted',
-        description='A provider model was deleted.',
-        message='Provider model deleted',
+        description='提供商模型已删除。',
+        message='提供商模型已删除',
     )
     FUNCTION_CREATED: EventDefinition = EventDefinition(
-        name='function.created', description='A function was created.', message='Function created'
+        name='function.created', description='函数已创建。', message='函数已创建'
     )
     FUNCTION_UPDATED: EventDefinition = EventDefinition(
-        name='function.updated', description='A function was updated.', message='Function updated'
+        name='function.updated', description='函数已更新。', message='函数已更新'
     )
     FUNCTION_DELETED: EventDefinition = EventDefinition(
-        name='function.deleted', description='A function was deleted.', message='Function deleted'
+        name='function.deleted', description='函数已删除。', message='函数已删除'
     )
     FUNCTION_ENABLED: EventDefinition = EventDefinition(
-        name='function.enabled', description='A function was enabled.', message='Function enabled'
+        name='function.enabled', description='函数已启用。', message='函数已启用'
     )
     FUNCTION_DISABLED: EventDefinition = EventDefinition(
-        name='function.disabled', description='A function was disabled.', message='Function disabled'
+        name='function.disabled', description='函数已停用。', message='函数已停用'
     )
     FUNCTION_ENABLE_STARTED: EventDefinition = EventDefinition(
         name='function.enable_started',
-        description='A function is about to be enabled.',
-        message='Function enable started',
+        description='函数即将启用。',
+        message='函数开始启用',
     )
     FUNCTION_DISABLE_STARTED: EventDefinition = EventDefinition(
         name='function.disable_started',
-        description='A function is about to be disabled.',
-        message='Function disable started',
+        description='函数即将停用。',
+        message='函数开始停用',
     )
     FUNCTION_VALVES_UPDATED: EventDefinition = EventDefinition(
-        name='function.valves_updated', description='Function valves were updated.', message='Function valves updated'
+        name='function.valves_updated', description='函数配置项已更新。', message='函数配置项已更新'
     )
     TOOL_CREATED: EventDefinition = EventDefinition(
-        name='tool.created', description='A tool was created.', message='Tool created'
+        name='tool.created', description='工具已创建。', message='工具已创建'
     )
     TOOL_UPDATED: EventDefinition = EventDefinition(
-        name='tool.updated', description='A tool was updated.', message='Tool updated'
+        name='tool.updated', description='工具已更新。', message='工具已更新'
     )
     TOOL_ENABLED: EventDefinition = EventDefinition(
-        name='tool.enabled', description='A tool was enabled.', message='Tool enabled'
+        name='tool.enabled', description='工具已启用。', message='工具已启用'
     )
     TOOL_DISABLED: EventDefinition = EventDefinition(
-        name='tool.disabled', description='A tool was disabled.', message='Tool disabled'
+        name='tool.disabled', description='工具已停用。', message='工具已停用'
     )
     TOOL_DELETED: EventDefinition = EventDefinition(
-        name='tool.deleted', description='A tool was deleted.', message='Tool deleted'
+        name='tool.deleted', description='工具已删除。', message='工具已删除'
     )
     TOOL_ACCESS_UPDATED: EventDefinition = EventDefinition(
-        name='tool.access_updated', description='Tool access was updated.', message='Tool access updated'
+        name='tool.access_updated', description='工具访问权限已更新。', message='工具访问权限已更新'
     )
     TOOL_VALVES_UPDATED: EventDefinition = EventDefinition(
-        name='tool.valves_updated', description='Tool valves were updated.', message='Tool valves updated'
+        name='tool.valves_updated', description='工具配置项已更新。', message='工具配置项已更新'
     )
     SKILL_CREATED: EventDefinition = EventDefinition(
-        name='skill.created', description='A skill was created.', message='Skill created'
+        name='skill.created', description='技能已创建。', message='技能已创建'
     )
     SKILL_UPDATED: EventDefinition = EventDefinition(
-        name='skill.updated', description='A skill was updated.', message='Skill updated'
+        name='skill.updated', description='技能已更新。', message='技能已更新'
     )
     SKILL_DELETED: EventDefinition = EventDefinition(
-        name='skill.deleted', description='A skill was deleted.', message='Skill deleted'
+        name='skill.deleted', description='技能已删除。', message='技能已删除'
     )
     SKILL_ENABLED: EventDefinition = EventDefinition(
-        name='skill.enabled', description='A skill was enabled.', message='Skill enabled'
+        name='skill.enabled', description='技能已启用。', message='技能已启用'
     )
     SKILL_DISABLED: EventDefinition = EventDefinition(
-        name='skill.disabled', description='A skill was disabled.', message='Skill disabled'
+        name='skill.disabled', description='技能已停用。', message='技能已停用'
     )
     PROMPT_CREATED: EventDefinition = EventDefinition(
-        name='prompt.created', description='A prompt was created.', message='Prompt created'
+        name='prompt.created', description='提示词已创建。', message='提示词已创建'
     )
     PROMPT_UPDATED: EventDefinition = EventDefinition(
-        name='prompt.updated', description='A prompt was updated.', message='Prompt updated'
+        name='prompt.updated', description='提示词已更新。', message='提示词已更新'
     )
     PROMPT_DELETED: EventDefinition = EventDefinition(
-        name='prompt.deleted', description='A prompt was deleted.', message='Prompt deleted'
+        name='prompt.deleted', description='提示词已删除。', message='提示词已删除'
     )
     PROMPT_ENABLED: EventDefinition = EventDefinition(
-        name='prompt.enabled', description='A prompt was enabled.', message='Prompt enabled'
+        name='prompt.enabled', description='提示词已启用。', message='提示词已启用'
     )
     PROMPT_DISABLED: EventDefinition = EventDefinition(
-        name='prompt.disabled', description='A prompt was disabled.', message='Prompt disabled'
+        name='prompt.disabled', description='提示词已停用。', message='提示词已停用'
     )
     PROMPT_VERSION_UPDATED: EventDefinition = EventDefinition(
-        name='prompt.version_updated', description='A prompt version was updated.', message='Prompt version updated'
+        name='prompt.version_updated', description='提示词版本已更新。', message='提示词版本已更新'
     )
     PROMPT_ACCESS_UPDATED: EventDefinition = EventDefinition(
-        name='prompt.access_updated', description='Prompt access was updated.', message='Prompt access updated'
+        name='prompt.access_updated', description='提示词访问权限已更新。', message='提示词访问权限已更新'
     )
     PIPELINE_UPLOADED: EventDefinition = EventDefinition(
-        name='pipeline.uploaded', description='A pipeline was uploaded.', message='Pipeline uploaded'
+        name='pipeline.uploaded', description='Pipeline 已上传。', message='Pipeline 已上传'
     )
     PIPELINE_ADDED: EventDefinition = EventDefinition(
-        name='pipeline.added', description='A pipeline was added.', message='Pipeline added'
+        name='pipeline.added', description='Pipeline 已添加。', message='Pipeline 已添加'
     )
     PIPELINE_DELETED: EventDefinition = EventDefinition(
-        name='pipeline.deleted', description='A pipeline was deleted.', message='Pipeline deleted'
+        name='pipeline.deleted', description='Pipeline 已删除。', message='Pipeline 已删除'
     )
     PIPELINE_VALVES_UPDATED: EventDefinition = EventDefinition(
-        name='pipeline.valves_updated', description='Pipeline valves were updated.', message='Pipeline valves updated'
+        name='pipeline.valves_updated', description='Pipeline 配置项已更新。', message='Pipeline 配置项已更新'
     )
     CALENDAR_CREATED: EventDefinition = EventDefinition(
-        name='calendar.created', description='A calendar was created.', message='Calendar created'
+        name='calendar.created', description='日程已创建。', message='日程已创建'
     )
     CALENDAR_UPDATED: EventDefinition = EventDefinition(
-        name='calendar.updated', description='A calendar was updated.', message='Calendar updated'
+        name='calendar.updated', description='日程已更新。', message='日程已更新'
     )
     CALENDAR_DELETED: EventDefinition = EventDefinition(
-        name='calendar.deleted', description='A calendar was deleted.', message='Calendar deleted'
+        name='calendar.deleted', description='日程已删除。', message='日程已删除'
     )
     CALENDAR_DEFAULT_UPDATED: EventDefinition = EventDefinition(
         name='calendar.default_updated',
-        description='The default calendar was updated.',
-        message='Calendar default updated',
+        description='默认日程已更新。',
+        message='默认日程已更新',
     )
     CALENDAR_EVENT_CREATED: EventDefinition = EventDefinition(
-        name='calendar.event.created', description='A calendar event was created.', message='Calendar Event created'
+        name='calendar.event.created', description='日程事件已创建。', message='日程事件已创建'
     )
     CALENDAR_EVENT_UPDATED: EventDefinition = EventDefinition(
-        name='calendar.event.updated', description='A calendar event was updated.', message='Calendar Event updated'
+        name='calendar.event.updated', description='日程事件已更新。', message='日程事件已更新'
     )
     CALENDAR_EVENT_DELETED: EventDefinition = EventDefinition(
-        name='calendar.event.deleted', description='A calendar event was deleted.', message='Calendar Event deleted'
+        name='calendar.event.deleted', description='日程事件已删除。', message='日程事件已删除'
     )
     CALENDAR_EVENT_RSVP_UPDATED: EventDefinition = EventDefinition(
         name='calendar.event.rsvp_updated',
-        description='A calendar event RSVP was updated.',
-        message='Calendar Event rsvp updated',
+        description='日程事件的 RSVP 已更新。',
+        message='日程事件 RSVP 已更新',
     )
     CALENDAR_ALERT: EventDefinition = EventDefinition(
         name='calendar.alert',
-        description='A calendar event alert was triggered.',
-        message='Calendar alert',
+        description='已触发日程事件提醒。',
+        message='日程提醒',
     )
     AUTOMATION_CREATED: EventDefinition = EventDefinition(
-        name='automation.created', description='An automation was created.', message='Automation created'
+        name='automation.created', description='自动化任务已创建。', message='自动化任务已创建'
     )
     AUTOMATION_UPDATED: EventDefinition = EventDefinition(
-        name='automation.updated', description='An automation was updated.', message='Automation updated'
+        name='automation.updated', description='自动化任务已更新。', message='自动化任务已更新'
     )
     AUTOMATION_ENABLED: EventDefinition = EventDefinition(
-        name='automation.enabled', description='An automation was enabled.', message='Automation enabled'
+        name='automation.enabled', description='自动化任务已启用。', message='自动化任务已启用'
     )
     AUTOMATION_DISABLED: EventDefinition = EventDefinition(
-        name='automation.disabled', description='An automation was disabled.', message='Automation disabled'
+        name='automation.disabled', description='自动化任务已停用。', message='自动化任务已停用'
     )
     AUTOMATION_DELETED: EventDefinition = EventDefinition(
-        name='automation.deleted', description='An automation was deleted.', message='Automation deleted'
+        name='automation.deleted', description='自动化任务已删除。', message='自动化任务已删除'
     )
     AUTOMATION_RUN_STARTED: EventDefinition = EventDefinition(
-        name='automation.run_started', description='An automation run started.', message='Automation run started'
+        name='automation.run_started', description='自动化任务已开始运行。', message='自动化任务开始运行'
     )
     AUTOMATION_RUN_COMPLETED: EventDefinition = EventDefinition(
-        name='automation.run_completed', description='An automation run completed.', message='Automation run completed'
+        name='automation.run_completed', description='自动化任务运行完成。', message='自动化任务运行完成'
     )
     AUTOMATION_RUN_FAILED: EventDefinition = EventDefinition(
-        name='automation.run_failed', description='An automation run failed.', message='Automation run failed'
+        name='automation.run_failed', description='自动化任务运行失败。', message='自动化任务运行失败'
     )
     FEEDBACK_CREATED: EventDefinition = EventDefinition(
-        name='feedback.created', description='A feedback was created.', message='Feedback created'
+        name='feedback.created', description='反馈已创建。', message='反馈已创建'
     )
     FEEDBACK_UPDATED: EventDefinition = EventDefinition(
-        name='feedback.updated', description='A feedback was updated.', message='Feedback updated'
+        name='feedback.updated', description='反馈已更新。', message='反馈已更新'
     )
     FEEDBACK_DELETED: EventDefinition = EventDefinition(
-        name='feedback.deleted', description='A feedback was deleted.', message='Feedback deleted'
+        name='feedback.deleted', description='反馈已删除。', message='反馈已删除'
     )
     FEEDBACK_DELETED_ALL: EventDefinition = EventDefinition(
-        name='feedback.deleted_all', description='All feedback for a scope was deleted.', message='Feedback deleted all'
+        name='feedback.deleted_all', description='已删除指定范围内的全部反馈。', message='全部反馈已删除'
     )
     IMAGE_GENERATED: EventDefinition = EventDefinition(
-        name='image.generated', description='An image was generated.', message='Image generated'
+        name='image.generated', description='图片已生成。', message='图片已生成'
     )
     IMAGE_EDITED: EventDefinition = EventDefinition(
-        name='image.edited', description='An image was edited.', message='Image edited'
+        name='image.edited', description='图片已编辑。', message='图片已编辑'
     )
     AUDIO_SPEECH_REQUESTED: EventDefinition = EventDefinition(
-        name='audio.speech_requested', description='Speech generation was requested.', message='Speech requested'
+        name='audio.speech_requested', description='已请求语音生成。', message='语音生成请求'
     )
     AUDIO_TRANSCRIPTION_REQUESTED: EventDefinition = EventDefinition(
         name='audio.transcription_requested',
-        description='Audio transcription was requested.',
-        message='Transcription requested',
+        description='已请求音频转写。',
+        message='音频转写请求',
     )
     TERMINAL_SESSION_OPENED: EventDefinition = EventDefinition(
-        name='terminal.session.opened', description='A terminal session was opened.', message='Terminal Session opened'
+        name='terminal.session.opened', description='终端会话已打开。', message='终端会话已打开'
     )
     TERMINAL_SESSION_CLOSED: EventDefinition = EventDefinition(
-        name='terminal.session.closed', description='A terminal session was closed.', message='Terminal Session closed'
+        name='terminal.session.closed', description='终端会话已关闭。', message='终端会话已关闭'
     )
     NOTIFICATION_TEST: EventDefinition = EventDefinition(
-        name='notification.test', description='A notification target test was sent.', message='Notification test'
+        name='notification.test', description='已向通知目标发送测试通知。', message='通知测试'
     )
     NOTIFICATION_MANUAL: EventDefinition = EventDefinition(
-        name='notification.manual', description='A manual notification was sent.', message='Notification sent'
+        name='notification.manual', description='已发送手动通知。', message='通知已发送'
     )
 
 
