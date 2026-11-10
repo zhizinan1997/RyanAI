@@ -486,7 +486,7 @@ async def execute_automation(app, automation: AutomationModel) -> None:
         )
 
         if not chat:
-            error = 'Failed to create chat'
+            error = '创建对话失败，请稍后重试。'
             await _record_run(request, automation.id, 'error', error=error, actor=user)
             return
 

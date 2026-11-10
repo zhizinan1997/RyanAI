@@ -102,7 +102,7 @@ class EventDefinitions(BaseModel):
     CONFIG_NOTIFICATIONS_UPDATED: EventDefinition = EventDefinition(
         name='config.notifications.updated',
         description='Notification configuration was updated.',
-        message='通知配置已更新',
+        message='Config Notifications updated',
     )
     CONFIG_SUGGESTIONS_UPDATED: EventDefinition = EventDefinition(
         name='config.suggestions.updated',

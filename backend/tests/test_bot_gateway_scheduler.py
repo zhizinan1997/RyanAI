@@ -254,7 +254,7 @@ class BotGatewayRebalanceApplyTests(IsolatedAsyncioTestCase):
                     db=None,
                 )
         self.assertEqual(raised.exception.status_code, 409)
-        self.assertIn('at most one', raised.exception.detail)
+        self.assertIn('最多迁移一个', raised.exception.detail)
 
     async def test_auto_mode_enforces_two_minute_move_interval(self):
         now = 10_000
@@ -276,7 +276,7 @@ class BotGatewayRebalanceApplyTests(IsolatedAsyncioTestCase):
                     db=None,
                 )
         self.assertEqual(raised.exception.status_code, 429)
-        self.assertIn('interval', raised.exception.detail)
+        self.assertIn('间隔未到', raised.exception.detail)
 
     async def test_auto_mode_enforces_hourly_move_budget(self):
         now = 10_000
@@ -298,7 +298,7 @@ class BotGatewayRebalanceApplyTests(IsolatedAsyncioTestCase):
                     db=None,
                 )
         self.assertEqual(raised.exception.status_code, 429)
-        self.assertIn('hourly', raised.exception.detail)
+        self.assertIn('本小时迁移次数已用完', raised.exception.detail)
 
 
 class FakeRedis:

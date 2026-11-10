@@ -138,7 +138,7 @@ async def read_inbox_item(id: str, user=Depends(get_verified_user), db: AsyncSes
         .execution_options(populate_existing=True)
     )
     if not row:
-        raise HTTPException(404, 'Notification not found')
+        raise HTTPException(404, '通知不存在。')
     response = (await hydrate([row], db=db))[0]
     await db.commit()
     await emit_changes({user.id})

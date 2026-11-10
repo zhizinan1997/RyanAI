@@ -34,7 +34,7 @@ reaction_limiter = RateLimiter(120, 60)
 
 async def limit_write(request, user, limiter=write_limiter):
     if await limiter.is_limited(getattr(request.app.state, 'redis', None), f'comments:{limiter.limit}:{user.id}'):
-        raise HTTPException(429, 'Too many requests')
+        raise HTTPException(429, '操作过于频繁，请稍后重试。')
 
 
 async def changed(resource_type, resource_id):
