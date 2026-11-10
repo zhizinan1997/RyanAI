@@ -113,7 +113,7 @@ def _create_checkin_record(request: Request, user_id: str, today: str, duplicate
         raise HTTPException(status_code=400, detail=duplicate_detail)
     except Exception:
         log.exception('Failed to award daily check-in reward for user %s', user_id)
-        raise HTTPException(status_code=500, detail='Failed to award check-in reward')
+        raise HTTPException(status_code=500, detail='发放签到奖励失败，请稍后重试。')
 
     return reward
 
@@ -131,11 +131,11 @@ async def get_checkin_config(request: Request, user=Depends(get_verified_user)):
 @router.post('/checkin')
 async def checkin(request: Request, user=Depends(get_verified_user)):
     if not await Config.get('lottery.checkin.enable', False):
-        raise HTTPException(status_code=400, detail='Check-in is not enabled')
+        raise HTTPException(status_code=400, detail='签到功能未启用。')
 
     today = _today(request)
     if CheckinRecords.has_checked_in(user.id, today):
-        raise HTTPException(status_code=400, detail='Already checked in today')
+        raise HTTPException(status_code=400, detail='今天已经签到过了。')
 
     try:
         redis = get_redis_connection(
@@ -144,13 +144,13 @@ async def checkin(request: Request, user=Depends(get_verified_user)):
             redis_cluster=REDIS_CLUSTER,
         )
         if redis and not redis.set(f'checkin:{user.id}:{today}', '1', nx=True, ex=30):
-            raise HTTPException(status_code=400, detail='Too many requests')
+            raise HTTPException(status_code=400, detail='操作过于频繁，请稍后重试。')
     except HTTPException:
         raise
     except Exception:
         pass
 
-    reward = _create_checkin_record(request, user.id, today, 'Already checked in today')
+    reward = _create_checkin_record(request, user.id, today, '今天已经签到过了。')
     return {'reward': float(reward), 'checked_in_today': True}
 
 
@@ -209,20 +209,20 @@ async def set_admin_checkin_config(form: CheckinAdminConfigForm, user=Depends(ge
     except Exception:
         raise HTTPException(
             status_code=400,
-            detail='Invalid reward config: expect [{"amount":N,"weight":W}, ...] with weight sum > 0',
+            detail='奖励配置无效：格式应为 [{"amount":N,"weight":W}, ...]，且权重总和必须大于 0。',
         )
 
     try:
         ZoneInfo(form.CHECKIN_TIMEZONE or 'Asia/Shanghai')
     except Exception:
-        raise HTTPException(status_code=400, detail='Invalid timezone')
+        raise HTTPException(status_code=400, detail='无效的时区')
 
     try:
         reset_credit = Decimal(str(form.DAILY_RESET_CREDIT))
         if reset_credit < 0:
             raise ValueError('daily reset credit must be non-negative')
     except Exception:
-        raise HTTPException(status_code=400, detail='Invalid daily reset credit')
+        raise HTTPException(status_code=400, detail='无效的每日重置积分')
 
     await Config.upsert(
         {

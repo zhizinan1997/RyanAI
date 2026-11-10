@@ -306,7 +306,7 @@ async def _event_lease(event_record_id: str, request_nonce: str):
         yield
     except asyncio.CancelledError:
         if lease_lost.is_set():
-            raise _EventLeaseLostError('Bot gateway event lease was lost') from None
+            raise _EventLeaseLostError('机器人网关事件处理权已丢失，请稍后重试') from None
         raise
     finally:
         stop.set()
@@ -328,7 +328,7 @@ def _hmac_secret() -> str:
     if len(secret) < 32:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='BOT_GATEWAY_HMAC_SECRET is not configured',
+            detail='BOT_GATEWAY_HMAC_SECRET 未配置',
         )
     return secret
 
@@ -443,7 +443,7 @@ async def _require_channel_enabled(channel: BotGatewayChannel) -> dict[str, Any]
     if not policy['enabled'] or not policy[f'{channel}_enabled']:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f'{channel} bot is disabled by the administrator',
+            detail=f'{channel} 机器人已被管理员停用',
         )
     return policy
 
@@ -454,7 +454,7 @@ def _internal_url() -> str:
     if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='BOT_GATEWAY_INTERNAL_URL is not configured',
+            detail='BOT_GATEWAY_INTERNAL_URL 未配置',
         )
     return value
 
@@ -514,23 +514,23 @@ def verify_bot_gateway_signature(
     content_sha256 = headers.get('x-ryanai-content-sha256')
     signature = headers.get('x-ryanai-signature')
     if not timestamp or not nonce or not content_sha256 or not signature:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Missing bot gateway signature')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='缺少机器人网关签名')
     if not re.fullmatch(r'[A-Za-z0-9._:-]{16,128}', nonce):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid bot gateway nonce')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='机器人网关 nonce 无效')
     try:
         timestamp_value = int(timestamp)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid bot gateway timestamp') from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='机器人网关时间戳无效') from exc
     if abs((now or int(time.time())) - timestamp_value) > BOT_GATEWAY_SIGNATURE_MAX_SKEW:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Stale bot gateway signature')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='机器人网关签名已过期')
 
     actual_hash = hashlib.sha256(body).hexdigest()
     if not hmac.compare_digest(actual_hash, content_sha256.lower()):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Bot gateway content hash mismatch')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='机器人网关内容哈希不匹配')
     canonical = canonical_bot_gateway_request(method, path_with_query, timestamp, nonce, actual_hash)
     expected = f'{BOT_GATEWAY_HMAC_VERSION}={hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()}'
     if not hmac.compare_digest(expected, signature.lower()):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid bot gateway signature')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='机器人网关签名无效')
     return nonce, actual_hash
 
 
@@ -540,13 +540,13 @@ async def _verify_internal_request(request: Request) -> tuple[str, str, bytes]:
     if content_length and content_length.isdigit() and int(content_length) > BOT_GATEWAY_MAX_INTERNAL_BODY:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail='Bot gateway event is too large',
+            detail='机器人网关事件内容过大',
         )
     body = await request.body()
     if len(body) > BOT_GATEWAY_MAX_INTERNAL_BODY:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail='Bot gateway event is too large',
+            detail='机器人网关事件内容过大',
         )
     path_with_query = request.url.path
     if request.url.query:
@@ -590,7 +590,7 @@ async def _sidecar_request(
                 if len(raw) > BOT_GATEWAY_MAX_CONTROL_RESPONSE:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail='Bot gateway response is too large',
+                        detail='机器人网关响应内容过大',
                     )
                 if response.status == status.HTTP_204_NO_CONTENT:
                     return None
@@ -599,7 +599,7 @@ async def _sidecar_request(
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail='Bot gateway returned invalid JSON',
+                        detail='机器人网关返回的 JSON 无效',
                     ) from exc
                 if response.status >= 400:
                     detail = data.get('detail') or data.get('message') if isinstance(data, dict) else None
@@ -613,7 +613,7 @@ async def _sidecar_request(
     except (aiohttp.ClientError, TimeoutError) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='Bot gateway sidecar is unavailable',
+            detail='机器人网关服务暂时不可用，请稍后重试。',
         ) from exc
 
 
@@ -653,7 +653,7 @@ async def _save_authoritative_credential(
         except BotGatewayCredentialError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail='Invalid bot credentials',
+                detail='机器人凭据无效',
             ) from exc
     try:
         await _sidecar_request(
@@ -713,7 +713,7 @@ def _parse_internal_form(form_type: type[BaseModel], body: bytes):
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Invalid bot gateway control payload',
+            detail='机器人网关控制数据无效',
         ) from exc
 
 
@@ -1022,7 +1022,7 @@ async def get_connections(
 async def _get_connection_or_404(connection_id: str) -> BotGatewayConnectionModel:
     connection = await BotGateway.get_connection(connection_id)
     if connection is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到机器人连接')
     return connection
 
 
@@ -1291,7 +1291,7 @@ async def patch_admin_bot_settings(
     if form_data.recommended_model_id:
         available = {item['id'] for item in await _accessible_models(request, user)}
         if form_data.recommended_model_id not in available:
-            raise HTTPException(status_code=400, detail='Recommended model is not available')
+            raise HTTPException(status_code=400, detail='推荐模型当前不可用')
     if 'recommended_model_id' in form_data.model_fields_set:
         updates['recommended_model_id'] = form_data.recommended_model_id
     await Config.upsert({'bot_gateway.settings': updates})
@@ -1321,7 +1321,7 @@ async def set_bot_model(form_data: UserBotModelForm, request: Request, user=Depe
     if form_data.model_id and form_data.model_id not in {
         item['id'] for item in await _accessible_models(request, user)
     }:
-        raise HTTPException(status_code=400, detail='Model is not available to this user')
+        raise HTTPException(status_code=400, detail='当前用户无权使用该模型')
     return (await BotGateway.update_user_setting(user.id, form_data.model_id)).model_dump()
 
 
@@ -1417,7 +1417,7 @@ async def set_user_qq_credentials(form_data: UserBotCredentialsForm, user=Depend
     connection = await _user_connection_or_create(user.id, 'qq')
     if not form_data.app_id or not form_data.app_secret:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='QQ AppID and AppSecret are required'
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='请填写 QQ AppID 和 AppSecret'
         )
     await _ensure_sidecar_connection(connection)
     await _save_authoritative_credential(
@@ -1448,7 +1448,7 @@ async def begin_user_wechat_login(user=Depends(get_verified_user)):
 async def get_user_wechat_login(user=Depends(get_verified_user)):
     connection = await BotGateway.get_user_connection(user.id, 'wechat')
     if connection is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='WeChat bot is not configured')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='微信机器人尚未配置')
     payload = await _sidecar_request('GET', f'/v1/connections/{quote(connection.id, safe="")}/login')
     remote_connection = _remote_object(payload, 'connection')
     if remote_connection:
@@ -1461,7 +1461,7 @@ async def get_user_wechat_login(user=Depends(get_verified_user)):
 async def logout_user_bot(channel: BotGatewayChannel, user=Depends(get_verified_user)):
     connection = await BotGateway.get_user_connection(user.id, channel)
     if connection is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到机器人连接')
     # A personal connection must be removed rather than merely logged out.
     # Otherwise the sidecar retains its local state and a later desired-state
     # sync can make a supposedly unbound account appear configured again.
@@ -1471,7 +1471,7 @@ async def logout_user_bot(channel: BotGatewayChannel, user=Depends(get_verified_
         if exc.status_code != status.HTTP_404_NOT_FOUND:
             raise
     if not await BotGateway.delete_owned_connection(connection.id, user.id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到机器人连接')
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1510,7 +1510,7 @@ async def set_user_bot_credentials(
         or not form_data.app_id
         or not form_data.app_secret
     ):
-        raise HTTPException(status_code=404, detail='QQ bot connection not found')
+        raise HTTPException(status_code=404, detail='未找到 QQ 机器人连接')
     await _save_authoritative_credential(None, connection, form_data.model_dump())
     return _connection_response(
         await BotGateway.update_connection(connection_id, {'credentials_configured': True}) or connection
@@ -1521,7 +1521,7 @@ async def set_user_bot_credentials(
 async def login_user_bot(connection_id: str, user=Depends(get_verified_user)):
     connection = await _get_connection_or_404(connection_id)
     if connection.owner_user_id != user.id:
-        raise HTTPException(status_code=404, detail='Bot connection not found')
+        raise HTTPException(status_code=404, detail='未找到机器人连接')
     return _login_response(await _sidecar_request('POST', f'/v1/connections/{quote(connection_id, safe="")}/login'))
 
 
@@ -1535,7 +1535,7 @@ async def get_bindings(user=Depends(get_verified_user)):
 async def delete_binding(binding_id: str, user=Depends(get_verified_user)):
     _require_enabled()
     if not await BotGateway.unbind(binding_id, user_id=user.id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Binding not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到绑定关系')
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1562,7 +1562,7 @@ async def get_admin_bindings(user=Depends(get_admin_user), db: AsyncSession = De
 async def delete_admin_binding(binding_id: str, user=Depends(get_admin_user)):
     _require_enabled()
     if not await BotGateway.block_binding(binding_id, blocked_by=user.id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Binding not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到绑定关系')
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1570,7 +1570,7 @@ async def delete_admin_binding(binding_id: str, user=Depends(get_admin_user)):
 async def unblock_admin_binding(binding_id: str, user=Depends(get_admin_user)):
     _require_enabled()
     if not await BotGateway.unblock_binding(binding_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Blocked binding not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到被屏蔽的绑定关系')
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1608,11 +1608,11 @@ def _wire_response(event_id: str, text: str | list[str] | None = None, *, ignore
 async def get_bot_media(token: str):
     payload = _decode_media_token(token)
     if payload is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media link expired or invalid')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='媒体链接已过期或无效')
 
     file = await Files.get_file_by_id(str(payload['file_id']))
     if not file or str(file.user_id) != str(payload['user_id']):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='媒体文件不存在')
 
     metadata = file.meta if isinstance(file.meta, dict) else {}
     content_type = str(metadata.get('content_type') or '').lower()
@@ -1620,15 +1620,15 @@ async def get_bot_media(token: str):
         guessed = mimetypes.guess_type(str(file.filename or ''))[0] or ''
         content_type = guessed.lower()
     if not content_type.startswith('image/'):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media type not allowed')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='不支持该媒体类型')
 
     try:
         file_path = Path(await asyncio.to_thread(Storage.get_file, file.path))
     except Exception:
         log.exception('Failed to resolve bot media file %s', file.id)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='媒体文件不存在')
     if not file_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Media not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='媒体文件不存在')
     return FileResponse(file_path, media_type=content_type)
 
 
@@ -1636,7 +1636,7 @@ async def _complete(record_id: str, request_nonce: str, response: dict[str, Any]
     if not await BotGateway.complete_event(record_id, request_nonce, response):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail='Bot gateway event lease was lost',
+            detail='机器人网关事件处理权已丢失，请稍后重试',
         )
     return response
 
@@ -1700,7 +1700,7 @@ async def _resolve_model(
     candidates.extend(available)
     model_id = next((candidate for candidate in candidates if candidate in available), None)
     if model_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='No accessible RyanAI model')
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='没有可用的模型，请先在设置中选择可用模型')
     if conversation.model_id and conversation.model_id != model_id:
         await BotGateway.update_conversation(conversation.id, {'model_id': None})
     return model_id, models
@@ -1746,13 +1746,13 @@ async def _import_attachments(
     for descriptor in event.attachments:
         upload = form.get(descriptor.field_name)
         if not isinstance(upload, UploadFile):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Missing bot gateway attachment')
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='缺少机器人网关附件')
         content = await upload.read()
         await upload.seek(0)
         if len(content) != descriptor.size or hashlib.sha256(content).hexdigest() != descriptor.sha256:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Bot gateway attachment mismatch')
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='机器人网关附件不匹配')
         if (upload.content_type or 'application/octet-stream').lower() != descriptor.content_type.lower():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Bot gateway attachment type mismatch')
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='机器人网关附件类型不匹配')
         uploaded = await upload_file_handler(
             request,
             file=upload,
@@ -1901,7 +1901,7 @@ async def _prepare_chat(
                 },
             )
         if chat is None:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Failed to create chat')
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='创建对话失败，请稍后重试')
         conversation = await BotGateway.update_conversation(conversation.id, {'chat_id': chat_id}) or conversation
     else:
         chat_id = existing_chat.id
@@ -1940,7 +1940,7 @@ async def _run_chat(  # noqa: C901
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail='Bot gateway event lease was lost',
+            detail='机器人网关事件处理权已丢失，请稍后重试',
         )
     request = _build_chat_request(source_request, user)
     request.state.bot_gateway_request = True
@@ -2022,21 +2022,21 @@ async def _run_chat(  # noqa: C901
     if not callable(handler):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='RyanAI chat handler is unavailable',
+            detail='对话服务暂时不可用，请稍后重试',
         )
     if not await BotGateway.renew_event_lease(event_record_id, event_request_nonce):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail='Bot gateway event lease was lost',
+            detail='机器人网关事件处理权已丢失，请稍后重试',
         )
     await handler(request, form_data, user=user)
     message = await Chats.get_message_by_id_and_message_id(chat_id, assistant_message_id)
     if not message:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='RyanAI did not persist a response')
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='回复未能保存，请稍后重试')
     if message.get('error'):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='RyanAI model failed to produce a response',
+            detail='模型未能生成回复，请稍后重试',
         )
     text = message.get('content') or get_output_text(message.get('output'))
     image_urls = _generated_image_urls(message, user.id)
@@ -2198,7 +2198,7 @@ async def _recover_persisted_reply(
     if message.get('error'):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='RyanAI model failed to produce a response',
+            detail='模型未能生成回复，请稍后重试',
         )
     text = message.get('content') or get_output_text(message.get('output'))
     image_urls = _generated_image_urls(message, user_id)
@@ -2221,7 +2221,7 @@ async def receive_event(  # noqa: C901
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail='HMAC nonce has already been used',
+            detail='HMAC nonce 已被使用',
         )
     try:
         await BotGateway.cleanup_expired_records(now=now, db=db)
@@ -2235,13 +2235,13 @@ async def receive_event(  # noqa: C901
             raise ValueError('event part is required')
         event = InboundEvent.model_validate_json(raw_event)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid bot gateway event') from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='机器人网关事件无效') from exc
 
     semantic_json = json.dumps(event.model_dump(mode='json'), sort_keys=True, ensure_ascii=False, separators=(',', ':'))
     semantic_hash = hashlib.sha256(semantic_json.encode()).hexdigest()
     connection = await BotGateway.get_connection(event.connection_id)
     if connection is None or connection.channel != event.channel:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到机器人连接')
     try:
         fence_valid = await validate_event_fence(
             shard_id=event.shard_id,
@@ -2277,7 +2277,7 @@ async def receive_event(  # noqa: C901
     if not acquired:
         if record.status == 'completed' and record.response is not None:
             return record.response
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Bot gateway event is already processing')
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='该消息正在处理中，请稍后再试')
 
     lock_key = f'{event.connection_id}:{event.conversation.type}:{event.conversation.id}:{event.sender.id}'
     try:
@@ -2394,13 +2394,13 @@ async def receive_event(  # noqa: C901
         await BotGateway.fail_event(record.id, record.request_nonce, str(exc))
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail='Bot conversation is busy; retry the message',
+            detail='当前对话正忙，请重新发送该消息',
         ) from exc
     except _EventLeaseLostError as exc:
         await BotGateway.fail_event(record.id, record.request_nonce, str(exc))
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail='Bot gateway event lease was lost',
+            detail='机器人网关事件处理权已丢失，请稍后重试',
         ) from exc
     except HTTPException as exc:
         await BotGateway.fail_event(record.id, record.request_nonce, str(exc.detail))
@@ -2417,7 +2417,7 @@ async def receive_event(  # noqa: C901
         await BotGateway.fail_event(record.id, record.request_nonce, str(exc))
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='RyanAI failed to process the event',
+            detail='处理消息失败，请稍后重试',
         ) from exc
 
 
@@ -2457,7 +2457,7 @@ async def get_internal_credential(connection_id: str, request: Request, db: Asyn
         log.error('Bot gateway credential decryption failed for %s: %s', connection_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='Bot gateway credential could not be decrypted',
+            detail='机器人凭据解密失败，请重新绑定',
         ) from exc
     if credentials is None:
         return _internal_error_response(status.HTTP_404_NOT_FOUND, 'credential_not_found')
@@ -2821,7 +2821,7 @@ async def apply_rebalance(
     if BOT_GATEWAY_SCHEDULER_MODE != 'auto':
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f'Bot scheduler is in {BOT_GATEWAY_SCHEDULER_MODE} mode',
+            detail=f'调度器当前处于 {BOT_GATEWAY_SCHEDULER_MODE} 模式',
         )
     connections = await BotGateway.list_connections(db=db)
     current = _rebalance_plan(connections)
@@ -2830,7 +2830,7 @@ async def apply_rebalance(
     if len(requested) > 1:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail='Bot scheduler moves at most one connection per run',
+            detail='调度器每次最多迁移一个连接',
         )
     now = int(time.time())
     recent = await BotGateway.list_control_operations(
@@ -2841,7 +2841,7 @@ async def apply_rebalance(
     if recent and recent[0].created_at > now - BOT_GATEWAY_REBALANCE_MIN_INTERVAL_SECONDS:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='Bot scheduler move interval has not elapsed',
+            detail='调度器迁移间隔未到，请稍后再试',
         )
     active_shards = len({item.shard_id for item in connections if item.enabled and item.shard_id})
     hourly_budget = max(1, (active_shards + 9) // 10)
@@ -2853,14 +2853,14 @@ async def apply_rebalance(
     if requested and moves_in_window >= hourly_budget:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='Bot scheduler hourly move budget is exhausted',
+            detail='调度器本小时迁移次数已用完，请稍后再试',
         )
     assignments: dict[str, str] = {}
     for move in requested:
         connection_id = str(move.get('connection_id', ''))
         target = str(move.get('to_shard_id', ''))
         if (connection_id, target) not in allowed:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Rebalance plan is stale')
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='负载均衡方案已过期，请重新获取')
         assignments[connection_id] = target
     updated = await BotGateway.apply_shard_assignments(assignments, db=db)
     operation = await BotGateway.record_control_operation(
@@ -2882,7 +2882,7 @@ async def reset_connection_circuit(
 ):
     connection = await BotGateway.get_connection(connection_id, db=db)
     if connection is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot connection not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到机器人连接')
     target_url = None
     if connection.last_runtime_node_id:
         target = next(
@@ -2912,7 +2912,7 @@ async def _set_gateway_node_draining(
 ) -> dict[str, Any]:
     target = next((node for node in await BotGateway.list_nodes(db=db) if node.id == node_id), None)
     if target is None and coordination_mode() == 'redis':
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bot gateway node not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='未找到机器人网关节点')
     result = await _sidecar_request(
         'POST',
         f'/v1/operations/{"drain" if draining else "resume"}',

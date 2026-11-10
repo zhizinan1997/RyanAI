@@ -425,7 +425,7 @@ class CreditDeduct:
         # prompt messages
         messages = self.body.get('messages', [])
         if not messages:
-            raise HTTPException(status_code=400, detail='prompt messages is empty')
+            raise HTTPException(status_code=400, detail='消息内容不能为空')
 
         # stream
         if self.is_stream:

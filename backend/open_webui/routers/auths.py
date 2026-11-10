@@ -1319,7 +1319,7 @@ async def update_admin_config(request: Request, form_data: AdminConfig, user=Dep
     ):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            detail='Cloudflare Turnstile Site Key and Secret Key are required when verification is enabled.',
+            detail='启用验证时必须填写 Cloudflare Turnstile Site Key 和 Secret Key。',
         )
 
     updates = config_updates(form_data.model_dump(), ADMIN_CONFIG_KEYS)

@@ -860,7 +860,7 @@ async def get_models(request: Request, url_idx: int | None = None, user=Depends(
             except aiohttp.ClientError as e:
                 # ClientError covers all aiohttp requests issues
                 log.exception(f'Client error: {str(e)}')
-                raise HTTPException(status_code=500, detail='RyanAI: Server Connection Error')
+                raise HTTPException(status_code=500, detail='RyanAI：连接模型服务失败，请稍后重试。')
             except Exception as e:
                 log.exception(f'Unexpected error: {e}')
                 error_detail = f'Unexpected error: {str(e)}'
@@ -2095,7 +2095,7 @@ async def proxy(path: str, request: Request, user=Depends(get_verified_user)):
         # https://docs.openwebui.com/license.
         raise HTTPException(
             status_code=r.status if r else 500,
-            detail='RyanAI: Server Connection Error',
+            detail='RyanAI：连接模型服务失败，请稍后重试。',
         )
     finally:
         if not streaming:

@@ -1016,7 +1016,7 @@ async def update_notification(
 ):
     notification = await Notifications.update_notification_by_id(id, form_data)
     if notification is None:
-        raise HTTPException(status_code=404, detail='Notification not found')
+        raise HTTPException(status_code=404, detail='通知不存在。')
 
     await publish_event(
         request,
@@ -1037,7 +1037,7 @@ async def delete_notification(
 ):
     deleted = await Notifications.delete_notification_by_id(id)
     if not deleted:
-        raise HTTPException(status_code=404, detail='Notification not found')
+        raise HTTPException(status_code=404, detail='通知不存在。')
 
     await publish_event(
         request,

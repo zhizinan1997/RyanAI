@@ -1157,7 +1157,7 @@ async def update_credit_by_user_id(
     if form_data.amount is None and form_data.credit is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='amount or credit must be specified',
+            detail='必须指定 amount 或 credit 参数。',
         )
 
     detail = SetCreditFormDetail(

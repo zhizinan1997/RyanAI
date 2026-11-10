@@ -145,7 +145,7 @@ class CreditsTable:
         )
         if credit_model is not None:
             return credit_model
-        raise HTTPException(status_code=500, detail='credit initialize failed')
+        raise HTTPException(status_code=500, detail='积分系统初始化失败，请稍后重试。')
 
     def get_credit_by_user_id(self, user_id: str) -> Optional[CreditModel]:
         try:

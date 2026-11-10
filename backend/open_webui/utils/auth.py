@@ -431,7 +431,7 @@ async def send_verify_email(email: str, db: AsyncSession | None = None):
         if verification:
             break
     if not verification:
-        raise HTTPException(status_code=500, detail='Failed to create email verification code.')
+        raise HTTPException(status_code=500, detail='创建邮箱验证码失败，请稍后重试。')
 
     send_email(
         receiver=email,
