@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.4.2] - 2026-11-23
+
+### Fixed
+
+- 重新生成 `backend/requirements.lock` 与 `backend/requirements-slim.lock`，补全积分用量模块所需的 `jsonpath-ng==1.7.0` 及其传递依赖 `ply==3.11` 哈希锁定，修复 `v0.13.4.1` Docker 镜像启动时报 `ModuleNotFoundError: No module named 'jsonpath_ng'` 的问题。
+
 ## [0.13.4.1] - 2026-11-23
 
 ### Changed
