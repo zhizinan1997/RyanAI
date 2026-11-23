@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.4.1] - 2026-11-23
+
+### Changed
+
+- 合并官方 [0.13.4](https://github.com/open-webui/open-webui/releases/tag/v0.13.4)（共 330 个提交），主要变化包括：Tether 本地电脑连接（取代原 Direct Connections）、Terminals 按需沙箱终端、Coding Agents 能力增强（新增 Hermes / Antigravity / Copilot / Goose / Qwen Code 支持、重新生成与编辑续聊、模型 ID 规则收紧）、多标签页支持（Notes / Channels / Workspace 等）、图片配置迁移为 Connections、Docker 依赖改用带哈希的 lock 文件安装、大文件 PDF 预览提速，以及实时 Socket 事件与 API 字段调整。
+- 保留本仓库的积分计费、开屏/通知中心、用量中心、聊天背景光效、Bot Gateway（微信/QQ 个人机器人管理与绑定）、精简语言包（`en-US`、`zh-CN`、`sl-SI`）、国内 PyPI 镜像与发布/Docker 工作流配置；Bot Gateway 上下文压缩策略适配新版 `split_messages(..., metadata)`。
+- 前端 `crypto:verify` 校验、`vite build`、前端单元测试（6 个文件、23 项测试）及后端 `compileall` 语法检查已通过。
+
 ## [0.13.4] - 2026-11-17
 
 ### Added
