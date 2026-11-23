@@ -159,7 +159,7 @@ RUN apt-get -o Acquire::Retries=5 update && \
     fi && rm -rf /var/lib/apt/lists/*
 
 # install python dependencies
-COPY --chown=$UID:$GID ./backend/requirements*.txt ./
+COPY --chown=$UID:$GID ./backend/requirements*.lock ./
 
 # Set UV_LINK_MODE to copy to prevent 0-byte file corruption in QEMU arm64 cross-builds
 ENV UV_LINK_MODE=copy \
@@ -170,16 +170,16 @@ ENV UV_LINK_MODE=copy \
 RUN set -e; \
     pip3 install --no-cache-dir --index-url https://pypi.org/simple uv; \
     if [ "$USE_SLIM" = "true" ]; then \
-    uv pip install --system -r requirements-slim.txt --no-cache-dir; \
+    uv pip install --system --no-deps --require-hashes -r requirements-slim.lock --no-cache-dir; \
     elif [ "$USE_CUDA" = "true" ]; then \
     # Do not preload Hugging Face models; RyanAI deployments use external embedding APIs.
     # fix: pin torch<=2.9.1 - torch 2.10.0 aarch64 wheels cause SIGILL on ARM devices (RPi 4 Cortex-A72) #21349
     pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/$USE_CUDA_DOCKER_VER --no-cache-dir; \
-    uv pip install --system -r requirements.txt --no-cache-dir; \
+    uv pip install --system --no-deps --require-hashes -r requirements.lock --no-cache-dir; \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
     else \
     pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
-    uv pip install --system -r requirements.txt --no-cache-dir; \
+    uv pip install --system --no-deps --require-hashes -r requirements.lock --no-cache-dir; \
     if [ "$USE_SLIM" != "true" ]; then \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
     fi; \

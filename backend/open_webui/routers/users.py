@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import io
 import logging
 import time
 from collections import Counter
@@ -11,7 +10,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from open_webui.config import DEFAULT_USER_PERMISSIONS
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.events import EVENTS, publish_event
@@ -143,15 +142,29 @@ async def get_all_users(
     result = await Users.get_users(db=db)
     users = result['users']
     credit_map = _get_credit_map([user.id for user in users])
+    total = result['total']
+
+    # Look up by group: binding one IN parameter per user breaks past ~32k users
+    groups = await Groups.get_all_groups(db=db)
+    group_user_ids = await Groups.get_group_user_ids_by_ids([group.id for group in groups], db=db)
+
+    groups_by_user = {}
+    for group in groups:
+        for user_id in group_user_ids[group.id]:
+            groups_by_user.setdefault(user_id, []).append({'id': group.id, 'name': group.name})
+
     return {
-        **result,
         'users': [
-            {
-                **user.model_dump(),
-                'credit': credit_map.get(user.id, 0),
-            }
+            UserInfoResponse(
+                **{
+                    **user.model_dump(),
+                    'credit': credit_map.get(user.id, 0),
+                    'groups': groups_by_user.get(user.id, []),
+                }
+            )
             for user in users
         ],
+        'total': total,
     }
 
 
@@ -281,12 +294,13 @@ class FeaturesPermissions(BaseModel):
     channels: bool = True
     encrypted_channels: bool = False
     folders: bool = True
-    direct_tool_servers: bool = False
 
     web_search: bool = True
     image_generation: bool = True
+    video_generation: bool = False
     code_interpreter: bool = True
     memories: bool = True
+    subagents: bool = True
     automations: bool = False
     calendar: bool = True
     webhooks: bool = False
@@ -450,7 +464,7 @@ async def update_default_user_permissions(request: Request, form_data: UserPermi
     from open_webui.socket.main import sio
 
     try:
-        await sio.emit('access:updated', {})
+        await sio.emit('events', {'data': {'type': 'access:updated'}})
     except Exception:
         log.exception('Unable to refresh default user permissions')
     await publish_event(
@@ -530,18 +544,6 @@ async def update_user_settings_by_session_user(
             )
         ):
             ui_settings.pop('system', None)
-
-    if (
-        user.role != 'admin'
-        and ui_settings is not None
-        and 'toolServers' in ui_settings
-        and not await has_permission(
-            user.id,
-            'features.direct_tool_servers',
-            await Config.get('user.permissions'),
-        )
-    ):
-        ui_settings.pop('toolServers', None)
 
     ui_notifications = ui_settings.get('notifications') if isinstance(ui_settings, dict) else None
     if (
@@ -867,14 +869,13 @@ async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_u
                 try:
                     header, base64_data = user.profile_image_url.split(',', 1)
                     image_data = base64.b64decode(base64_data)
-                    image_buffer = io.BytesIO(image_data)
                     media_type = header.split(';')[0].lstrip('data:').lower()
 
                     if media_type not in PROFILE_IMAGE_ALLOWED_MIME_TYPES:
                         return FileResponse(f'{STATIC_DIR}/user.png')
 
-                    return StreamingResponse(
-                        image_buffer,
+                    return Response(
+                        content=image_data,
                         media_type=media_type,
                         headers={
                             'Content-Disposition': 'inline',

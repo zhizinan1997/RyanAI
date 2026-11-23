@@ -40,8 +40,6 @@
 		type BotGatewayRebalancePlan
 	} from '$lib/apis/bot-gateway';
 	import {
-		getConnectionsConfig,
-		setConnectionsConfig,
 		getTerminalServerConnections,
 		getToolServerConnections,
 		setTerminalServerConnections,
@@ -98,7 +96,6 @@
 		'rounded-lg border border-gray-200/70 px-2.5 py-1.5 text-xs text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:text-gray-300 dark:hover:bg-white/5';
 
 	let servers: ToolServerConnection[] | null = null;
-	let connectionsConfig: any = null;
 	let showConnectionModal = false;
 
 	let terminalConnections: TerminalConnection[] = [];
@@ -624,18 +621,6 @@
 			setBusy(key, false);
 		}
 	};
-
-	const updateDirectIntegrations = async () => {
-		const res = await setConnectionsConfig(localStorage.token, connectionsConfig).catch((error) => {
-			toast.error(`${error}`);
-		});
-
-		if (res) {
-			toast.success($i18n.t('Connections settings updated'));
-			await config.set(await getBackendConfig());
-		}
-	};
-
 	const addConnectionHandler = async (server: ToolServerConnection) => {
 		servers = [...(servers ?? []), server];
 		await updateHandler();
@@ -665,20 +650,15 @@
 			await config.set(await getBackendConfig());
 
 			// Refresh the terminalServers store so changes are reflected immediately
-			// Preserve user direct terminals, refresh system terminals from backend
-			const existingDirectTerminals = (($terminalServers ?? []) as TerminalConnection[]).filter(
-				(terminal) => !terminal.id
-			);
 			const systemTerminals = await getTerminalServers(localStorage.token);
 			const systemEntries = systemTerminals.map((t) => ({
-				id: t.id,
+				...t,
 				url: `${WEBUI_API_BASE_URL}/terminals/${t.id}`,
 				name: t.name,
 				key: localStorage.token,
-				contexts: t.contexts ?? {},
 				config: t.config ?? {}
 			}));
-			terminalServers.set([...existingDirectTerminals, ...systemEntries] as any);
+			terminalServers.set(systemEntries as any);
 		}
 	};
 
@@ -702,7 +682,6 @@
 	};
 
 	onMount(async () => {
-		connectionsConfig = await getConnectionsConfig(localStorage.token);
 		const [toolResult, terminalResult] = await Promise.all([
 			getToolServerConnections(localStorage.token).catch(() => null),
 			getTerminalServerConnections(localStorage.token).catch(() => null),
@@ -998,7 +977,7 @@
 	</h2>
 
 	<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
-		{#if servers !== null && connectionsConfig !== null}
+		{#if servers !== null}
 			<AdminSettingSection title={$i18n.t('Messaging bots')} first>
 				<div class="flex flex-col gap-2.5">
 					<div class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
@@ -1696,7 +1675,7 @@
 
 						<div class="mt-1 text-[0.6875rem] text-gray-400 dark:text-gray-600">
 							{$i18n.t(
-								'Connect to Open Terminal instances. Admins and users granted access can use file browsing and terminal tools through these servers.'
+								'Connect to Open Terminal servers. Admins and users granted access can use file browsing and terminal tools through these servers.'
 							)}
 						</div>
 						<a
@@ -1710,23 +1689,6 @@
 
 			<AdminSettingSection title={$i18n.t('settings.admin.integrations.sections.knowledge.title')}>
 				<ExternalKnowledge />
-			</AdminSettingSection>
-
-			<AdminSettingSection
-				title={$i18n.t('settings.admin.connections.sections.userConnections.title')}
-			>
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.connections.directIntegrations.label')}
-					description={$i18n.t('settings.admin.connections.directIntegrations.description')}
-					let:labelId
-				>
-					<Switch
-						disabled={!$config?.features?.enable_tool_servers}
-						bind:state={connectionsConfig.ENABLE_DIRECT_INTEGRATIONS}
-						on:change={updateDirectIntegrations}
-						ariaLabelledbyId={labelId}
-					/>
-				</AdminSettingRow>
 			</AdminSettingSection>
 		{:else}
 			<div class="flex h-full justify-center">

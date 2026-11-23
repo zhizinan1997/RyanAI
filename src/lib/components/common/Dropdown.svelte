@@ -27,8 +27,11 @@
 	/** CSS classes for the dropdown content container */
 	export let contentClass = '';
 
-	/** Max height for the dropdown content */
-	export let maxHeight = 'min(32rem, calc(100dvh - 2rem))';
+	const DEFAULT_MAX_HEIGHT = 'min(32rem, calc(100dvh - 2rem))';
+
+	/** Max height for the dropdown content; undefined uses the default */
+	export let maxHeight: string | undefined = undefined;
+	$: effectiveMaxHeight = maxHeight ?? DEFAULT_MAX_HEIGHT;
 
 	/** Side offset in px */
 	export let sideOffset = 4;
@@ -46,7 +49,7 @@
 	let shouldFocusContent = false;
 	let positionFrame: number | undefined;
 	let settleTimers: number[] = [];
-	let resolvedMaxHeight = maxHeight;
+	let resolvedMaxHeight = maxHeight ?? DEFAULT_MAX_HEIGHT;
 	let lastContentHeight = 0;
 
 	/** Svelte action: moves the node to document.body and keeps it positioned as it resizes */
@@ -142,7 +145,7 @@
 		contentEl.style.zIndex = '9999';
 
 		const contentHeight = naturalContentHeight();
-		const contentWidth = contentEl.offsetWidth || 0;
+		let contentWidth = contentEl.offsetWidth || 0;
 
 		// Side menus are used by the integrations menu. Keep this branch explicit because
 		// treating an unsupported side as "bottom" makes a bottom-toolbar menu overflow
@@ -239,7 +242,7 @@
 		contentEl.style.zIndex = '9999';
 
 		const contentHeight = naturalContentHeight();
-		const contentWidth = contentEl.offsetWidth || 0;
+		let contentWidth = contentEl.offsetWidth || 0;
 
 		if (side === 'right' || side === 'left') {
 			const spaceRight = viewportRight - rect.right - sideOffset - pad;
@@ -293,18 +296,27 @@
 		const preferredTop = openAbove
 			? rect.top - constrainedHeight - sideOffset
 			: rect.bottom + sideOffset;
+		contentWidth = Math.max(contentEl.scrollWidth || 0, contentEl.offsetWidth || 0);
 		const preferredLeft = align === 'end' && contentWidth ? rect.right - contentWidth : rect.left;
 		const maxLeft = contentWidth ? viewportRight - contentWidth - pad : preferredLeft;
 
-		contentEl.style.top = `${Math.max(
+		const top = Math.max(
 			viewport.top + pad,
 			Math.min(preferredTop, viewportBottom - pad - constrainedHeight)
-		)}px`;
-		contentEl.style.bottom = 'auto';
+		);
+		if (openAbove) {
+			contentEl.style.bottom = `${window.innerHeight - top - constrainedHeight}px`;
+			contentEl.style.top = 'auto';
+		} else {
+			contentEl.style.top = `${top}px`;
+			contentEl.style.bottom = 'auto';
+		}
 		contentEl.style.left = `${Math.max(viewport.left + pad, Math.min(preferredLeft, maxLeft))}px`;
 		contentEl.style.right = 'auto';
 		resolvedMaxHeight =
-			contentHeight > availableHeight ? `min(${maxHeight}, ${availableHeight}px)` : maxHeight;
+			contentHeight > availableHeight
+				? `min(${effectiveMaxHeight}, ${availableHeight}px)`
+				: effectiveMaxHeight;
 		contentEl.style.maxHeight = resolvedMaxHeight;
 	}
 
@@ -376,6 +388,8 @@
 		show = true;
 		onOpenChange(true);
 	}
+
+	export const openWithFocus = () => openDropdown(true);
 
 	function closeDropdown(restoreFocus = !!contentEl?.contains(document.activeElement)) {
 		if (!show) return;

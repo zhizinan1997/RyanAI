@@ -2009,6 +2009,8 @@ async def _run_chat(  # noqa: C901
     }
     if bot_compaction_enabled:
         form_data['params']['compact_token_threshold'] = BOT_GATEWAY_CONTEXT_COMPACTION_TOKEN_THRESHOLD
+        form_data['params']['bot_compaction_enabled'] = True
+        form_data['params']['bot_force_compaction'] = bot_force_compaction
     if tool_ids:
         form_data['tool_ids'] = tool_ids
     if filter_ids:
