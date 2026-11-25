@@ -67,7 +67,14 @@ jobs:
               print "ENV NODE_OPTIONS=\"--max-old-space-size=12288\""
               next
             }
-            { print }
+            /^RUN sed -i .*mirrors\.aliyun\.com/ {
+              next
+            }
+            {
+              gsub("https://registry\\.npmmirror\\.com", "https://registry.npmjs.org")
+              gsub("https://pypi\\.tuna\\.tsinghua\\.edu\\.cn/simple", "https://pypi.org/simple")
+              print
+            }
           ' Dockerfile > "${RUNNER_TEMP}/Dockerfile"
 
       - name: Log in to the Container registry
