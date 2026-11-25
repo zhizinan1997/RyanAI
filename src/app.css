@@ -216,47 +216,97 @@ select {
 	@apply bg-gray-850 text-white;
 }
 
-@keyframes shimmer {
+@property --gemini-angle {
+	syntax: '<angle>';
+	initial-value: 0deg;
+	inherits: true;
+}
+
+@keyframes gemini-spin {
+	from {
+		--gemini-angle: 0deg;
+	}
+	to {
+		--gemini-angle: 360deg;
+	}
+}
+
+@keyframes gemini-send-pulse {
 	0% {
-		background-position: 100% 0;
+		opacity: 0;
+		transform: scale(0.97);
+	}
+	35% {
+		opacity: 0.9;
+		transform: scale(1.022);
 	}
 	100% {
-		background-position: -100% 0;
+		opacity: 0;
+		transform: scale(1.055);
+	}
+}
+
+@keyframes gemini-cursor-breathe {
+	0%,
+	100% {
+		opacity: 0.45;
+		transform: scaleY(0.92);
+	}
+	50% {
+		opacity: 1;
+		transform: scaleY(1);
+	}
+}
+
+@keyframes shimmer {
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
 	}
 }
 
 .shimmer {
 	background: linear-gradient(
-		110deg,
-		#b4b4b4 0%,
-		#b4b4b4 43%,
-		#e8e8e8 50%,
-		#b4b4b4 57%,
-		#b4b4b4 100%
+		100deg,
+		#6b7280 15%,
+		#4285f4 42%,
+		#9b72cb 52%,
+		#d96570 62%,
+		#6b7280 85%
 	);
-	background-size: 200% 100%;
+	background-size: 240% 100%;
 	background-clip: text;
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
-	animation: shimmer 1.5s cubic-bezier(0.7, 0, 1, 0.4) infinite;
-	color: #b4b4b4;
+	animation: shimmer 2.1s linear infinite;
+	color: #6b7280;
 }
 
-:global(.dark) .shimmer {
+.dark .shimmer {
 	background: linear-gradient(
-		110deg,
-		#9a9a9a 0%,
-		#9a9a9a 43%,
-		#5e5e5e 50%,
-		#9a9a9a 57%,
-		#9a9a9a 100%
+		100deg,
+		#9ca3af 15%,
+		#60a5fa 42%,
+		#b794f4 52%,
+		#f0808a 62%,
+		#9ca3af 85%
 	);
-	background-size: 200% 100%;
+	background-size: 240% 100%;
 	background-clip: text;
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
-	animation: shimmer 1.5s cubic-bezier(0.7, 0, 1, 0.4) infinite;
-	color: #9a9a9a;
+	animation: shimmer 2.1s linear infinite;
+	color: #9ca3af;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.shimmer,
+	.dark .shimmer {
+		animation: none;
+		background-position: 50% 0;
+	}
 }
 
 @keyframes smoothFadeIn {

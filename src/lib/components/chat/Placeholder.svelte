@@ -134,6 +134,7 @@
 
 {#snippet composer(placeholder = '')}
 	<MessageInput
+		homeMode={!$selectedFolder}
 		{selectedTerminalId}
 		{terminalSkills}
 		{chatId}
@@ -191,10 +192,6 @@
 		? 'flex h-full min-h-0 flex-col overflow-hidden'
 		: 'm-auto max-w-[58rem] px-1 md:@3xl:px-20 translate-y-6 py-24'} text-center"
 >
-	{#if !$selectedFolder}
-		<div class="zero-state-glow" aria-hidden="true"></div>
-	{/if}
-
 	<!-- In a folder, temporary mode shows on the composer alone. -->
 	{#if $temporary && !$selectedFolder}
 		<Tooltip
@@ -282,7 +279,7 @@
 					</div>
 
 					<h2
-						class=" text-2xl @sm:text-2xl line-clamp-1 flex items-center"
+						class="gemini-greeting text-2xl @sm:text-2xl font-medium line-clamp-1 flex items-center"
 						in:fade={{ duration: 100 }}
 					>
 						{#if selectedModelName}
@@ -292,7 +289,7 @@
 								placement="top"
 								className=" flex items-center "
 							>
-								<span class="line-clamp-1">
+								<span class="gemini-greeting line-clamp-1">
 									{selectedModelName}
 								</span>
 							</Tooltip>
@@ -353,11 +350,6 @@
 				? 'mt-2'
 				: ''}"
 		>
-			<!-- Soft halo, like the denser fade around the in-chat composer, so it doesn't float on a vivid background. -->
-			<div
-				aria-hidden="true"
-				class="pointer-events-none absolute -inset-x-8 -inset-y-3 rounded-[3rem] bg-white/40 blur-2xl dark:bg-gray-900/40"
-			></div>
 			<div class="relative">
 				{@render composer($i18n.t('How can I help you today?'))}
 			</div>
@@ -372,111 +364,28 @@
 </div>
 
 <style>
-	.zero-state-glow {
-		--zero-state-glow-blur: 56px;
-
-		position: absolute;
-		left: 50%;
-		top: 50%;
-		width: min(1040px, 92vw);
-		height: 560px;
-		transform: translate(-50%, -50%);
-		pointer-events: none;
-		z-index: -1;
-		filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
-		opacity: 0.72;
-		animation: zero-state-glow-color-shift 42s ease-in-out infinite;
+	.gemini-greeting {
+		background: linear-gradient(78deg, #4285f4 0%, #9b72cb 48%, #d96570 100%);
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
 	}
 
-	.zero-state-glow::before,
-	.zero-state-glow::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		border-radius: 999px;
+	:global(html.high-contrast) .gemini-greeting {
+		background: none;
+		-webkit-background-clip: border-box;
+		background-clip: border-box;
+		color: inherit;
 	}
 
-	.zero-state-glow::before {
-		background: radial-gradient(
-			ellipse at 50% 50%,
-			rgba(112, 188, 255, 0.92) 0%,
-			rgba(165, 216, 255, 0.66) 34%,
-			rgba(211, 239, 255, 0.34) 56%,
-			rgba(255, 255, 255, 0) 78%
-		);
-	}
-
-	.zero-state-glow::after {
-		inset: -18% -14%;
-		background:
-			radial-gradient(ellipse at 36% 40%, rgba(255, 160, 214, 0.18), transparent 46%),
-			radial-gradient(ellipse at 68% 48%, rgba(119, 155, 255, 0.18), transparent 52%);
-		mix-blend-mode: multiply;
-	}
-
-	:global(.dark) .zero-state-glow {
-		opacity: 0.5;
-	}
-
-	:global(.dark) .zero-state-glow::before {
-		background: radial-gradient(
-			ellipse at 50% 50%,
-			rgba(87, 171, 255, 0.76) 0%,
-			rgba(88, 143, 255, 0.48) 34%,
-			rgba(70, 104, 190, 0.22) 56%,
-			rgba(0, 0, 0, 0) 78%
-		);
-	}
-
-	:global(.dark) .zero-state-glow::after {
-		background:
-			radial-gradient(ellipse at 36% 40%, rgba(255, 119, 211, 0.16), transparent 46%),
-			radial-gradient(ellipse at 68% 48%, rgba(101, 124, 255, 0.18), transparent 52%);
-		mix-blend-mode: screen;
-	}
-
-	@keyframes zero-state-glow-color-shift {
-		0%,
-		100% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(0deg) saturate(1);
-		}
-		25% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(42deg) saturate(1.04);
-		}
-		50% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(96deg) saturate(1.06);
-		}
-		75% {
-			filter: blur(var(--zero-state-glow-blur)) hue-rotate(168deg) saturate(1.03);
-		}
-	}
-
-	@media (max-width: 768px) {
-		.zero-state-glow {
-			width: 94vw;
-			height: 420px;
-			top: 48%;
-			--zero-state-glow-blur: 42px;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.zero-state-glow {
-			animation: none;
-			filter: blur(var(--zero-state-glow-blur));
-		}
-	}
-
-	/* Home page input: elevated card above the glow so its edge stays visible */
+	/* Home page input: elevated card above the Gemini ambient glow */
 	.placeholder-root :global(#message-input-container) {
-		background-color: rgba(255, 255, 255, 0.8);
-		border-color: rgba(209, 213, 219, 0.9);
-		box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
+		background-color: rgba(255, 255, 255, 0.92);
+		box-shadow: 0 10px 30px -6px rgba(15, 23, 42, 0.1);
 	}
 
 	:global(.dark) .placeholder-root :global(#message-input-container) {
-		background-color: rgba(24, 24, 27, 0.8);
-		border-color: rgba(82, 82, 91, 0.85);
-		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+		background-color: rgba(30, 30, 34, 0.92);
+		box-shadow: 0 12px 32px -6px rgba(0, 0, 0, 0.42);
 	}
 </style>

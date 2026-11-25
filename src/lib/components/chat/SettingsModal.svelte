@@ -40,6 +40,7 @@
 	import ArchiveBox from '../icons/ArchiveBox.svelte';
 	import ChevronLeft from '../icons/ChevronLeft.svelte';
 	import Keyboard from '../icons/Keyboard.svelte';
+	import Link from '../icons/Link.svelte';
 	import UsageIcon from '../icons/UsageIcon.svelte';
 	import AdminTabIcon from '$lib/components/admin/Settings/AdminTabIcon.svelte';
 	import AdminGeneral from '$lib/components/admin/Settings/General.svelte';

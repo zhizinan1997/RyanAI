@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.4.3] - 2026-11-25
+
+### Fixed
+
+- 修复 `SettingsModal.svelte` 中「WeChat / QQ」标签页缺少 `Link` 图标组件导入导致设置弹窗无法打开的问题。
+
+### Changed
+
+- 首页与对话输入框升级为 Gemini 风格渐变流光效果：移除旧版大范围居中散光，新增首页标题蓝紫粉线性文字渐变、输入框贴边旋转渐变描边与柔和底部晕光，并支持空闲 / 聚焦输入 / 发送脉冲 / 思考中 / 流式回复状态切换与平滑淡出。
+- 回复生成期间新增模型头像旋转渐变光环、等待首字时的三行渐变扫光骨架屏以及流式输出渐变呼吸光标，同时将全局 `.shimmer` 状态文字升级为 Gemini 蓝紫粉扫光效果（修复暗色模式选择器并兼容高对比度与减少动态偏好）。
+
 ## [0.13.4.2] - 2026-11-23
 
 ### Fixed

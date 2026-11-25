@@ -22,7 +22,7 @@
 	dayjs.extend(duration);
 	dayjs.extend(relativeTime);
 
-	import { onMount, tick, getContext, createEventDispatcher } from 'svelte';
+	import { onMount, onDestroy, tick, getContext, createEventDispatcher } from 'svelte';
 	import type { Writable } from 'svelte/store';
 
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
@@ -179,6 +179,7 @@
 	export let contextUsage = null;
 	export let contextCompactionEnabled = false;
 	export let embedded = false;
+	export let homeMode = false;
 	export let callActive = false;
 	export let callEnabled = true;
 
@@ -217,6 +218,38 @@
 		((taskIds && taskIds.length > 0) ||
 			(history.currentId && history.messages[history.currentId]?.done != true) ||
 			generating);
+
+	$: currentHistoryMessage = history?.currentId ? history?.messages?.[history.currentId] : null;
+	$: currentAssistantHasContent = Boolean(
+		currentHistoryMessage?.role === 'assistant' &&
+			((currentHistoryMessage.content ?? '').trim() ||
+				(Array.isArray(currentHistoryMessage.output) && currentHistoryMessage.output.length > 0))
+	);
+	$: geminiState = isActive ? (currentAssistantHasContent ? 'streaming' : 'thinking') : 'idle';
+
+	let sendPulseFiring = false;
+	let sendPulseTimer: ReturnType<typeof setTimeout> | null = null;
+	const triggerSendPulse = () => {
+		if ($settings?.highContrastMode ?? false) return;
+		sendPulseFiring = false;
+		if (sendPulseTimer) clearTimeout(sendPulseTimer);
+		requestAnimationFrame(() => {
+			sendPulseFiring = true;
+			sendPulseTimer = setTimeout(() => {
+				sendPulseFiring = false;
+				sendPulseTimer = null;
+			}, 780);
+		});
+	};
+	const submitPrompt = () => {
+		if (prompt !== '' || files.length > 0) {
+			triggerSendPulse();
+		}
+		dispatch('submit', prompt);
+	};
+	onDestroy(() => {
+		if (sendPulseTimer) clearTimeout(sendPulseTimer);
+	});
 	$: canCompact = !!history?.currentId;
 	$: canSide =
 		($_user?.role === 'admin' ||
@@ -678,7 +711,7 @@
 	const createSkillHandler = async () => {
 		prompt = '/skills:create';
 		await tick();
-		dispatch('submit', prompt);
+		submitPrompt();
 	};
 
 	const insertTextAtCursor = async (text: string) => {
@@ -2108,7 +2141,7 @@
 								focus({ preventScroll: true });
 
 								if ($settings?.speechAutoSend ?? false) {
-									dispatch('submit', prompt);
+									submitPrompt();
 								}
 							}}
 						/>
@@ -2116,7 +2149,7 @@
 					<form
 						class="w-full flex flex-col gap-1.5 {recording ? 'hidden' : ''}"
 						on:submit|preventDefault={() => {
-							dispatch('submit', prompt);
+							submitPrompt();
 						}}
 					>
 						<button
@@ -2254,16 +2287,30 @@
 						{/if}
 
 						<div
-							id={inputId === 'chat-input' ? 'message-input-container' : `${inputId}-wrapper`}
-							data-composer-id={inputId}
-							class="flex-1 flex flex-col relative w-full shadow-[0_6px_24px_-4px_rgba(0,0,0,0.1)] rounded-3xl border {$temporary
-								? 'border-dashed border-gray-300/70 dark:border-gray-700/70'
-								: ' border-gray-200/60 dark:border-gray-800/40'} {($settings?.highContrastMode ??
-							false)
-								? 'focus-within:outline focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-blue-500 [&_.ProseMirror:focus-visible]:outline-none!'
-								: ''}  transition px-0.5 bg-white/80 dark:bg-[oklch(0.24_0_0)]/90 backdrop-blur-md dark:text-gray-100"
-							dir={$settings?.chatDirection ?? 'auto'}
+							class="gemini-composer-wrap relative w-full"
+							data-gemini-mode={homeMode ? 'home' : 'chat'}
+							data-gemini-state={geminiState}
+							data-temporary={$temporary ? 'true' : 'false'}
+							data-high-contrast={($settings?.highContrastMode ?? false) ? 'true' : 'false'}
 						>
+							<div class="gemini-aura" aria-hidden="true"></div>
+							<div class="gemini-ring" aria-hidden="true"></div>
+							<div
+								class="gemini-send-pulse"
+								class:firing={sendPulseFiring}
+								aria-hidden="true"
+							></div>
+							<div
+								id={inputId === 'chat-input' ? 'message-input-container' : `${inputId}-wrapper`}
+								data-composer-id={inputId}
+								class="gemini-card flex-1 flex flex-col relative w-full shadow-[0_6px_24px_-4px_rgba(0,0,0,0.1)] rounded-3xl border {$temporary
+									? 'border-dashed border-gray-300/70 dark:border-gray-700/70'
+									: ' border-gray-200/60 dark:border-gray-800/40'} {($settings?.highContrastMode ??
+								false)
+									? 'focus-within:outline focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-blue-500 [&_.ProseMirror:focus-visible]:outline-none!'
+									: ''}  transition px-0.5 bg-white/90 dark:bg-[oklch(0.24_0_0)]/92 backdrop-blur-md dark:text-gray-100"
+								dir={$settings?.chatDirection ?? 'auto'}
+							>
 							{#if atSelectedModel !== undefined}
 								<div class="px-2.5 pt-2.5 text-left w-full flex flex-col z-10">
 									<div class="flex items-center justify-between w-full">
@@ -2532,7 +2579,7 @@
 																if (enterPressed) {
 																	e.preventDefault();
 																	if (prompt !== '' || files.length > 0) {
-																		dispatch('submit', prompt);
+																		submitPrompt();
 																	}
 																}
 															}
@@ -3204,6 +3251,7 @@
 									{/if}
 								</div>
 							</div>
+							</div>
 						</div>
 
 						{#if $config?.license_metadata?.input_footer}
@@ -3221,6 +3269,185 @@
 {/if}
 
 <style>
+	.gemini-composer-wrap {
+		--gemini-c1: #4285f4;
+		--gemini-c2: #9b72cb;
+		--gemini-c3: #d96570;
+		--gemini-c4: #4fc3f7;
+		--gemini-idle-aura: 0.14;
+		--gemini-focus-aura: 0.28;
+		--gemini-active-aura: 0.34;
+		--gemini-active-ring: 0.72;
+		border-radius: 1.625rem;
+		isolation: isolate;
+	}
+
+	:global(.dark) .gemini-composer-wrap {
+		--gemini-idle-aura: 0.18;
+		--gemini-focus-aura: 0.36;
+		--gemini-active-aura: 0.46;
+		--gemini-active-ring: 0.9;
+	}
+
+	.gemini-aura {
+		position: absolute;
+		inset: -6px -10px -10px -10px;
+		border-radius: 2.125rem;
+		z-index: -2;
+		pointer-events: none;
+		background: conic-gradient(
+			from var(--gemini-angle),
+			var(--gemini-c1) 0deg,
+			var(--gemini-c2) 100deg,
+			var(--gemini-c3) 200deg,
+			var(--gemini-c4) 290deg,
+			var(--gemini-c1) 360deg
+		);
+		filter: blur(26px) saturate(1.15);
+		opacity: 0;
+		transform: scale(0.98);
+		transition:
+			opacity 500ms cubic-bezier(0.22, 1, 0.36, 1),
+			transform 500ms cubic-bezier(0.22, 1, 0.36, 1),
+			filter 500ms ease;
+		animation: gemini-spin 12s linear infinite;
+	}
+
+	.gemini-ring {
+		position: absolute;
+		inset: -1.5px;
+		border-radius: 1.59375rem;
+		padding: 1.75px;
+		z-index: -1;
+		pointer-events: none;
+		background: conic-gradient(
+			from var(--gemini-angle),
+			var(--gemini-c1) 0deg,
+			var(--gemini-c2) 105deg,
+			var(--gemini-c3) 205deg,
+			var(--gemini-c4) 295deg,
+			var(--gemini-c1) 360deg
+		);
+		-webkit-mask:
+			linear-gradient(#fff 0 0) content-box,
+			linear-gradient(#fff 0 0);
+		-webkit-mask-composite: xor;
+		mask-composite: exclude;
+		opacity: 0;
+		transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1);
+		animation: gemini-spin 12s linear infinite;
+	}
+
+	.gemini-send-pulse {
+		position: absolute;
+		inset: -3px;
+		border-radius: 1.75rem;
+		z-index: -1;
+		pointer-events: none;
+		background: linear-gradient(
+			120deg,
+			var(--gemini-c1),
+			var(--gemini-c2),
+			var(--gemini-c3),
+			var(--gemini-c4)
+		);
+		filter: blur(18px);
+		opacity: 0;
+	}
+
+	.gemini-send-pulse.firing {
+		animation: gemini-send-pulse 760ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+	}
+
+	/* Homepage idle: subtle welcoming glow */
+	.gemini-composer-wrap[data-gemini-mode='home'][data-gemini-state='idle'] .gemini-aura {
+		opacity: var(--gemini-idle-aura);
+		transform: scale(1);
+		animation-duration: 16s;
+	}
+
+	.gemini-composer-wrap[data-gemini-mode='home'][data-gemini-state='idle'] .gemini-ring {
+		opacity: 0.28;
+		animation-duration: 16s;
+	}
+
+	/* In-chat idle: clean, gentle glow on hover */
+	.gemini-composer-wrap[data-gemini-mode='chat'][data-gemini-state='idle']:hover .gemini-aura {
+		opacity: calc(var(--gemini-idle-aura) * 0.7);
+		transform: scale(1);
+	}
+
+	.gemini-composer-wrap[data-gemini-mode='chat'][data-gemini-state='idle']:hover .gemini-ring {
+		opacity: 0.25;
+	}
+
+	/* Focus / typing */
+	.gemini-composer-wrap:focus-within[data-gemini-state='idle'] .gemini-aura {
+		opacity: var(--gemini-focus-aura);
+		transform: scale(1);
+		filter: blur(22px) saturate(1.18);
+		animation-duration: 10s;
+	}
+
+	.gemini-composer-wrap:focus-within[data-gemini-state='idle'] .gemini-ring {
+		opacity: 0.62;
+		animation-duration: 10s;
+	}
+
+	.gemini-composer-wrap:focus-within[data-gemini-state='idle'][data-temporary='false']
+		.gemini-card {
+		border-color: transparent;
+	}
+
+	/* Thinking: energetic rotation + vivid halo */
+	.gemini-composer-wrap[data-gemini-state='thinking'] .gemini-aura {
+		opacity: calc(var(--gemini-active-aura) * 1.15);
+		transform: scale(1.015);
+		filter: blur(28px) saturate(1.3);
+		animation: gemini-spin 3.8s linear infinite;
+	}
+
+	.gemini-composer-wrap[data-gemini-state='thinking'] .gemini-ring {
+		opacity: min(1, calc(var(--gemini-active-ring) * 1.15));
+		animation: gemini-spin 3.8s linear infinite;
+	}
+
+	.gemini-composer-wrap[data-gemini-state='thinking'][data-temporary='false'] .gemini-card {
+		border-color: transparent;
+	}
+
+	/* Streaming: smooth continuous flow */
+	.gemini-composer-wrap[data-gemini-state='streaming'] .gemini-aura {
+		opacity: calc(var(--gemini-active-aura) * 0.88);
+		transform: scale(1.005);
+		filter: blur(26px) saturate(1.2);
+		animation: gemini-spin 5.5s linear infinite;
+	}
+
+	.gemini-composer-wrap[data-gemini-state='streaming'] .gemini-ring {
+		opacity: min(1, calc(var(--gemini-active-ring) * 0.92));
+		animation: gemini-spin 5.5s linear infinite;
+	}
+
+	.gemini-composer-wrap[data-gemini-state='streaming'][data-temporary='false'] .gemini-card {
+		border-color: transparent;
+	}
+
+	/* High-contrast mode: defer to crisp accessibility outline */
+	.gemini-composer-wrap[data-high-contrast='true'] .gemini-aura,
+	.gemini-composer-wrap[data-high-contrast='true'] .gemini-ring,
+	.gemini-composer-wrap[data-high-contrast='true'] .gemini-send-pulse {
+		display: none;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.gemini-aura,
+		.gemini-ring,
+		.gemini-send-pulse.firing {
+			animation: none;
+		}
+	}
+
 	.call-active {
 		box-shadow:
 			0 0 8px 2px rgb(0 0 0 / 0.25),

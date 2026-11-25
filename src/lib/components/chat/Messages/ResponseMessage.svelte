@@ -816,10 +816,19 @@
 		style="scroll-margin-top: 3rem;"
 	>
 		<div class={`shrink-0 ltr:mr-2 rtl:ml-2 hidden @lg:flex mt-0.5 `}>
-			<ProfileImage
-				src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id ?? message.model}&lang=${$i18n.language}`}
-				className={'size-7 assistant-message-profile-image'}
-			/>
+			<div
+				class="gemini-avatar-wrap relative flex size-7 items-center justify-center"
+				class:is-active={!compacting &&
+					!message.done &&
+					!message.error &&
+					!($settings?.highContrastMode ?? false)}
+			>
+				<div class="gemini-avatar-halo" aria-hidden="true"></div>
+				<ProfileImage
+					src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id ?? message.model}&lang=${$i18n.language}`}
+					className={'relative z-10 size-7 assistant-message-profile-image'}
+				/>
+			</div>
 		</div>
 
 		<div class="flex-auto w-0 pl-1 relative">
@@ -1065,12 +1074,24 @@
 								/>
 							{/if}
 
-							{#if !compacting && !message.done && !message.error && (hasResponseContent || !hasVisibleStatus)}
-								<div class="text-[0.90625rem] leading-relaxed">
-									<span
-										class="inline-block w-[0.125rem] h-3.5 bg-gray-400 dark:bg-gray-500 ml-0.5 animate-cursor-pulse align-text-bottom"
-									></span>
-								</div>
+							{#if !compacting && !message.done && !message.error}
+								{#if !hasResponseContent && !hasVisibleStatus}
+									<div
+										class="my-2 space-y-2 max-w-md"
+										aria-busy="true"
+										aria-label={$i18n.t('Generating...')}
+									>
+										<div class="gemini-skeleton-bar w-full"></div>
+										<div class="gemini-skeleton-bar w-5/6" style="animation-delay: 140ms;"></div>
+										<div class="gemini-skeleton-bar w-3/5" style="animation-delay: 280ms;"></div>
+									</div>
+								{:else if hasResponseContent}
+									<div class="text-[0.90625rem] leading-relaxed">
+										<span
+											class="gemini-stream-cursor inline-block w-[0.25rem] h-3.5 rounded-xs ml-0.5 align-text-bottom"
+										></span>
+									</div>
+								{/if}
 							{/if}
 
 							{#if message?.error}
@@ -1944,6 +1965,74 @@
 {/key}
 
 <style>
+	.gemini-avatar-wrap {
+		isolation: isolate;
+	}
+
+	.gemini-avatar-halo {
+		position: absolute;
+		inset: -4px;
+		border-radius: 9999px;
+		z-index: 0;
+		pointer-events: none;
+		background: conic-gradient(
+			from var(--gemini-angle),
+			#4285f4 0deg,
+			#9b72cb 110deg,
+			#d96570 215deg,
+			#4fc3f7 300deg,
+			#4285f4 360deg
+		);
+		filter: blur(7px) saturate(1.2);
+		opacity: 0;
+		transition: opacity 400ms ease;
+		animation: gemini-spin 3s linear infinite;
+	}
+
+	.gemini-avatar-wrap.is-active .gemini-avatar-halo {
+		opacity: 0.72;
+	}
+
+	.gemini-skeleton-bar {
+		height: 0.6875rem;
+		border-radius: 9999px;
+		background: linear-gradient(
+			90deg,
+			rgba(148, 163, 184, 0.14) 0%,
+			rgba(66, 133, 244, 0.34) 30%,
+			rgba(155, 114, 203, 0.32) 50%,
+			rgba(217, 101, 112, 0.26) 68%,
+			rgba(148, 163, 184, 0.14) 100%
+		);
+		background-size: 250% 100%;
+		animation: shimmer 1.8s ease-in-out infinite;
+	}
+
+	:global(.dark) .gemini-skeleton-bar {
+		background: linear-gradient(
+			90deg,
+			rgba(148, 163, 184, 0.12) 0%,
+			rgba(96, 165, 250, 0.36) 30%,
+			rgba(183, 148, 244, 0.34) 50%,
+			rgba(240, 128, 138, 0.28) 68%,
+			rgba(148, 163, 184, 0.12) 100%
+		);
+		background-size: 250% 100%;
+	}
+
+	.gemini-stream-cursor {
+		background: linear-gradient(180deg, #4285f4, #9b72cb, #d96570);
+		animation: gemini-cursor-breathe 0.9s ease-in-out infinite;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.gemini-avatar-halo,
+		.gemini-skeleton-bar,
+		.gemini-stream-cursor {
+			animation: none;
+		}
+	}
+
 	.buttons::-webkit-scrollbar {
 		display: none; /* for Chrome, Safari and Opera */
 	}
