@@ -32,6 +32,7 @@ from open_webui.models.config import Config
 from open_webui.retrieval.web.utils import assert_identity_encoding, get_ssrf_safe_session, validate_url
 from open_webui.routers.files import get_file_content_by_id, upload_file_handler
 from open_webui.utils.access_control import has_permission
+from open_webui.utils.audit import set_audit_model
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.credit.utils import charge_feature_by_user_id, check_feature_credit_by_user_id
 from open_webui.utils.headers import get_headers_and_cookies, include_user_info_headers
@@ -49,6 +50,7 @@ from open_webui.utils.images.connections import (
     IMAGE_CONNECTIONS_CONFIG_KEY,
     IMAGE_EDIT_DEFAULT_MODEL_CONFIG_KEY,
     IMAGE_GENERATION_DEFAULT_MODEL_CONFIG_KEY,
+    get_image_model_ref,
     get_image_models,
     get_openai_connection_models,
     normalize_image_connection,
@@ -585,6 +587,7 @@ async def image_generations(
     strict: bool = False,
 ):
     connection, model = await resolve_image_model(request, user, 'image_generation', form_data.model, strict=strict)
+    set_audit_model(get_image_model_ref(connection['id'], model))
     connection_config = connection.get('config') or {}
     connection_size = connection_config.get('size') or ''
     connection_steps = connection_config.get('steps')
@@ -939,6 +942,7 @@ async def image_edits(
     strict: bool = False,
 ):
     connection, model = await resolve_image_model(request, user, 'image_edit', form_data.model, strict=strict)
+    set_audit_model(get_image_model_ref(connection['id'], model))
     connection_config = connection.get('config') or {}
     connection_size = connection_config.get('edit_size') or ''
     size = None

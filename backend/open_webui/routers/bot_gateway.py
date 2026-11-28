@@ -72,6 +72,7 @@ from open_webui.utils.bot_gateway_coordination import (
     validate_event_fence,
 )
 from open_webui.utils.context_compaction import estimate_messages_tokens
+from open_webui.utils.machines import machine_id_of
 from open_webui.utils.misc import get_message_list, get_output_text
 from open_webui.utils.models import get_all_models, get_filtered_models
 from open_webui.storage.provider import Storage
@@ -1948,7 +1949,7 @@ async def _run_chat(  # noqa: C901
     meta = model.get('info', {}).get('meta', {})
     tool_ids = list(meta.get('toolIds') or [])
     filter_ids = list(meta.get('defaultFilterIds') or [])
-    terminal_id = meta.get('terminalId')
+    machine_id = machine_id_of(meta, 'machineId')
     default_features = set(meta.get('defaultFeatureIds') or [])
     capabilities = meta.get('capabilities') or {}
     features = {}
@@ -2015,8 +2016,8 @@ async def _run_chat(  # noqa: C901
         form_data['tool_ids'] = tool_ids
     if filter_ids:
         form_data['filter_ids'] = filter_ids
-    if terminal_id:
-        form_data['terminal_id'] = terminal_id
+    if machine_id:
+        form_data['machine_id'] = machine_id
     if features:
         form_data['features'] = features
 

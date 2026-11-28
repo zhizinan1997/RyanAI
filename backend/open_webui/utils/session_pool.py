@@ -35,6 +35,7 @@ from open_webui.env import (
     AIOHTTP_POOL_CONNECTIONS_PER_HOST,
     AIOHTTP_POOL_DNS_TTL,
 )
+from open_webui.utils.aws import sign_aws_request
 from open_webui.utils.misc import stream_chunks_handler
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ async def get_session() -> aiohttp.ClientSession:
             read_bufsize=AIOHTTP_CLIENT_READ_BUFFER_SIZE,
             timeout=timeout,
             trust_env=True,
+            middlewares=(sign_aws_request,),
         )
         log.info(
             'Created shared aiohttp session pool (limit=%s, per_host=%s, dns_ttl=%d)',

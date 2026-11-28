@@ -1,134 +1,99 @@
 <script lang="ts">
 	import Switch from '$lib/components/common/Switch.svelte';
-	import Textarea from '$lib/components/common/Textarea.svelte';
+	import LocalizedField from '$lib/components/common/LocalizedField.svelte';
+	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import EllipsisVertical from '$lib/components/icons/EllipsisVertical.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
-	import type { Notification } from '$lib/types';
 	import Sortable from 'sortablejs';
 	import { getContext } from 'svelte';
-	import type { Writable } from 'svelte/store';
-	import type { i18n as i18nType } from 'i18next';
-	const i18n: Writable<i18nType> = getContext('i18n');
+	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
+	const i18n = getContext('i18n');
 
-	export let notifications: Notification[] = [];
-	export let deletedNotificationIds: string[] = [];
+	export let banners = [];
+	export let locale = '';
 
-	let sortable = null;
-	let notificationListElement = null;
-
-	const deleteNotificationItem = (notification: Notification) => {
-		if (
-			!notification.id.startsWith('local-') &&
-			!deletedNotificationIds.includes(notification.id)
-		) {
-			deletedNotificationIds = [...deletedNotificationIds, notification.id];
-		}
-
-		notifications = notifications.filter((item) => item.id !== notification.id);
-	};
-
-	const positionChangeHandler = () => {
-		const notificationIdOrder = Array.from(notificationListElement.children).map((child) =>
-			child.id.replace('notification-item-', '')
+	const positionChangeHandler = (bannerListElement: HTMLElement) => {
+		const bannerIdOrder = Array.from(bannerListElement.children).map((child) =>
+			child.id.replace('banner-item-', '')
 		);
 
-		notifications = notificationIdOrder.map((id) => {
-			const index = notifications.findIndex((notification) => notification.id === id);
-			return notifications[index];
+		// Sort the banners array based on the new order
+		banners = bannerIdOrder.map((id) => {
+			const index = banners.findIndex((banner) => banner.id === id);
+			return banners[index];
 		});
 	};
 
-	$: if (notifications) {
-		init();
-	}
-
-	const init = () => {
-		if (sortable) {
-			sortable.destroy();
-		}
-
-		if (notificationListElement) {
-			sortable = new Sortable(notificationListElement, {
-				animation: 150,
-				handle: '.item-handle',
-				onUpdate: async () => {
-					positionChangeHandler();
-				}
-			});
-		}
+	const init = (node: HTMLElement) => {
+		const sortable = new Sortable(node, {
+			animation: 150,
+			handle: '.item-handle',
+			onUpdate: () => positionChangeHandler(node)
+		});
+		return { destroy: () => sortable.destroy() };
 	};
 </script>
 
-<div
-	class=" flex flex-col gap-3 {notifications?.length > 0 ? 'mt-2' : ''}"
-	bind:this={notificationListElement}
->
-	{#each notifications as notification (notification.id)}
-		<div class=" flex justify-between items-start -ml-1" id="notification-item-{notification.id}">
-			<EllipsisVertical className="size-4 cursor-move item-handle" />
-
-			<div class="flex flex-col flex-1 gap-2">
-				<div class="flex flex-row flex-1 flex-wrap gap-2 items-center">
-					<select
-						class="w-fit capitalize rounded-xl text-xs bg-transparent outline-hidden pl-1 pr-5"
-						bind:value={notification.type}
-						required
-					>
-						<option value="info" class="text-gray-900">{$i18n.t('Info')}</option>
-						<option value="warning" class="text-gray-900">{$i18n.t('Warning')}</option>
-						<option value="error" class="text-gray-900">{$i18n.t('Error')}</option>
-						<option value="success" class="text-gray-900">{$i18n.t('Success')}</option>
-					</select>
-
-					<input
-						class="min-w-0 flex-1 text-xs bg-transparent outline-hidden"
-						placeholder={$i18n.t('Title')}
-						bind:value={notification.title}
-					/>
-
-					<div
-						class="flex h-fit shrink-0 items-center gap-1 text-xs text-gray-600 dark:text-gray-300"
-					>
-						<span id="notification-published-label-{notification.id}">{$i18n.t('Published')}</span>
-						<Switch
-							id="notification-published-{notification.id}"
-							ariaLabelledbyId="notification-published-label-{notification.id}"
-							bind:state={notification.active}
-						/>
-					</div>
-
-					<div
-						class="flex h-fit shrink-0 items-center gap-1 text-xs text-gray-600 dark:text-gray-300"
-					>
-						<span id="notification-dismissible-label-{notification.id}">
-							{$i18n.t('Remember Dismissal')}
-						</span>
-						<Switch
-							id="notification-dismissible-{notification.id}"
-							ariaLabelledbyId="notification-dismissible-label-{notification.id}"
-							bind:state={notification.dismissible}
-						/>
-					</div>
+<div class="flex flex-col gap-1.5" use:init>
+	{#each banners as banner, bannerIdx (banner.id)}
+		<div
+			class="flex items-start gap-1 rounded-lg border border-base-100/40 bg-transparent px-2 py-1 transition focus-within:border-blue-400 dark:border-base-850/50 dark:focus-within:border-blue-500"
+			id="banner-item-{banner.id}"
+		>
+			<Tooltip content={$i18n.t('Reorder')}>
+				<div
+					class="item-handle flex h-6 w-3 shrink-0 cursor-move items-center justify-center text-base-400 dark:text-base-600"
+				>
+					<EllipsisVertical className="size-3.5" />
 				</div>
-
-				<Textarea
-					className="mr-2 text-xs w-full bg-transparent outline-hidden resize-none"
-					placeholder={$i18n.t('Content')}
-					bind:value={notification.content}
-					maxSize={100}
+			</Tooltip>
+			<div class="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-start sm:gap-2">
+				<SettingsSelect
+					bind:value={banner.type}
+					required
+					ariaLabel={$i18n.t('Type')}
+					className="w-24 max-w-full shrink-0"
+					selectClassName="!h-6 !border-transparent !bg-transparent !ps-1 capitalize dark:!bg-transparent"
+				>
+					<option value="" disabled hidden class="text-base-900">{$i18n.t('Type')}</option>
+					<option value="info" class="text-base-900">{$i18n.t('Info')}</option>
+					<option value="warning" class="text-base-900">{$i18n.t('Warning')}</option>
+					<option value="error" class="text-base-900">{$i18n.t('Error')}</option>
+					<option value="success" class="text-base-900">{$i18n.t('Success')}</option>
+				</SettingsSelect>
+				<div class="w-full min-w-0 flex-1 sm:pt-0.5">
+					<LocalizedField
+						className="block min-h-5 max-h-40 w-full resize-none bg-transparent text-[0.8125rem] leading-5 text-base-700 outline-hidden placeholder:text-base-300 dark:text-base-200 dark:placeholder:text-base-700 [field-sizing:content]"
+						placeholder={$i18n.t('Content')}
+						bind:value={banner.content}
+						bind:translations={banner.i18n}
+						{locale}
+						field="content"
+						multiline
+						rows={1}
+					/>
+				</div>
+			</div>
+			<div class="flex h-6 shrink-0 items-center px-1">
+				<Switch
+					bind:state={banner.dismissible}
+					ariaLabel={$i18n.t('Remember Dismissal')}
+					tooltip={$i18n.t('Remember Dismissal')}
 				/>
 			</div>
-
-			<button
-				class="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white transition"
-				type="button"
-				on:pointerdown|stopPropagation
-				on:click|preventDefault|stopPropagation={() => deleteNotificationItem(notification)}
-				aria-label={$i18n.t('Delete')}
-			>
-				<XMark className={'size-4'} />
-				<span>{$i18n.t('Delete')}</span>
-			</button>
+			<Tooltip content={$i18n.t('Delete')}>
+				<button
+					class="flex size-6 shrink-0 items-center justify-center text-base-400 opacity-70 transition hover:text-base-700 hover:opacity-100 dark:text-base-600 dark:hover:text-base-300"
+					type="button"
+					aria-label={$i18n.t('Delete')}
+					on:click={() => {
+						banners.splice(bannerIdx, 1);
+						banners = banners;
+					}}
+				>
+					<XMark className="size-3.5" />
+				</button>
+			</Tooltip>
 		</div>
 	{/each}
 </div>

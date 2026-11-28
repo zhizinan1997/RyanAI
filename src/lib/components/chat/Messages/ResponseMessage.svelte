@@ -31,11 +31,13 @@
 		formatMessageTimestamp,
 		formatMessageTimestampFull,
 		removeDetails,
-		removeAllDetails
+		removeAllDetails,
+		isInternalMessage
 	} from '$lib/utils';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
 	import { isTemporaryChatId } from '$lib/utils/chatId';
+	import { getCarriedSources } from '$lib/utils/citations';
 	import equal from 'fast-deep-equal';
 
 	import Name from './Name.svelte';
@@ -53,6 +55,9 @@
 	import CodeExecutions from './CodeExecutions.svelte';
 	import ContentRenderer from './ContentRenderer.svelte';
 	import ContextCompactionLabel from './ContextCompactionLabel.svelte';
+	import SubagentResultRow from './SubagentResultRow.svelte';
+	import ChatMessageRow from './ChatMessageRow.svelte';
+	import TimerRow from './TimerRow.svelte';
 	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 	import FileItem from '$lib/components/common/FileItem.svelte';
 	import FollowUps from './ResponseMessage/FollowUps.svelte';
@@ -61,7 +66,6 @@
 	import RegenerateMenu from './ResponseMessage/RegenerateMenu.svelte';
 	import StatusHistory from './ResponseMessage/StatusHistory.svelte';
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
-	import MCPApp from '$lib/components/chat/Messages/MCPApp.svelte';
 	import OutputEditView from './OutputEditView.svelte';
 	import { getOutputText, replaceOutputMessageText, type OutputItem } from './structuredOutput';
 	import type { AIErrorPayload } from '$lib/utils/chatError';
@@ -264,6 +268,13 @@
 			window.removeEventListener('resize', usageDetailResizeHandler);
 		}
 	});
+	// The message's own sources, plus any from earlier turns that it cites.
+	const getCitationSources = (message: any) => {
+		const sources = message?.sources ?? message?.citations;
+		const carriedSources = getCarriedSources(history.messages, message);
+		return carriedSources.length > 0 ? [...(sources ?? []), ...carriedSources] : sources;
+	};
+	$: citationSources = getCitationSources(message);
 
 	export let siblings;
 
@@ -308,9 +319,17 @@
 	$: localizedModelName = model
 		? resolveLocalizedModelName(model, $i18n.language)
 		: message.modelName || message.model;
-	$: model = $models.find((m) => m.id === message.model);
+	$: model = ($models ?? []).find((m) => m.id === message.model);
+	$: selectedModel = message?.selectedModelId
+		? ($models ?? []).find((m) => m.id === message.selectedModelId)
+		: null;
+	$: selectedModelName = selectedModel
+		? resolveLocalizedModelName(selectedModel, $i18n.language)
+		: message?.selectedModelId;
+	$: showSelectedModel = !!message?.selectedModelId && message?.strategy !== 'random';
 	$: responseTimestamp = message?.meta?.response_ended_at ?? message?.timestamp;
 
+	$: parentMessage = history.messages[message?.parentId];
 	$: statusEntries = message?.statusHistory ?? [...(message?.status ? [message?.status] : [])];
 	$: hasVisibleStatus =
 		(model?.info?.meta?.capabilities?.status_updates ?? true) &&
@@ -634,7 +653,7 @@
 					: {})
 			},
 			meta: {
-				arena: message ? message.arena : false,
+				strategy: message?.strategy ?? null,
 				model_id: message.model,
 				message_id: message.id,
 				message_index: messages.length,
@@ -649,7 +668,7 @@
 			feedbackItem.data.model_id,
 			...(feedbackItem.data.sibling_model_ids ?? [])
 		].reduce((acc, modelId) => {
-			const model = $models.find((m) => m.id === modelId);
+			const model = ($models ?? []).find((m) => m.id === modelId);
 			if (model) {
 				acc[model.id] = model?.info?.base_model_id ?? null;
 			} else {
@@ -692,12 +711,15 @@
 
 			if (!updatedMessage.annotation?.tags && (message?.content ?? '') !== '') {
 				// attempt to generate tags
-				const tags = await generateTags(localStorage.token, message.model, messages, chatId).catch(
-					(error) => {
-						console.error(error);
-						return [];
-					}
-				);
+				const tags = await generateTags(
+					localStorage.token,
+					message?.selectedModelId ?? message.model,
+					messages,
+					chatId
+				).catch((error) => {
+					console.error(error);
+					return [];
+				});
 				console.log(tags);
 
 				if (tags) {
@@ -756,8 +778,25 @@
 			const range = selection.getRangeAt(0);
 			const tempDiv = document.createElement('div');
 
+			// Copy formulas as TeX source, rendered KaTeX pastes garbled
+			const katexElements = [...document.querySelectorAll('.katex')].filter((katex) =>
+				selection.containsNode(katex, true)
+			);
+			const texNodes = katexElements.map((katex) => {
+				const tex = katex.querySelector('annotation[encoding="application/x-tex"]').textContent;
+				const texNode = document.createTextNode(
+					katex.closest('.katex-display') ? `$$${tex}$$` : `$${tex}$`
+				);
+				if (katex.contains(range.startContainer)) range.setStartBefore(katex);
+				if (katex.contains(range.endContainer)) range.setEndAfter(katex);
+				katex.before(texNode);
+				katex.style.display = 'none';
+				return texNode;
+			});
+
 			// Remove background, color, and font styles
 			tempDiv.appendChild(range.cloneContents());
+			tempDiv.querySelectorAll('.katex').forEach((katex) => katex.remove());
 
 			tempDiv.querySelectorAll('table').forEach((table) => {
 				table.style.borderCollapse = 'collapse';
@@ -773,6 +812,9 @@
 			// Put cleaned HTML + plain text into clipboard
 			e.clipboardData.setData('text/html', tempDiv.innerHTML);
 			e.clipboardData.setData('text/plain', selection.toString());
+
+			katexElements.forEach((katex) => (katex.style.display = ''));
+			texNodes.forEach((texNode) => texNode.remove());
 		}
 	};
 
@@ -825,7 +867,7 @@
 			>
 				<div class="gemini-avatar-halo" aria-hidden="true"></div>
 				<ProfileImage
-					src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id ?? message.model}&lang=${$i18n.language}`}
+					src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id ?? message.model}&lang=${$i18n.language}&v=${model?.info?.updated_at}`}
 					className={'relative z-10 size-7 assistant-message-profile-image'}
 				/>
 			</div>
@@ -835,11 +877,27 @@
 			{#if !compactPreview}
 				<Name>
 					<Tooltip content={localizedModelName} placement="top-start">
-						<span id="response-message-model-name" class="line-clamp-1 text-black dark:text-white">
+						<span
+							id="response-message-model-name"
+							class="line-clamp-1 text-base-1000 dark:text-base-0"
+						>
 							{localizedModelName}
 						</span>
 					</Tooltip>
+					{#if showSelectedModel}
+						<span class="truncate text-base-500">{selectedModelName}</span>
+					{/if}
 				</Name>
+			{/if}
+
+			{#if isInternalMessage(parentMessage)}
+				{#if parentMessage.meta.type === 'timer'}
+					<TimerRow content={parentMessage.content} />
+				{:else if parentMessage.meta.type === 'message'}
+					<ChatMessageRow content={parentMessage.content} />
+				{:else}
+					<SubagentResultRow content={parentMessage.content} />
+				{/if}
 			{/if}
 
 			{#if message.contextSummary}
@@ -894,7 +952,9 @@
 								{#each message.embeds as embed, idx}
 									<div class="my-2 w-full" id={`${message.id}-embeds-${idx}`}>
 										{#if typeof embed === 'object' && embed?.type === 'mcp_app'}
-											{#key JSON.stringify(embed)}<MCPApp app={embed} />{/key}
+											{#key JSON.stringify(embed)}{#await import('$lib/components/chat/Messages/MCPApp.svelte') then { default: MCPApp }}<MCPApp
+														app={embed}
+													/>{/await}{/key}
 										{:else if typeof embed === 'string'}
 											<FullHeightIframe
 												src={embed}
@@ -911,7 +971,7 @@
 
 						{#if edit === true}
 							<div
-								class="w-full bg-gray-50 dark:bg-gray-800 rounded-3xl px-3 py-3 my-2 {($settings?.highContrastMode ??
+								class="w-full bg-base-50 dark:bg-base-800 rounded-3xl px-3 py-3 my-2 {($settings?.highContrastMode ??
 								false)
 									? 'focus-within:outline focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-blue-500'
 									: ''}"
@@ -966,7 +1026,7 @@
 										{#if canBranch}
 											<button
 												id="save-new-message-button"
-												class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-100 px-2.5 text-xs font-normal text-gray-800 transition hover:bg-gray-100/70 disabled:opacity-60 dark:bg-gray-850 dark:text-white dark:hover:bg-gray-850/60"
+												class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-base-100 px-2.5 text-xs font-normal text-base-800 transition hover:bg-base-100/70 disabled:opacity-60 dark:bg-base-850 dark:text-base-0 dark:hover:bg-base-850/60"
 												on:click={() => {
 													saveAsCopyHandler();
 												}}
@@ -979,7 +1039,7 @@
 									<div class="flex space-x-1.5">
 										<button
 											id="close-edit-message-button"
-											class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
+											class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-base-600 transition hover:bg-base-100 hover:text-base-900 disabled:opacity-60 dark:text-base-400 dark:hover:bg-base-850 dark:hover:text-base-0"
 											on:click={() => {
 												cancelEditMessage();
 											}}
@@ -990,7 +1050,7 @@
 										{#if !message.user_id || message.user_id === $user?.id}
 											<button
 												id="confirm-edit-message-button"
-												class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+												class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-base-900 px-2.5 text-xs font-normal text-base-0 transition hover:bg-base-1000 disabled:opacity-60 dark:bg-base-100 dark:text-base-900 dark:hover:bg-base-0"
 												on:click={() => {
 													editMessageConfirmHandler();
 												}}
@@ -1019,7 +1079,7 @@
 									messageId={message.id}
 									content={message.content ?? ''}
 									output={message.output}
-									sources={message.sources}
+									sources={citationSources}
 									floatingButtons={message?.done &&
 										!readOnly &&
 										($settings?.showFloatingActionButtons ?? true)}
@@ -1098,12 +1158,12 @@
 								<Error content={message.error === true ? message.content : message.error} />
 							{/if}
 
-							{#if (message?.sources || message?.citations) && (model?.info?.meta?.capabilities?.citations ?? true)}
+							{#if citationSources && (model?.info?.meta?.capabilities?.citations ?? true)}
 								<Citations
 									bind:this={citationsElement}
 									id={message?.id}
 									{chatId}
-									sources={message?.sources ?? message?.citations}
+									sources={citationSources}
 									{readOnly}
 								/>
 							{/if}
@@ -1116,7 +1176,7 @@
 				</div>
 
 				{#if compactPreview && responseTimestamp}
-					<div class="mt-0.5 flex justify-start whitespace-nowrap text-gray-600 dark:text-gray-500">
+					<div class="mt-0.5 flex justify-start whitespace-nowrap text-base-600 dark:text-base-500">
 						<Tooltip
 							className="flex self-center"
 							content={formatMessageTimestampFull(responseTimestamp * 1000, $i18n.language)}
@@ -1124,7 +1184,7 @@
 						>
 							<time
 								datetime={new Date(responseTimestamp * 1000).toISOString()}
-								class="ml-1 shrink-0 whitespace-nowrap text-[0.6875rem] tabular-nums text-gray-400 dark:text-gray-600 select-none"
+								class="ml-1 shrink-0 whitespace-nowrap text-[0.6875rem] tabular-nums text-base-400 dark:text-base-600 select-none"
 							>
 								{formatMessageTimestamp(responseTimestamp * 1000, $i18n.language)}
 							</time>
@@ -1135,8 +1195,8 @@
 						bind:this={buttonsContainerElement}
 						class="flex items-center justify-start overflow-x-auto whitespace-nowrap buttons {($settings?.highContrastMode ??
 						false)
-							? 'text-gray-600 dark:text-gray-500'
-							: 'text-gray-600/80 dark:text-gray-500/70'} mt-0.5 [&>*]:shrink-0"
+							? 'text-base-600 dark:text-base-500'
+							: 'text-base-600/80 dark:text-base-500/70'} mt-0.5 [&>*]:shrink-0"
 					>
 						{#if message.done || siblings.length > 1}
 							{#if message.done && onInsertToNote && visibleResponseContent}
@@ -1145,7 +1205,7 @@
 										aria-label={$i18n.t('Insert into note')}
 										class="{isLastMessage || ($settings?.highContrastMode ?? false)
 											? 'visible'
-											: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition"
+											: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition"
 										on:click={() => {
 											onInsertToNote?.(visibleResponseContent);
 										}}
@@ -1173,7 +1233,7 @@
 								<div class="flex self-center min-w-fit" dir="ltr">
 									<button
 										aria-label={$i18n.t('Previous message')}
-										class="self-center inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 dark:hover:text-gray-400 hover:text-gray-600 rounded-md transition previous-message-button"
+										class="self-center inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 dark:hover:text-base-400 hover:text-base-600 rounded-md transition previous-message-button"
 										on:click={() => {
 											showPreviousMessage(message);
 										}}
@@ -1183,7 +1243,7 @@
 
 									{#if messageIndexEdit}
 										<div
-											class="text-sm flex justify-center font-normal self-center dark:text-gray-500 min-w-fit"
+											class="text-sm flex justify-center font-normal self-center dark:text-base-500 min-w-fit"
 										>
 											<input
 												aria-label={$i18n.t('Message number')}
@@ -1205,13 +1265,13 @@
 														messageIndexEdit = false;
 													}
 												}}
-												class="bg-transparent font-normal self-center dark:text-gray-500 min-w-fit outline-hidden"
+												class="bg-transparent font-normal self-center dark:text-base-500 min-w-fit outline-hidden"
 											/>/{siblings.length}
 										</div>
 									{:else}
 										<!-- svelte-ignore a11y-no-static-element-interactions -->
 										<div
-											class="text-sm tracking-widest font-normal self-center dark:text-gray-500 min-w-fit"
+											class="text-sm tracking-widest font-normal self-center dark:text-base-500 min-w-fit"
 											on:dblclick={async () => {
 												messageIndexEdit = true;
 
@@ -1228,7 +1288,7 @@
 									{/if}
 
 									<button
-										class="self-center inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 dark:hover:text-gray-400 hover:text-gray-600 rounded-md transition next-message-button"
+										class="self-center inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 dark:hover:text-base-400 hover:text-base-600 rounded-md transition next-message-button"
 										on:click={() => {
 											showNextMessage(message);
 										}}
@@ -1248,7 +1308,7 @@
 												bind:this={editButtonElement}
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition"
+													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition"
 												on:click={() => {
 													editMessageHandler();
 												}}
@@ -1264,7 +1324,7 @@
 										aria-label={$i18n.t('Copy')}
 										class="{isLastMessage || ($settings?.highContrastMode ?? false)
 											? 'visible'
-											: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition copy-response-button"
+											: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition copy-response-button"
 										on:click={() => {
 											copyToClipboard(visibleResponseContent);
 										}}
@@ -1280,7 +1340,7 @@
 											id="speak-button-{message.id}"
 											class="{isLastMessage || ($settings?.highContrastMode ?? false)
 												? 'visible'
-												: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition"
+												: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition"
 											on:click={() => {
 												if (!loadingSpeech) {
 													if (speaking) {
@@ -1459,10 +1519,10 @@
 											aria-describedby="usage-{message.id}"
 											class=" {isLastMessage || ($settings?.highContrastMode ?? false)
 												? 'visible'
-												: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition whitespace-pre-wrap"
+												: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition whitespace-pre-wrap"
 											on:click={() => {
 												console.log(message);
-								}}
+											}}
 											id="info-{message.id}"
 										>
 											<svg
@@ -1502,7 +1562,7 @@
 											aria-label={$i18n.t('Fork chat')}
 											class="{isLastMessage || ($settings?.highContrastMode ?? false)
 												? 'visible'
-												: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition"
+												: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition"
 											on:click={() => {
 												forkHandler?.(message.id);
 											}}
@@ -1557,11 +1617,11 @@
 												aria-label={$i18n.t('Good Response')}
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg {(
+													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg {(
 													message?.annotation?.rating ?? ''
 												).toString() === '1'
-													? 'bg-gray-100 dark:bg-gray-800'
-													: ''} dark:hover:text-gray-400 hover:text-gray-600 transition aria-disabled:cursor-progress aria-disabled:hover:bg-transparent"
+													? 'bg-base-100 dark:bg-base-800'
+													: ''} dark:hover:text-base-400 hover:text-base-600 transition aria-disabled:cursor-progress aria-disabled:hover:bg-transparent"
 												aria-disabled={feedbackLoading}
 												on:click={async (e) => {
 													e.stopPropagation();
@@ -1601,11 +1661,11 @@
 												aria-label={$i18n.t('Bad Response')}
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg {(
+													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg {(
 													message?.annotation?.rating ?? ''
 												).toString() === '-1'
-													? 'bg-gray-100 dark:bg-gray-800'
-													: ''} dark:hover:text-gray-400 hover:text-gray-600 transition aria-disabled:cursor-progress aria-disabled:hover:bg-transparent"
+													? 'bg-base-100 dark:bg-base-800'
+													: ''} dark:hover:text-base-400 hover:text-base-600 transition aria-disabled:cursor-progress aria-disabled:hover:bg-transparent"
 												aria-disabled={feedbackLoading}
 												on:click={async (e) => {
 													e.stopPropagation();
@@ -1649,7 +1709,7 @@
 												id="continue-response-button"
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition"
+													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition"
 												on:click={() => {
 													continueResponse(message);
 												}}
@@ -1727,7 +1787,7 @@
 														aria-label={$i18n.t('Regenerate')}
 														class="{isLastMessage || ($settings?.highContrastMode ?? false)
 															? 'visible'
-															: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition"
+															: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition"
 													>
 														<svg
 															class="size-4"
@@ -1777,7 +1837,7 @@
 													aria-label={$i18n.t('Regenerate')}
 													class="{isLastMessage || ($settings?.highContrastMode ?? false)
 														? 'visible'
-														: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition regenerate-response-button"
+														: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition regenerate-response-button"
 													on:click={() => {
 														showRateComment = false;
 														regenerateResponse(message);
@@ -1853,7 +1913,7 @@
 												)}
 												class="{isLastMessage || ($settings?.highContrastMode ?? false)
 													? 'visible'
-													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition"
+													: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition"
 												on:click={() => {
 													actionMessage(action.id, message);
 												}}
@@ -1890,7 +1950,7 @@
 													id="delete-response-button"
 													class="{isLastMessage || ($settings?.highContrastMode ?? false)
 														? 'visible'
-														: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-gray-400 hover:text-gray-600 transition disabled:opacity-50 disabled:hover:bg-transparent"
+														: 'hover-reveal'} inline-flex size-7 shrink-0 items-center justify-center p-1.5 hover:bg-base-1000/5 dark:hover:bg-base-0/5 rounded-lg dark:hover:text-base-400 hover:text-base-600 transition disabled:opacity-50 disabled:hover:bg-transparent"
 													disabled={!allowDelete}
 													on:click={(e) => {
 														if (!allowDelete) {
@@ -1917,7 +1977,7 @@
 										>
 											<time
 												datetime={new Date(responseTimestamp * 1000).toISOString()}
-												class="hover-reveal ml-1 shrink-0 whitespace-nowrap text-[0.6875rem] tabular-nums text-gray-400 dark:text-gray-600 select-none"
+												class="hover-reveal ml-1 shrink-0 whitespace-nowrap text-[0.6875rem] tabular-nums text-base-400 dark:text-base-600 select-none"
 											>
 												{formatMessageTimestamp(responseTimestamp * 1000, $i18n.language)}
 											</time>
